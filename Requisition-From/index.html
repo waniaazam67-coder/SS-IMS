@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inventory Request System - Login</title>
+  <link rel="icon" type="image/png" href="assests/SS Logo.png" />
+  <style>
+    * {
+    box-sizing: border-box;
+}
+
+    body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background:
+      radial-gradient(circle at top, rgba(104, 92, 255, 0.12), transparent 28%),
+      linear-gradient(180deg, #eef3ff 0%, #e7edf8 100%);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: 100vh;
+    padding: 26px 20px 32px;
+    overflow: hidden;
+}
+
+body::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: min(32vh, 280px);
+    background: url("assests/pakistan_skyline_final.png") center bottom / cover no-repeat;
+    opacity: 0.7;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.logo-container img {
+    width: 220px;
+    margin-bottom: 55px;
+}
+
+.logo-container {
+    opacity: 0;
+    position: relative;
+    z-index: 1;
+}
+
+.login-card {
+    width: min(640px, calc(100vw - 40px));
+    background: rgba(255, 255, 255, 0.88);
+    padding: 56px 60px;
+    border-radius: 28px;
+    border: 1px solid rgba(255, 255, 255, 0.75);
+    box-shadow: 0 30px 80px rgba(43, 55, 120, 0.14);
+    backdrop-filter: blur(14px);
+    opacity: 0;
+    position: relative;
+    z-index: 1;
+}
+
+h1 {
+    font-size: 32px;
+    line-height: 1.15;
+    color: #24306a;
+    text-align: center;
+    margin: 0 0 28px;
+}
+
+.subtitle {
+    color: #5f667d;
+    margin-bottom: 32px;
+    font-size: 17px;
+    line-height: 1.5;
+    text-align: center;
+}
+
+.google-btn {
+    width: 100%;
+    padding: 16px;
+    border-radius: 14px;
+    border: none;
+    background: linear-gradient(135deg, #6c63ff, #5a54e6);
+    color: white;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 600;
+    box-shadow: 0 16px 30px rgba(92, 84, 230, 0.28);
+}
+
+.google-btn:hover,
+.secondary-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 18px 34px rgba(43, 55, 120, 0.18);
+    opacity: 0.96;
+}
+
+.button-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: center;
+    margin-top: 20px;
+}
+
+.secondary-btn {
+    width: 100%;
+    padding: 14px;
+    border-radius: 14px;
+    border: none;
+    background: #edf1ff;
+    color: #24306a;
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 600;
+    box-shadow: 0 10px 24px rgba(43, 55, 120, 0.08);
+}
+
+.user-box {
+    margin-top: 20px;
+}
+.hidden {
+  display: none !important;
+}
+.user-box {
+    margin-top: 20px;
+    display: none;
+}
+
+.status {
+    margin-top: 18px;
+    font-size: 15px;
+    color: #24306a;
+}
+
+.status.success {
+    color: #167347;
+}
+
+.status.error {
+    color: #b42318;
+}
+
+body.authenticated .login-card {
+    width: min(540px, calc(100vw - 40px));
+    padding: 36px 40px;
+}
+
+body.authenticated h1 {
+    font-size: 26px;
+    margin-bottom: 16px;
+}
+
+body.authenticated .subtitle {
+    display: none;
+}
+
+body.authenticated .status {
+    margin-top: 0;
+    margin-bottom: 18px;
+}
+
+body.authenticated .user-box {
+    margin-top: 0;
+    padding: 20px 22px;
+    border-radius: 18px;
+    background: rgba(241, 245, 255, 0.9);
+}
+
+body.authenticated .user-box p {
+    margin: 0 0 14px;
+    font-size: 16px;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+body.authenticated .user-box p:last-of-type {
+    margin-bottom: 20px;
+}
+
+body.default-enter .logo-container {
+    animation: logoFadeIn 0.7s ease forwards;
+}
+
+body.default-enter .login-card {
+    animation: cardFloatUp 0.7s ease 0.12s forwards;
+}
+
+body.page-enter-forward .logo-container,
+body.page-enter-forward .login-card {
+    animation: pageSlideInFromRight 0.45s ease forwards;
+}
+
+body.page-enter-back .logo-container,
+body.page-enter-back .login-card {
+    animation: pageSlideInFromLeft 0.45s ease forwards;
+}
+
+body.page-exit-forward .logo-container,
+body.page-exit-forward .login-card {
+    animation: pageSlideOutToLeft 0.3s ease forwards;
+}
+
+body.page-exit-back .logo-container,
+body.page-exit-back .login-card {
+    animation: pageSlideOutToRight 0.3s ease forwards;
+}
+
+@keyframes logoFadeIn {
+    from {
+    opacity: 0;
+    transform: translateY(14px);
+}
+
+    to {
+    opacity: 1;
+    transform: translateY(0);
+}
+}
+
+@keyframes cardFloatUp {
+    from {
+    opacity: 0;
+    transform: translateY(34px);
+}
+
+    to {
+    opacity: 1;
+    transform: translateY(0);
+}
+}
+
+@keyframes pageSlideInFromRight {
+    from {
+    opacity: 0;
+    transform: translateX(48px);
+}
+
+    to {
+    opacity: 1;
+    transform: translateX(0);
+}
+}
+
+@keyframes pageSlideInFromLeft {
+    from {
+    opacity: 0;
+    transform: translateX(-48px);
+}
+
+    to {
+    opacity: 1;
+    transform: translateX(0);
+}
+}
+
+@keyframes pageSlideOutToLeft {
+    from {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+    to {
+    opacity: 0;
+    transform: translateX(-48px);
+}
+}
+
+@keyframes pageSlideOutToRight {
+    from {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+    to {
+    opacity: 0;
+    transform: translateX(48px);
+}
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+    animation: none !important;
+    transition: none !important;
+}
+
+    .logo-container,
+    .login-card {
+    opacity: 1;
+}
+}
+
+@media (max-width: 768px) {
+    body {
+    justify-content: flex-start;
+    padding: 28px 16px;
+}
+
+    .login-card {
+    width: min(100%, 620px);
+    padding: 40px 28px;
+    border-radius: 22px;
+}
+
+    h1 {
+    font-size: 26px;
+}
+
+    .subtitle {
+    font-size: 15px;
+}
+}
+
+@media (max-width: 480px) {
+    body::after {
+    left: 50%;
+    right: auto;
+    width: 165%;
+    height: 170px;
+    transform: translateX(-50%);
+    background-position: center bottom;
+    background-size: cover;
+    opacity: 0.46;
+}
+
+    .logo-container img {
+    width: 160px;
+}
+
+    .login-card {
+    padding: 28px 18px;
+    border-radius: 18px;
+}
+
+    h1 {
+    font-size: 22px;
+}
+
+    .subtitle {
+    font-size: 14px;
+}
+
+    .google-btn,
+    .secondary-btn {
+    padding: 11px;
+}
+}
+  </style>
+</head>
+<body>
+  <div class="logo-container">
+    <img src="assests/Shehersaaz Logo Update 2025.png" alt="Organization Logo" />
+  </div>
+
+  <div class="login-card">
+    <h1>Shehersaaz Requesition System</h1>
+    <p class="subtitle">
+      Sign in with your official organization email to continue.
+    </p>
+
+    <button id="googleSignInBtn" class="google-btn" type="button">
+      Sign in with Google
+    </button>
+
+    <div id="statusMessage" class="status"></div>
+
+    <div id="userBox" class="user-box">
+      <p><strong>Name:</strong> <span id="userName"></span></p>
+      <p><strong>Email:</strong> <span id="userEmail"></span></p>
+      <div class="button-group">
+        <button id="continueBtn" class="google-btn" type="button">
+          Continue to Request Form
+        </button>
+        <button id="signOutBtn" class="secondary-btn" type="button">
+          Sign out
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import {
+      getAuth,
+      GoogleAuthProvider,
+      signInWithPopup,
+      onAuthStateChanged,
+      signOut
+    } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
+
+    // Replace with your Firebase project config
+    const firebaseConfig = {
+      apiKey: "AIzaSyAZWlC3Om-zT6Ekgbu4jbGF4RTMvdBdPh0",
+      authDomain: "shehersaaz-ims.firebaseapp.com",
+      projectId: "shehersaaz-ims",
+      appId: "1:594008194328:web:628955770dd49b4298f26d"
+    };
+
+    // Replace with your real organization domain
+    const ALLOWED_DOMAIN = "shehersaaz.org.pk";
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const provider = new GoogleAuthProvider();
+
+    const googleSignInBtn = document.getElementById("googleSignInBtn");
+    const continueBtn = document.getElementById("continueBtn");
+    const signOutBtn = document.getElementById("signOutBtn");
+    const statusMessage = document.getElementById("statusMessage");
+    const userBox = document.getElementById("userBox");
+    const userName = document.getElementById("userName");
+    const userEmail = document.getElementById("userEmail");
+    const pageTransitionDirection = sessionStorage.getItem("pageTransitionDirection");
+
+    if (pageTransitionDirection === "forward") {
+      document.body.classList.add("page-enter-forward");
+    } else if (pageTransitionDirection === "back") {
+      document.body.classList.add("page-enter-back");
+    } else {
+      document.body.classList.add("default-enter");
+    }
+
+    sessionStorage.removeItem("pageTransitionDirection");
+
+    function navigateWithTransition(url, direction = "forward") {
+      sessionStorage.setItem("pageTransitionDirection", direction);
+      document.body.classList.remove(
+        "default-enter",
+        "page-enter-forward",
+        "page-enter-back"
+      );
+      document.body.classList.add(
+        direction === "back" ? "page-exit-back" : "page-exit-forward"
+      );
+
+      window.setTimeout(() => {
+        window.location.href = url;
+      }, 300);
+    }
+
+    function showStatus(message, type = "") {
+      statusMessage.textContent = message;
+      statusMessage.className = "status";
+      if (type) statusMessage.classList.add(type);
+    }
+
+    function setUserUI(user) {
+      userName.textContent = user.displayName || "";
+      userEmail.textContent = user.email || "";
+      userBox.style.display = "block";
+      googleSignInBtn.style.display = "none";
+      document.body.classList.add("authenticated");
+    }
+
+    function clearUserUI() {
+      userName.textContent = "";
+      userEmail.textContent = "";
+      userBox.style.display = "none";
+      googleSignInBtn.style.display = "block";
+      document.body.classList.remove("authenticated");
+    }
+
+    async function loginWithGoogle() {
+      showStatus("");
+
+      try {
+        const result = await signInWithPopup(auth, provider);
+        const user = result.user;
+
+        const email = user.email || "";
+        const emailDomain = email.split("@")[1]?.toLowerCase();
+
+        if (emailDomain !== ALLOWED_DOMAIN.toLowerCase()) {
+          await signOut(auth);
+          clearUserUI();
+          showStatus(
+            "Access denied. Please sign in using your official organization email.",
+            "error"
+          );
+          return;
+        }
+
+        sessionStorage.setItem(
+          "loggedInUser",
+          JSON.stringify({
+            name: user.displayName || "",
+            email: user.email || "",
+            uid: user.uid
+          })
+        );
+
+        setUserUI(user);
+        showStatus("Login successful.", "success");
+      } catch (error) {
+        showStatus(error.message || "Login failed.", "error");
+      }
+    }
+
+    googleSignInBtn.addEventListener("click", loginWithGoogle);
+
+    continueBtn.addEventListener("click", () => {
+      navigateWithTransition("Form.html", "forward");
+    });
+
+    signOutBtn.addEventListener("click", async () => {
+      await signOut(auth);
+      sessionStorage.removeItem("loggedInUser");
+      clearUserUI();
+      showStatus("Signed out successfully.", "success");
+    });
+
+    onAuthStateChanged(auth, async (user) => {
+  if (!user) {
+    sessionStorage.removeItem("loggedInUser");
+    clearUserUI();
+    googleSignInBtn.style.display = "block"; // show button again
+    return;
+  }
+
+  // ✅ USER IS LOGGED IN
+  const email = user.email || "";
+  const emailDomain = email.split("@")[1]?.toLowerCase();
+
+  if (emailDomain !== ALLOWED_DOMAIN.toLowerCase()) {
+    await signOut(auth);
+    sessionStorage.removeItem("loggedInUser");
+    clearUserUI();
+    googleSignInBtn.style.display = "block";
+    return;
+  }
+
+  // Save user
+  sessionStorage.setItem(
+    "loggedInUser",
+    JSON.stringify({
+      name: user.displayName || "",
+      email: user.email || "",
+      uid: user.uid
+    })
+  );
+
+  // Update UI
+  setUserUI(user);
+
+  // 🔥 THIS IS THE IMPORTANT LINE
+  googleSignInBtn.style.display = "none";
+});
+  </script>
+</body>
+</html>
