@@ -25,7 +25,7 @@ async function updateSettingsGroup(req, res, next) {
   try {
     const group = validateSettingKey(req.params.group, "setting group");
     const settings = validateSettingsPayload(req.body.settings);
-    const updatedBy = "Admin";
+    const updatedBy = req.auth?.user?.email || req.auth?.user?.name || "System";
 
     await settingsService.upsertGroupSettings(group, settings, updatedBy);
     return ok(res);
@@ -39,7 +39,7 @@ async function updateSetting(req, res, next) {
     const group = validateSettingKey(req.params.group, "setting group");
     const key = validateSettingKey(req.params.key);
     const valueType = validateValueType(req.body.valueType);
-    const updatedBy = "Admin";
+    const updatedBy = req.auth?.user?.email || req.auth?.user?.name || "System";
 
     await settingsService.upsertSingleSetting({
       group,

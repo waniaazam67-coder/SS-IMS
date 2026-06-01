@@ -585,6 +585,7 @@ CALL sp_add_column_if_missing('locations', 'updated_by', 'updated_by INT UNSIGNE
 CALL sp_add_column_if_missing('users', 'deleted_at', 'deleted_at TIMESTAMP NULL');
 CALL sp_add_column_if_missing('users', 'created_by', 'created_by INT UNSIGNED NULL');
 CALL sp_add_column_if_missing('users', 'updated_by', 'updated_by INT UNSIGNED NULL');
+CALL sp_drop_column_if_exists('users', 'role');
 CALL sp_add_column_if_missing('vendors', 'deleted_at', 'deleted_at TIMESTAMP NULL');
 CALL sp_add_column_if_missing('vendors', 'created_by', 'created_by INT UNSIGNED NULL');
 CALL sp_add_column_if_missing('vendors', 'updated_by', 'updated_by INT UNSIGNED NULL');
@@ -850,29 +851,45 @@ ON DUPLICATE KEY UPDATE description = VALUES(description), is_system = VALUES(is
 
 INSERT INTO permissions (permission_key, module, description)
 VALUES
-  ('manage_settings', 'settings', 'Create and update system settings.'),
-  ('manage_users', 'users', 'Create, update, and deactivate users.'),
-  ('manage_roles', 'users', 'Assign roles and permissions.'),
-  ('manage_inventory', 'inventory', 'Create items and post stock movements.'),
-  ('view_inventory', 'inventory', 'View inventory balances and movement history.'),
-  ('create_requests', 'requests', 'Create inventory requests.'),
-  ('approve_requests', 'requests', 'Approve or reject inventory requests.'),
-  ('issue_stock', 'inventory', 'Issue approved stock to requesters.'),
-  ('manage_purchase_orders', 'procurement', 'Create and update purchase orders.'),
-  ('approve_purchase_orders', 'procurement', 'Approve purchase orders.'),
-  ('manage_grns', 'procurement', 'Create GRNs and post accepted quantities.'),
-  ('view_audit_logs', 'audit', 'View audit and approval history.')
+  ('setting.manage', 'settings', 'Create and update system settings.'),
+  ('user.manage', 'users', 'Create, update, and deactivate users.'),
+  ('role.manage', 'users', 'Assign roles and permissions.'),
+  ('inventory.manage', 'inventory', 'Create items and post stock movements.'),
+  ('inventory.view', 'inventory', 'View inventory balances and movement history.'),
+  ('request.create', 'requests', 'Create inventory requests.'),
+  ('request.approve', 'requests', 'Approve or reject inventory requests.'),
+  ('inventory.issue', 'inventory', 'Issue approved stock to requesters.'),
+  ('purchase_order.manage', 'procurement', 'Create and update purchase orders.'),
+  ('purchase_order.approve', 'procurement', 'Approve purchase orders.'),
+  ('grn.manage', 'procurement', 'Create GRNs and post accepted quantities.'),
+  ('audit.view', 'audit', 'View audit and approval history.')
 ON DUPLICATE KEY UPDATE module = VALUES(module), description = VALUES(description);
+
+DELETE FROM permissions
+WHERE permission_key IN (
+  'manage_settings',
+  'manage_users',
+  'manage_roles',
+  'manage_inventory',
+  'view_inventory',
+  'create_requests',
+  'approve_requests',
+  'issue_stock',
+  'manage_purchase_orders',
+  'approve_purchase_orders',
+  'manage_grns',
+  'view_audit_logs'
+);
 
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
 JOIN permissions p ON (
   r.name = 'Admin'
-  OR (r.name = 'Requester' AND p.permission_key IN ('create_requests', 'view_inventory'))
-  OR (r.name = 'Inventory Manager' AND p.permission_key IN ('view_inventory', 'manage_inventory', 'issue_stock', 'manage_grns', 'view_audit_logs'))
-  OR (r.name = 'Procurement Officer' AND p.permission_key IN ('view_inventory', 'manage_purchase_orders', 'manage_grns'))
-  OR (r.name = 'Approver' AND p.permission_key IN ('create_requests', 'approve_requests', 'view_inventory'))
+  OR (r.name = 'Requester' AND p.permission_key IN ('request.create', 'inventory.view'))
+  OR (r.name = 'Inventory Manager' AND p.permission_key IN ('inventory.view', 'inventory.manage', 'inventory.issue', 'grn.manage', 'audit.view'))
+  OR (r.name = 'Procurement Officer' AND p.permission_key IN ('inventory.view', 'purchase_order.manage', 'grn.manage'))
+  OR (r.name = 'Approver' AND p.permission_key IN ('request.create', 'request.approve', 'inventory.view'))
 );
 
 INSERT IGNORE INTO user_roles (user_id, role_id, assigned_by)

@@ -92,17 +92,30 @@ async function requirePortalSession() {
   }
   const token = await user.getIdToken();
   localStorage.setItem("firebase_token", token);
-  currentUser = {
-    ...currentUser,
-    id: user.uid,
-    uid: user.uid,
-    name: user.displayName || user.email || "IMS User",
-    email: user.email || "",
-    role: "Admin",
-    roles: ["Admin"],
-    status: "active"
-  };
-  isAdmin = currentUser.roles.includes("Admin") || currentUser.role === "Admin";
+  try {
+    const response = await fetch("/api/auth/me", {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!response.ok) throw new Error("Unable to load your IMS permissions.");
+    const session = await response.json();
+    const authUser = session.user || {};
+    currentUser = {
+      ...currentUser,
+      id: authUser.id || user.uid,
+      uid: user.uid,
+      name: authUser.name || user.displayName || user.email || "IMS User",
+      email: authUser.email || user.email || "",
+      roles: Array.isArray(session.roles) ? session.roles : [],
+      permissions: Array.isArray(session.permissions) ? session.permissions : [],
+      status: authUser.status || "active"
+    };
+    currentUser.role = currentUser.roles[0] || "Requester";
+  } catch (error) {
+    localStorage.removeItem("firebase_token");
+    redirectToLogin();
+    return null;
+  }
+  isAdmin = currentUser.roles.includes("Admin");
   return { user, access_token: token };
 }
 

@@ -21,7 +21,7 @@ async function getStockMovements(req, res, next) {
 
 async function createStockMovement(req, res, next) {
   try {
-    const createdBy = 1;
+    const createdBy = req.auth.user.id;
     const result = await inventoryService.postStockMovement({ ...req.body, createdBy });
     return ok(res, result, 201);
   } catch (error) {

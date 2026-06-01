@@ -3,6 +3,7 @@ const express = require("express");
 const settingsRoutes = require("./routes/settingsRoutes");
 const inventoryRoutes = require("./routes/inventoryRoutes");
 const imsRoutes = require("./routes/imsRoutes");
+const authRoutes = require("./routes/authRoutes");
 const { errorHandler, notFoundHandler } = require("./middleware/errorMiddleware");
 const { corsMiddleware } = require("./middleware/corsMiddleware");
 const config = require("./config/env");
@@ -51,6 +52,7 @@ app.get("/api/firebase-config", (req, res) => {
 });
 
 app.use("/api", imsRoutes);
+app.use("/api/auth", authRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/inventory", inventoryRoutes);
 
