@@ -1,0 +1,13 @@
+{
+  "name": "ims-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix Portal/backend run dev",
+    "start": "npm --prefix Portal/backend start",
+    "portal:dev": "npm --prefix Portal/backend run dev",
+    "portal:start": "npm --prefix Portal/backend start",
+    "portal:db:init": "npm --prefix Portal/backend run db:init",
+    "requisition:start": "npm --prefix Requisition-From start"
+  }
+}

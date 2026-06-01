@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IMS Portal</title>
+  <link rel="icon" type="image/png" href="assets/ims-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css?v=requisition-1">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Main navigation">
+      <div class="brand">
+        <div class="brand-mark"><i data-lucide="package-open"></i></div>
+        <span>INVENTORY</span>
+        <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Collapse sidebar" aria-expanded="true"><i data-lucide="panel-left-close"></i></button>
+      </div>
+      <nav class="side-nav" id="sideNav">
+        <div class="nav-section single">
+          <button class="nav-item active" data-view="dashboard"><span class="nav-icon"><i data-lucide="layout-grid"></i></span><span>Dashboard</span></button>
+        </div>
+        <div class="nav-section collapsed">
+          <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="warehouse"></i></span><span>Inventory</span><i data-lucide="chevron-down"></i></button>
+          <div class="nav-section-items">
+            <button class="nav-item" data-view="inventory"><span class="nav-icon"><i data-lucide="boxes"></i></span><span>Inventory</span></button>
+            <button class="nav-item" data-view="stockIn"><span class="nav-icon"><i data-lucide="package-plus"></i></span><span>Stock In</span></button>
+            <button class="nav-item" data-view="issue"><span class="nav-icon"><i data-lucide="package-minus"></i></span><span>Stock Issue</span></button>
+            <button class="nav-item" data-view="grn"><span class="nav-icon"><i data-lucide="truck"></i></span><span>GRN</span></button>
+          </div>
+        </div>
+        <div class="nav-section collapsed">
+          <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="shopping-cart"></i></span><span>Procurement</span><i data-lucide="chevron-down"></i></button>
+          <div class="nav-section-items">
+            <button class="nav-item" data-view="po"><span class="nav-icon"><i data-lucide="file-pen-line"></i></span><span>PO</span></button>
+            <button class="nav-item" data-view="vendors"><span class="nav-icon"><i data-lucide="building-2"></i></span><span>Vendors</span></button>
+          </div>
+        </div>
+        <div class="nav-section collapsed">
+          <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="clipboard-list"></i></span><span>Requests</span><i data-lucide="chevron-down"></i></button>
+          <div class="nav-section-items">
+            <button class="nav-item" data-view="requisition"><span class="nav-icon"><i data-lucide="file-plus-2"></i></span><span>Requisition Form</span></button>
+            <button class="nav-item" data-view="transport"><span class="nav-icon"><i data-lucide="route"></i></span><span>Transport Requests</span></button>
+            <button class="nav-item" data-view="requests"><span class="nav-icon"><i data-lucide="list-checks"></i></span><span>Requests</span></button>
+          </div>
+        </div>
+        <div class="nav-section single">
+          <button class="nav-item" data-view="approvals"><span class="nav-icon"><i data-lucide="shield-check"></i></span><span>Approvals</span></button>
+        </div>
+        <div class="nav-section single">
+          <button class="nav-item" data-view="reports"><span class="nav-icon"><i data-lucide="chart-column"></i></span><span>Reports</span></button>
+        </div>
+        <div class="nav-section single">
+          <button class="nav-item admin-only" data-view="settings"><span class="nav-icon"><i data-lucide="settings"></i></span><span>Settings</span></button>
+        </div>
+      </nav>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div class="search">
+          <i data-lucide="search"></i>
+          <input id="globalSearch" type="search" placeholder="Search anything">
+        </div>
+        <div class="top-actions">
+          <button class="icon-btn notification" id="notificationBtn" type="button" aria-label="Notifications" aria-expanded="false" aria-controls="notificationCenter"><i data-lucide="bell"></i></button>
+          <button class="icon-btn admin-only" id="topSettingsBtn" type="button" aria-label="Settings"><i data-lucide="settings"></i></button>
+          <div class="profile-wrap">
+            <button class="profile" id="profileBtn" type="button" aria-label="Inventory Manager" data-profile-name="Inventory Manager"><span class="avatar">IM</span><span class="profile-name">Inventory Manager</span><i data-lucide="chevron-down"></i></button>
+            <div class="profile-menu" id="profileMenu" aria-hidden="true">
+              <button class="profile-menu-item" id="logoutBtn" type="button">Logout</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="page-head">
+        <div class="page-title">
+          <span><i data-lucide="layout-grid"></i></span>
+          <h1 id="pageTitle">Dashboard</h1>
+        </div>
+      </section>
+
+      <section id="toast" class="toast" role="status"></section>
+
+      <aside class="notification-center" id="notificationCenter" aria-label="Notifications" aria-hidden="true">
+        <div class="notification-head">
+          <h2>Notifications</h2>
+          <div class="notification-tools">
+            <label class="unread-toggle">Only show unread<input id="unreadOnlyToggle" type="checkbox"><span></span></label>
+            <button class="icon-btn" id="markNotificationsRead" type="button" aria-label="Mark all as read"><i data-lucide="check-check"></i></button>
+            <button class="icon-btn" id="closeNotificationCenter" type="button" aria-label="Close notifications"><i data-lucide="x"></i></button>
+          </div>
+        </div>
+        <div class="notification-tabs" role="tablist">
+          <button class="notification-tab active" type="button" data-notification-tab="direct">Direct</button>
+          <button class="notification-tab" type="button" data-notification-tab="watching">Watching</button>
+        </div>
+        <div class="notification-list" id="notificationList"></div>
+      </aside>
+
+      <section class="view active" id="dashboardView">
+        <div class="dashboard-grid">
+          <div class="dashboard-stats">
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="view-requests"><span class="stat-icon"><i data-lucide="package"></i></span><span class="stat-copy"><strong id="kpiRequests">0</strong><span title="Inventory Requests">Inventory Requests</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="transport-requests"><span class="stat-icon"><i data-lucide="truck"></i></span><span class="stat-copy"><strong id="kpiTransport">0</strong><span title="Transport Requests">Transport Requests</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="view-requests"><span class="stat-icon"><i data-lucide="circle-check"></i></span><span class="stat-copy"><strong id="kpiApprovedRequests">0</strong><span title="Approved Requests">Approved Requests</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="low-stock"><span class="stat-icon"><i data-lucide="triangle-alert"></i></span><span class="stat-copy"><strong id="kpiStockLow">0</strong><span title="Low Stock Items">Low Stock Items</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="out-of-stock"><span class="stat-icon"><i data-lucide="ban"></i></span><span class="stat-copy"><strong id="kpiOutOfStock">0</strong><span title="Out of Stock Items">Out of Stock Items</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="clipboard-list"></i></span><span class="stat-copy"><strong id="kpiOpenPO">0</strong><span title="Opened PO">Opened PO</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="send"></i></span><span class="stat-copy"><strong id="kpiOrderedPO">0</strong><span title="Ordered PO">Ordered PO</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="clipboard-check"></i></span><span class="stat-copy"><strong id="kpiClosedDeliveredPO">0</strong><span title="Closed/Delivered PO">Closed/Delivered PO</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="clock"></i></span><span class="stat-copy"><strong id="kpiPartialDeliveredPO">0</strong><span title="Partially Delivered PO">Partially Delivered PO</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="x"></i></span><span class="stat-copy"><strong id="kpiCancelledPO">0</strong><span title="Cancelled PO">Cancelled PO</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="store"></i></span><span class="stat-copy"><strong id="kpiVendors">0</strong><span title="Active Vendors">Active Vendors</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="pending-grns"><span class="stat-icon"><i data-lucide="receipt-text"></i></span><span class="stat-copy"><strong id="kpiTotalGRNs">0</strong><span title="Total GRNs">Total GRNs</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="inventory-items"><span class="stat-icon"><i data-lucide="layers"></i></span><span class="stat-copy"><strong id="kpiInventoryItems">0</strong><span title="Total Items">Total Items</span></span></article>
+            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="inventory-items"><span class="stat-icon"><i data-lucide="tag"></i></span><span class="stat-copy"><strong id="kpiItemCategories">0</strong><span title="Item Categories">Item Categories</span></span></article>
+          </div>
+          <article class="card dashboard-card dashboard-table-card">
+            <div class="card-head"><h2>Recent Requests</h2><div class="kebab-wrap"><button class="dots" type="button" data-menu-toggle="recentRequestsMenu" aria-label="Recent request options" aria-expanded="false"><i data-lucide="more-vertical"></i></button><div class="kebab-menu" id="recentRequestsMenu" aria-hidden="true"><button type="button" data-dashboard-action="view-requests">Open Requests</button><button type="button" data-dashboard-action="refresh">Refresh</button></div></div></div>
+            <div class="table-wrap dashboard-scroll"><table><thead><tr><th>Request ID</th><th>Requested By</th><th>Department</th><th>Date</th><th>Approval Status</th><th>Issuance Status</th></tr></thead><tbody id="dashboardRecentRequests"></tbody></table></div>
+          </article>
+          <article class="card dashboard-card dashboard-table-card">
+            <div class="card-head"><h2>Approval Queue <strong id="pendingApprovalCount">0</strong></h2><div class="kebab-wrap"><button class="dots" type="button" data-menu-toggle="pendingApprovalsMenu" aria-label="Approval queue options" aria-expanded="false"><i data-lucide="more-vertical"></i></button><div class="kebab-menu" id="pendingApprovalsMenu" aria-hidden="true"><button type="button" data-dashboard-action="pending-approvals">View Details</button><button type="button" data-dashboard-action="refresh">Refresh</button></div></div></div>
+            <div class="table-wrap dashboard-scroll"><table><thead><tr><th>Request ID</th><th>Requested By</th><th>Department</th><th>Date</th><th>Status</th></tr></thead><tbody id="dashboardPendingApprovals"></tbody></table></div>
+          </article>
+          <article class="card dashboard-card dashboard-table-card activity-card">
+            <div class="card-head"><h2>Recent Activity</h2><div class="kebab-wrap"><button class="dots" type="button" data-menu-toggle="recentActivityMenu" aria-label="Recent activity options" aria-expanded="false"><i data-lucide="more-vertical"></i></button><div class="kebab-menu" id="recentActivityMenu" aria-hidden="true"><button type="button" data-dashboard-action="refresh">Refresh</button></div></div></div>
+            <div class="table-wrap dashboard-scroll"><table><thead><tr><th>Activity</th><th>Reference</th><th>Details</th><th>Date</th></tr></thead><tbody id="dashboardRecentActivity"></tbody></table></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" id="requestView">
+        <form id="requestForm" class="card form-card">
+          <div class="section-title"><h2>Create Inventory Request</h2><p>Item ID and location are required, matching the Google Sheet rules.</p></div>
+          <div class="form-grid">
+            <label>Requested by<input required name="requester"></label>
+            <label>Department<input required name="department"></label>
+            <label>Location<input required name="location" data-locations list="requestLocationOptions" placeholder="Select location"></label>
+            <label>Line manager email<input required type="email" name="managerEmail"></label>
+            <label>Requester email<input required type="email" name="requesterEmail"></label>
+          </div>
+          <div class="line-builder">
+            <h3>Request Items</h3>
+            <div id="requestItems"></div>
+            <button class="secondary" id="addRequestItem" type="button"><i data-lucide="plus"></i>Add item</button>
+          </div>
+          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="send"></i>Submit Request</button></div>
+        </form>
+      </section>
+
+      <section class="view" id="requestsView">
+        <div class="card table-card">
+          <div class="section-title"><h2>Requests List</h2><p>Request lines with manager approval and issuance status.</p><button class="secondary" type="button" data-history-page="requests">History</button></div>
+          <div class="table-wrap requests-scroll"><table><thead><tr><th>ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Approval</th><th>Issue</th><th>Date</th></tr></thead><tbody id="requestsTable"></tbody></table></div>
+          <div class="pagination" id="requestsPagination">
+            <button class="page-btn" id="requestsPrev" type="button"><i data-lucide="chevron-left"></i>Prev</button>
+            <span id="requestsPageInfo">Page 1 of 1</span>
+            <button class="page-btn" id="requestsNext" type="button">Next<i data-lucide="chevron-right"></i></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="requisitionView">
+        <div class="card table-card">
+          <div class="section-title"><h2>Requisition Form</h2><p>Submit a new requisition and track your submitted inventory requests.</p></div>
+          <div class="requisition-actions">
+            <button class="primary" id="openRequisitionForm" type="button"><i data-lucide="external-link"></i>New Request</button>
+          </div>
+          <div class="section-title compact-title"><h2>Your Requests</h2><p>Approval and issuance tracking for requests submitted from your account.</p></div>
+          <div class="table-wrap requests-scroll"><table><thead><tr><th>ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Approval</th><th>Issue</th><th>Date</th></tr></thead><tbody id="myRequestsTable"></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="view" id="inventoryView">
+        <div class="card table-card">
+          <div class="section-title"><h2>Inventory</h2><p>Current stock is calculated from the transaction ledger by Item ID + Location.</p></div>
+          <div class="inventory-toolbar">
+            <div class="category-tabs" id="categoryTabs"></div>
+            <label class="inventory-location-filter">Location<input id="inventoryLocationFilter" data-locations list="inventoryLocationOptions" placeholder="All locations"></label>
+            <button class="primary" id="openItemModal" type="button"><i data-lucide="plus"></i>Add Item</button>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th>Item ID</th><th>Name</th><th>Type</th><th>Category</th><th>Location</th><th>Stock</th><th>Status</th></tr></thead><tbody id="inventoryTable"></tbody></table></div>
+          <div class="pagination" id="inventoryPagination">
+            <button class="page-btn" id="inventoryPrev" type="button"><i data-lucide="chevron-left"></i>Previous</button>
+            <span id="inventoryPageInfo">Page 1 of 1</span>
+            <button class="page-btn" id="inventoryNext" type="button">Next<i data-lucide="chevron-right"></i></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="stockInView">
+        <form id="stockInForm" class="card form-card">
+          <div class="section-title"><h2>Manual Stock In</h2><p>Use for opening balances, old stock entries, and adjustments.</p><button class="secondary" type="button" data-history-page="stockIn">History</button></div>
+          <div class="form-grid">
+            <label>Category<input required name="category" id="stockInCategory" data-categories list="stockInCategoryOptions" placeholder="Select category"></label>
+            <label>Item name<input required name="itemName" id="stockInItemName" data-item-names data-category-source="stockInCategory" list="stockInItemNameOptions" placeholder="Select item"></label>
+            <label>Type<input required name="itemCode" id="stockInItemType" data-item-types data-item-source="stockInItemName" data-category-source="stockInCategory" list="stockInItemTypeOptions" placeholder="Select type"></label>
+            <label>Selected Item ID<input readonly id="stockInItemId" placeholder="Choose an item"></label>
+            <label>Location<input required name="location" data-locations list="stockInLocationOptions" placeholder="Select location"></label>
+            <label>Quantity<input required min="1" type="number" name="quantity"></label>
+            <label class="span-2">Notes<input name="notes" placeholder="Optional remarks"></label>
+          </div>
+          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-plus"></i>Add Stock</button></div>
+        </form>
+      </section>
+
+      <section class="view" id="issueView">
+        <form id="manualStockOutForm" class="card form-card">
+          <div class="section-title"><h2>Manual Stock Out</h2><p>Use for direct stock issues or adjustments not linked to a request.</p><button class="secondary" type="button" data-history-page="stockOut">History</button></div>
+          <div class="form-grid">
+            <label>Category<input required name="category" id="stockOutCategory" data-categories list="stockOutCategoryOptions" placeholder="Select category"></label>
+            <label>Item name<input required name="itemName" id="stockOutItemName" data-item-names data-category-source="stockOutCategory" list="stockOutItemNameOptions" placeholder="Select item"></label>
+            <label>Type<input required name="itemCode" id="stockOutItemType" data-item-types data-item-source="stockOutItemName" data-category-source="stockOutCategory" list="stockOutItemTypeOptions" placeholder="Select type"></label>
+            <label>Selected Item ID<input readonly id="stockOutItemId" placeholder="Choose an item"></label>
+            <label>Location<input required name="location" data-locations list="stockOutLocationOptions" placeholder="Select location"></label>
+            <label>Quantity<input required min="1" type="number" name="quantity"></label>
+            <label>Issued by<input name="issuedBy" placeholder="Inventory Manager"></label>
+            <label class="span-2">Notes<input name="notes" placeholder="Optional remarks"></label>
+          </div>
+          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-minus"></i>Stock Out</button></div>
+        </form>
+        <div class="card table-card">
+          <div class="section-title"><h2>Issue Approved Stock</h2><p>Issuance creates STOCK_OUT only when approved and stock is available.</p><button class="secondary" type="button" data-history-page="stockOut">History</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Request</th><th>Item</th><th>Location</th><th>Requested</th><th>Available</th><th>Issue Qty</th><th>Issued By</th><th>Action</th></tr></thead><tbody id="issueTable"></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="view" id="poView">
+        <form id="poForm" class="card form-card">
+          <div class="section-title"><h2>Purchase Order</h2><p>PO tracks procurement only. It does not change inventory stock.</p></div>
+          <div class="form-grid">
+            <label>PO number<input name="poNumber" placeholder="Leave blank for auto number"></label>
+            <label>Issue date<input name="issueDate" type="date"></label>
+            <label>Vendor<input required name="vendorId" data-vendors list="vendorOptions" placeholder="Select vendor"></label>
+            <label>Vendor contact<input name="vendorContact" readonly placeholder="Auto from vendor"></label>
+            <label class="span-2">Vendor address<input name="vendorAddress" placeholder="Vendor address"></label>
+            <label>Focal person from Shehersaaz<input name="focalPerson" placeholder="Name"></label>
+            <label>Budget line / donor<input name="budgetLine" placeholder="Budget line, grant, or donor"></label>
+            <label>Bank<input name="bankName" value="Soneri Bank"></label>
+            <label>A/C title<input name="accountTitle" placeholder="Account title"></label>
+            <label>A/C no.<input name="accountNo" value="0030520013181005"></label>
+            <label>Status<input name="status" list="poStatusOptions" value="Open"><datalist id="poStatusOptions"><option value="Open"></option><option value="Ordered"></option><option value="Closed"></option></datalist></label>
+            <label>Location<input required name="location" data-locations list="poLocationOptions" placeholder="Select location"></label>
+            <label>Arrived by<input name="arrivedBy" type="date"></label>
+            <label>Service start date<input name="serviceStartDate" type="date"></label>
+            <label>Service completion date<input name="serviceCompletionDate" type="date"></label>
+            <label>Payment terms<input name="paymentTerms" value="As per Shehersaaz Standard Payment terms (30 days)"></label>
+            <label>Delivery terms<input name="deliveryTerms" placeholder="Delivery terms"></label>
+            <label class="span-2">Quotation reference<input name="quotationReference" placeholder="Quotation number / reference"></label>
+            <label>Category<input required name="category" id="poCategory" data-categories list="poCategoryOptions" placeholder="Select category"></label>
+            <label>Item name<input required name="itemName" id="poItemName" data-item-names data-category-source="poCategory" list="poItemNameOptions" placeholder="Select item"></label>
+            <label>Type<input required name="itemCode" id="poItemType" data-item-types data-item-source="poItemName" data-category-source="poCategory" list="poItemTypeOptions" placeholder="Select type"></label>
+            <label>Item ID<input readonly name="itemIdDisplay" id="poItemId" placeholder="Auto from item and type"></label>
+            <label class="span-2">Specifications<input required name="specifications" placeholder="Item details, specifications, or procurement description"></label>
+            <label>Quantity ordered<input required min="0" step="0.01" type="number" name="quantityOrdered"></label>
+            <label>Unit price<input min="0" step="0.01" type="number" name="unitPrice" value="0"></label>
+            <label>GST %<input min="0" step="0.01" type="number" name="taxRate" value="18"></label>
+            <label>PO amount<input readonly name="poAmount" value="0"></label>
+            <label>Approved by<input name="approvedBy" placeholder="Approver name"></label>
+            <label>Supplier signatory<input name="supplierSignatory" placeholder="Supplier signatory"></label>
+            <label class="span-2">Notes / remarks<input name="notesRemarks" placeholder="Optional remarks"></label>
+          </div>
+          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="file-plus"></i>Generate PO</button></div>
+        </form>
+        <div class="card table-card">
+          <div class="section-title"><h2>Saved Purchase Orders</h2><p>Saved POs can be opened in the approved print format.</p></div>
+          <div class="table-wrap"><table><thead><tr><th>PO #</th><th>Issue Date</th><th>Vendor</th><th>Specifications</th><th>Qty Ordered</th><th>Unit Price</th><th>PO Amount</th><th>Status</th><th>Arrived By</th><th>Location</th><th>Qty Received</th><th>Cancellation Reason</th><th>Actions</th></tr></thead><tbody id="poTable"></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="view" id="grnView">
+        <form id="grnForm" class="card form-card">
+          <div class="section-title"><h2>Goods Received Note</h2><p>Accepted quantity creates GRN_STOCK_IN for the exact Item ID + Location.</p></div>
+          <div class="form-grid">
+            <label>PO Number<input required name="poNumber" id="poSelect" list="poNumberOptions" placeholder="Select PO number"></label>
+            <label>Item name<input readonly name="itemName" id="grnItemName"></label>
+            <label>Type<input readonly name="itemType" id="grnItemType"></label>
+            <label>Item ID<input readonly required name="itemCode" id="grnItemCode"></label>
+            <label>Location<input required name="location" data-locations list="grnLocationOptions" placeholder="Select location"></label>
+            <label>Qty received<input required min="1" type="number" name="qtyReceived"></label>
+            <label>Qty accepted<input required min="0" type="number" name="qtyAccepted"></label>
+            <label>Received by<input required name="receivedBy"></label>
+            <label class="span-2">Notes<input name="notes"></label>
+          </div>
+          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-check"></i>Create GRN</button></div>
+        </form>
+        <div class="card table-card">
+          <div class="section-title"><h2>GRN Records</h2><p>Imported GRNs are shown here. Older sheet rows without Item ID are retained as records only.</p></div>
+          <div class="table-wrap"><table><thead><tr><th>GRN #</th><th>PO #</th><th>Item ID</th><th>Item / Specification</th><th>Location</th><th>Received</th><th>Accepted</th><th>Stock Movement</th><th>Received By</th><th>Date</th></tr></thead><tbody id="grnTable"></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="view" id="transportView">
+        <div class="card table-card">
+          <div class="section-title"><h2>Goods Transport</h2><p>Goods, equipment, stock, furniture, or other physical item movements.</p></div>
+          <div class="table-wrap"><table><thead><tr><th>ID</th><th>Requester</th><th>Line Manager Email</th><th>Required Date</th><th>Pickup Time</th><th>Pickup</th><th>Drop-off</th><th>Goods / Items</th><th>Quantity / Weight / Size</th><th>Vehicle</th><th>Purpose / Notes</th><th>Approval</th><th>Arrangement</th><th>Action</th></tr></thead><tbody id="goodsTransportTable"></tbody></table></div>
+        </div>
+        <div class="card table-card">
+          <div class="section-title"><h2>Travel Requests</h2><p>Official staff travel outside the city or longer planned duty travel.</p></div>
+          <div class="table-wrap"><table><thead><tr><th>ID</th><th>Requester</th><th>Line Manager Email</th><th>Travel Date</th><th>Departure Time</th><th>Return Date</th><th>Pickup</th><th>Destination City / Area</th><th>Trip Duration</th><th>Advance Required</th><th>Travelers</th><th>Vehicle</th><th>Purpose / Notes</th><th>Approval</th><th>Arrangement</th><th>Action</th></tr></thead><tbody id="travelTransportTable"></tbody></table></div>
+        </div>
+        <div class="card table-card">
+          <div class="section-title"><h2>Local Visit / Meeting Transport</h2><p>In-city meetings, field visits, errands, and same-day official movements.</p></div>
+          <div class="table-wrap"><table><thead><tr><th>ID</th><th>Requester</th><th>Line Manager Email</th><th>Visit Date</th><th>Departure</th><th>Return</th><th>Pickup</th><th>Meeting / Visit Location</th><th>Expected Duration</th><th>Passengers</th><th>Vehicle</th><th>Purpose / Notes</th><th>Approval</th><th>Arrangement</th><th>Action</th></tr></thead><tbody id="localTransportTable"></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="view" id="approvalsView">
+        <div class="card table-card">
+          <div class="section-title"><h2>Inventory Request Approvals</h2><p>Pending item requests assigned to line managers for approval.</p><button class="secondary" type="button" data-history-page="approvals">History</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Request ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Date</th><th>Action</th></tr></thead><tbody id="inventoryApprovalsTable"></tbody></table></div>
+        </div>
+        <div class="card table-card">
+          <div class="section-title"><h2>Transport Request Approvals</h2><p>Pending transport requests awaiting line manager approval.</p></div>
+          <div class="table-wrap"><table><thead><tr><th>ID</th><th>Type</th><th>Requester</th><th>Line Manager Email</th><th>Date</th><th>Pickup</th><th>Destination</th><th>Purpose / Notes</th><th>Status</th><th>Action</th></tr></thead><tbody id="transportApprovalsTable"></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="view" id="historyView">
+        <div class="history-page">
+          <div class="history-heading">
+            <div>
+              <h2 id="historyTitle">Requests history</h2>
+              <p id="historyDescription">Tap any entry to see details</p>
+            </div>
+            <button class="secondary" type="button" id="historyBackBtn">Back</button>
+          </div>
+          <div class="history-tabs" role="tablist">
+            <button class="history-tab active" type="button" data-history-filter="all">All activity</button>
+            <button class="history-tab" type="button" data-history-filter="transport">Transport</button>
+            <button class="history-tab" type="button" data-history-filter="items">Items</button>
+          </div>
+          <div class="history-list" id="historyList"></div>
+        </div>
+      </section>
+
+      <section class="view" id="vendorsView">
+        <form id="vendorForm" class="card form-card">
+          <div class="section-title"><h2>Vendor Master</h2><p>Vendor records used by purchase orders.</p></div>
+          <div class="form-grid">
+            <label>Name<input required name="name"></label>
+            <label>Phone<input name="phone"></label>
+            <label>Contact person<input name="contact"></label>
+            <label class="span-2">Address<input name="address"></label>
+          </div>
+          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="building-2"></i>Add Vendor</button></div>
+        </form>
+        <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Contact</th><th>Address</th></tr></thead><tbody id="vendorsTable"></tbody></table></div></div>
+      </section>
+
+      <section class="view" id="reportsView">
+        <div class="card table-card">
+          <div class="section-title"><h2>Audit & Movement Report</h2><p>All status changes and stock movements are captured here.</p></div>
+          <div class="table-wrap"><table><thead><tr><th>Date</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody id="auditTable"></tbody></table></div>
+        </div>
+      </section>
+
+      <section class="view" id="settingsView">
+        <div class="settings-layout">
+          <aside class="settings-tabs" id="settingsTabs" aria-label="Settings sections"></aside>
+          <div class="settings-panel">
+            <div class="section-title settings-title">
+              <h2 id="settingsSectionTitle">Settings</h2>
+              <p id="settingsSectionDescription">Reusable system rules and master configurations.</p>
+            </div>
+            <form id="settingsForm" class="settings-form"></form>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <template id="requestItemTemplate">
+    <div class="line-row">
+      <label>Item<input required name="itemCode" data-items placeholder="Select item"></label>
+      <label>Quantity<input required min="1" type="number" name="quantity" value="1"></label>
+      <button class="icon-danger remove-line" type="button" aria-label="Remove line"><i data-lucide="trash-2"></i></button>
+    </div>
+  </template>
+  <template id="itemTypeTemplate">
+    <div class="item-type-row">
+      <label>Type / Specification<input required name="type" placeholder="Size, variant, or specification"></label>
+      <label>Item ID<input required name="code" placeholder="Unique item ID"></label>
+      <button class="icon-danger remove-type" type="button" aria-label="Remove type"><i data-lucide="trash-2"></i></button>
+    </div>
+  </template>
+  <div class="modal-backdrop" id="itemModal" aria-hidden="true">
+    <form id="itemForm" class="card form-card modal-card">
+      <div class="modal-head">
+        <div class="section-title"><h2>Add Inventory Item</h2><p>Create item types with unique Item IDs.</p></div>
+        <button class="icon-btn" id="closeItemModal" type="button" aria-label="Close add item"><i data-lucide="x"></i></button>
+      </div>
+      <div class="form-grid">
+        <label>Category<input name="category" id="itemCategorySelect" data-categories list="itemCategoryOptions" placeholder="Select category"></label>
+        <label>New category<input name="newCategory" placeholder="Only fill this to create a new category"></label>
+        <label>Item name<input required name="name" placeholder="Enter item name"></label>
+        <label>Unit<input name="unit" placeholder="pcs, box, kg"></label>
+      </div>
+      <div class="line-builder">
+        <h3>Item Types</h3>
+        <div id="itemTypeRows"></div>
+        <button class="secondary" id="addItemType" type="button"><i data-lucide="plus"></i>Add type</button>
+      </div>
+      <div class="form-actions"><button class="secondary" id="cancelItemModal" type="button">Cancel</button><button class="primary" type="submit"><i data-lucide="plus"></i>Add Item</button></div>
+    </form>
+  </div>
+
+  <div class="modal-backdrop" id="poPreviewModal" aria-hidden="true">
+    <div class="card modal-card po-modal-card">
+      <div class="modal-head">
+        <div class="section-title"><h2>Purchase Order Preview</h2><p>Review the generated PO before saving.</p></div>
+        <button class="icon-btn" id="closePoPreview" type="button" aria-label="Close PO preview"><i data-lucide="x"></i></button>
+      </div>
+      <div id="poPreviewContent" class="po-preview-wrap"></div>
+      <div class="form-actions">
+        <button class="secondary" id="editPoPreview" type="button"><i data-lucide="pencil"></i>Edit</button>
+        <button class="primary" id="savePoPreview" type="button"><i data-lucide="save"></i>Save PO</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="poCancelModal" aria-hidden="true">
+    <form id="poCancelForm" class="card modal-card po-cancel-card">
+      <div class="modal-head">
+        <div class="section-title"><h2>Cancel Purchase Order</h2><p id="poCancelSubtitle">Add the reason before cancelling this PO.</p></div>
+        <button class="icon-btn" id="closePoCancel" type="button" aria-label="Close PO cancellation"><i data-lucide="x"></i></button>
+      </div>
+      <label class="span-2">Cancellation reason<textarea required name="reason" id="poCancelReason" rows="5" placeholder="Describe why this PO is being cancelled"></textarea></label>
+      <div class="form-actions">
+        <button class="secondary" id="dismissPoCancel" type="button">Keep PO</button>
+        <button class="danger-btn" type="submit"><i data-lucide="ban"></i>Cancel PO</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="js/firebase-config.js?v=firebase-1"></script>
+  <script src="js/inventory-data.js?v=inventory-clean-1"></script>
+  <script src="js/script.js?v=firebase-loop-fix-1"></script>
+</body>
+</html>

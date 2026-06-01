@@ -3,8 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Requesition Form</title>
-<link rel="icon" type="image/png" href="assests/SS Logo.png">
+<link rel="icon" type="image/png" href="assets/SS Logo.png">
 
 <style>
     * {
@@ -29,7 +32,7 @@
     right: 0;
     bottom: 0;
     height: min(32vh, 280px);
-    background: url("assests/pakistan_skyline_final.png") center bottom / cover no-repeat;
+    background: url("assets/pakistan_skyline_final.png") center bottom / cover no-repeat;
     opacity: 0.5;
     pointer-events: none;
     z-index: 0;
@@ -722,8 +725,18 @@ function populateDatalist(listId, values) {
 
 function getKnownEmailOptions() {
     const storedEmails = JSON.parse(localStorage.getItem("requestFormKnownEmails") || "[]");
-    const userData = JSON.parse(sessionStorage.getItem("loggedInUser") || "{}");
+    const userData = getPortalUser();
     return getUniqueValues([...DIRECTORY_EMAIL_OPTIONS, ...storedEmails, userData.email || ""]);
+}
+
+function getPortalUser() {
+    const user = JSON.parse(sessionStorage.getItem("loggedInUser") || localStorage.getItem("imsPortalUser") || "{}");
+    if (user.name || user.email) return user;
+    return {
+        name: "",
+        email: "",
+        role: "Requester"
+    };
 }
 
 function rememberEmailOptions(emails = []) {
@@ -1751,8 +1764,10 @@ function isValidInventoryRow(rowData) {
 }
 
 function logoutUser() {
-    sessionStorage.removeItem("loggedInUser");
-    navigateWithTransition("index.html", "back");
+    window.close();
+    if (!window.closed) {
+        window.location.href = "/";
+    }
 }
 function goToSuccess() {
     animateStepTransition(
@@ -1782,11 +1797,8 @@ function restartForm() {
     syncCategoryAccess();
     
     // Refill requester name from session
-    const userData = sessionStorage.getItem("loggedInUser");
-    if (userData) {
-        const user = JSON.parse(userData);
-        document.getElementById("requesterName").value = user.name || "";
-    }
+    const user = getPortalUser();
+    document.getElementById("requesterName").value = user.name || nameFromEmail(user.email || "") || "Requester";
 
     addCcRow();
 
@@ -1797,13 +1809,8 @@ function restartForm() {
     );
 }
 window.onload = function() {
-    const userData = sessionStorage.getItem("loggedInUser");
-
-    if (userData) {
-        const user = JSON.parse(userData);
-
-        document.getElementById("requesterName").value = user.name || "";
-    }
+    const user = getPortalUser();
+    document.getElementById("requesterName").value = user.name || nameFromEmail(user.email || "") || "Requester";
     
     // Set today's date as default
     const today = new Date().toISOString().split('T')[0];
@@ -1827,18 +1834,12 @@ window.onload = function() {
 
     setActiveStep(document.querySelectorAll('.form-container')[0]);
 };
-const SCRIPT_ID = "AKfycbzs-oz3ge6-p5_ylt1VlsrVAQfy3KgREiqO94O7fzGW3Ad-OY-o_lq331MCmVyLRzzF_g";
-const SCRIPT_URL = `https://script.google.com/macros/s/${SCRIPT_ID}/exec`;
-const PRINT_URL = SCRIPT_URL;
+const API_BASE_URL = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+  ? "http://localhost:3000/api"
+  : "https://requests.shehersaaz.org.pk/api";
+const PRINT_URL = "";
 let lastSubmittedRequestId = "";
 let lastSubmittedPayload = null;
-
-function generateRequestId() {
-    const storageKey = "requestFormNextRequestNumber";
-    const nextNumber = Number(localStorage.getItem(storageKey) || "1");
-    localStorage.setItem(storageKey, String(nextNumber + 1));
-    return `REQ-${String(nextNumber).padStart(3, "0")}`;
-}
 
 function showSuccessRequest(requestId) {
     lastSubmittedRequestId = requestId || "";
@@ -2142,84 +2143,159 @@ function printSubmittedRequestForm() {
 }
 
 async function submitToSheets() {
-    console.log("submitToSheets called");
-    clearFormError();
-    showSubmitStatus();
-    const requestId = generateRequestId();
+  clearFormError();
+  showSubmitStatus();
 
-    const userData = JSON.parse(sessionStorage.getItem("loggedInUser") || "{}");
-    console.log("userData:", userData);
+  const userData = getPortalUser();
+  const requesterEmail = String(userData.email || "").trim().toLowerCase();
+  const requesterName = requesterEmail
+    ? nameFromEmail(requesterEmail)
+    : document.getElementById("requesterName").value.trim();
+  const lineManagerEmail = document.getElementById("lineManagerEmail").value.trim().toLowerCase();
 
-    const payload = {
-        requestId,
-        requestedBy: document.getElementById("requesterName").value,
-        email: userData.email || "",
-        requesterEmail: userData.email || "",
-        lineManagerEmail: document.getElementById("lineManagerEmail").value.trim(),
-        ccEmails: getCcEmails(),
-        department: document.getElementById("department").value,
-        location: document.getElementById("location").value,
-        requestDate: document.getElementById("requestDate").value,
-        selectedCategory,
-        items: []
-    };
+  const payload = {
+    requestedBy: requesterName,
+    requesterEmail,
+    lineManagerEmail,
+    ccEmails: getCcEmails(),
+    department: document.getElementById("department").value,
+    location: document.getElementById("location").value,
+    requestDate: document.getElementById("requestDate").value,
+    selectedCategory,
+    items: [],
+    transportItems: []
+  };
 
-    const rows = document.querySelectorAll(".item-row");
-    console.log("Found", rows.length, "item rows");
+  const rows = document.querySelectorAll(".item-row");
 
-    rows.forEach((row) => {
-        if (isTransportationCategory()) {
-            const transportRow = getTransportRowData(row);
+  rows.forEach((row) => {
+    if (isTransportationCategory()) {
+      const transportRow = getTransportRowData(row);
+      if (isValidTransportRow(transportRow)) {
+        payload.transportItems.push(transportRow);
+      }
+    } else {
+      const inventoryRow = getInventoryRowData(row);
+      if (isValidInventoryRow(inventoryRow)) {
+        payload.items.push(inventoryRow);
+      }
+    }
+  });
 
-            if (isValidTransportRow(transportRow)) {
-                payload.items.push(transportRow);
-            }
-            return;
-        }
+  // Validate: must have at least one item or transport request
+  if (payload.items.length === 0 && payload.transportItems.length === 0) {
+    hideSubmitStatus();
+    showFormError(
+      isTransportationCategory()
+        ? "Please add at least one complete transportation request."
+        : "Please add at least one item."
+    );
+    return;
+  }
 
-        const inventoryRow = getInventoryRowData(row);
+  try {
+    let submittedRequestId = "";
 
-        if (isValidInventoryRow(inventoryRow)) {
-            payload.items.push(inventoryRow);
-        }
-    });
-    console.log("Payload:", payload);
+    // Submit inventory request if there are inventory items
+    if (payload.items.length > 0) {
+      const response = await fetch(`${API_BASE_URL}/requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestedBy: payload.requestedBy,
+          requesterEmail: payload.requesterEmail,
+          lineManagerEmail: payload.lineManagerEmail,
+          department: payload.department,
+          location: payload.location,
+          category: payload.selectedCategory,
+          notes: `Submitted by: ${payload.requestedBy} (${payload.requesterEmail}) | Line manager email: ${payload.lineManagerEmail}`,
+          items: payload.items.map((item) => ({
+            itemCode: item.itemID,
+            itemName: item.itemName,
+            itemType: item.type,
+            quantity: Number(item.qty) || 1
+          }))
+        })
+      });
 
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error?.message || error.message || "Failed to submit inventory request.");
+      }
+
+      const data = await response.json();
+      submittedRequestId = data.data?.requestId || data.requestId || "";
+    }
+
+    // Submit transport requests
+    for (const transport of payload.transportItems) {
+      const response = await fetch(`${API_BASE_URL}/transport-requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestedBy: payload.requestedBy,
+          requesterEmail: payload.requesterEmail,
+          lineManagerEmail: payload.lineManagerEmail,
+          department: payload.department,
+          location: payload.location,
+          transportType: transport.transportRequestType,
+          travelDate: transport.transportDate || null,
+          transportDate: transport.transportDate || null,
+          pickupLocation: transport.pickupLocation || null,
+          destination: transport.destination || transport.dropoffLocation || null,
+          dropoffLocation: transport.dropoffLocation || null,
+          departureTime: transport.departureTime || null,
+          duration: transport.duration || null,
+          vehicleType: transport.vehicleType || null,
+          passengers: transport.passengers ? Number(transport.passengers) : null,
+          purpose: transport.purpose || null,
+          goodsDescription: transport.goodsDescription || null,
+          goodsQuantity: transport.goodsQuantity || null,
+          returnDate: transport.returnDate || null,
+          advanceRequired: transport.advanceRequired ? Number(transport.advanceRequired) : null,
+          returnTime: transport.returnTime || null,
+          notes: transport.purpose || null
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error?.message || error.message || "Failed to submit transport request.");
+      }
+
+      const data = await response.json();
+      if (!submittedRequestId) {
+        submittedRequestId = data.data?.requestId || data.requestId || "";
+      }
+    }
+
+    hideSubmitStatus();
+    lastSubmittedPayload = JSON.parse(JSON.stringify({ ...payload, requestId: submittedRequestId }));
     rememberEmailOptions([payload.lineManagerEmail, ...payload.ccEmails]);
+    showSuccessRequest(submittedRequestId);
+    goToSuccess();
 
-    if (payload.items.length === 0) {
-        console.log("No items in payload, showing inline error");
-        hideSubmitStatus();
-        showFormError(
-            isTransportationCategory()
-                ? "Please add at least one complete transportation request. Select the request type first, then fill in all required details for that request."
-                : "Please add at least one item."
-        );
-        return;
-    }
-
-    console.log("Attempting to submit to", SCRIPT_URL);
-    try {
-        await fetch(SCRIPT_URL, {
-            method: "POST",
-            mode: "no-cors",
-            headers: {
-                "Content-Type": "text/plain;charset=utf-8"
-            },
-            credentials: "include",
-            body: JSON.stringify(payload)
-        });
-
-        hideSubmitStatus();
-        lastSubmittedPayload = JSON.parse(JSON.stringify(payload));
-        showSuccessRequest(requestId);
-        goToSuccess();
-    } catch (error) {
-        hideSubmitStatus();
-        console.error(error);
-        alert("Submission failed. Please try again.");
-    }
+  } catch (error) {
+    hideSubmitStatus();
+    console.error(error);
+    showFormError(error.message || "Submission failed. Please try again.");
+  }
 }
+
+function nameFromEmail(email) {
+  return String(email || "")
+    .split("@")[0]
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function compactJoin(values, separator = " ") {
+  return values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(separator);
+}
+
 function ensureAtLeastOneItemRow() {
     const container = document.getElementById("items-container");
     if (container.children.length === 0) {
@@ -2257,24 +2333,17 @@ function hideSubmitStatus() {
 }
 </script>
 <script type="module">
-  const storedUser = sessionStorage.getItem("loggedInUser");
-
-  if (!storedUser) {
-    sessionStorage.setItem("pageTransitionDirection", "back");
-    window.location.href = "index.html";
-  }
-
-  const currentUser = JSON.parse(storedUser || "{}");
-  console.log("Logged in user:", currentUser);
+  const currentUser = JSON.parse(sessionStorage.getItem("loggedInUser") || "{}");
+  console.log("Portal user:", currentUser);
 </script>
 
 <body>
 <div class="logo-container">
-    <img src="assests/Shehersaaz Logo Update 2025.png" alt="Organization Logo">
+    <img src="/requisition-form/assets/Shehersaaz%20Logo%20Update%202025.png" alt="Organization Logo">
 </div>
 
 <div class="form-container" >
-<button class="logout-btn" onclick="logoutUser()">Logout</button>
+<button class="logout-btn" onclick="logoutUser()">Back to Portal</button>
     <h2>Requester Details</h2>
 
     <form>

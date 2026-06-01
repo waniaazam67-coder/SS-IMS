@@ -1,5 +1,10 @@
 {
-  "dependencies": {
-    "@supabase/supabase-js": "^2.106.0"
+  "name": "portal",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix backend run dev",
+    "start": "npm --prefix backend start",
+    "db:init": "npm --prefix backend run db:init"
   }
 }

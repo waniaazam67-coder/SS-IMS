@@ -1,0 +1,19 @@
+{
+    "terminal.integrated.defaultProfile.windows": "Command Prompt",
+    "sqltools.connections": [
+        {
+            "mysqlOptions": {
+                "authProtocol": "default",
+                "enableSsl": "Disabled"
+            },
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 3306,
+            "driver": "MySQL",
+            "name": "Mysql",
+            "database": "ims_dev",
+            "username": "ims_admin"
+        }
+    ]
+}

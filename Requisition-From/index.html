@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Inventory Request System - Login</title>
-  <link rel="icon" type="image/png" href="assests/SS Logo.png" />
+  <link rel="icon" type="image/png" href="assets/SS Logo.png" />
   <style>
     * {
     box-sizing: border-box;
@@ -33,7 +33,7 @@ body::after {
     right: 0;
     bottom: 0;
     height: min(32vh, 280px);
-    background: url("assests/pakistan_skyline_final.png") center bottom / cover no-repeat;
+    background: url("assets/pakistan_skyline_final.png") center bottom / cover no-repeat;
     opacity: 0.7;
     pointer-events: none;
     z-index: 0;
@@ -355,7 +355,7 @@ body.page-exit-back .login-card {
 </head>
 <body>
   <div class="logo-container">
-    <img src="assests/Shehersaaz Logo Update 2025.png" alt="Organization Logo" />
+    <img src="assets/Shehersaaz Logo Update 2025.png" alt="Organization Logo" />
   </div>
 
   <div class="login-card">
@@ -505,7 +505,7 @@ body.page-exit-back .login-card {
     googleSignInBtn.addEventListener("click", loginWithGoogle);
 
     continueBtn.addEventListener("click", () => {
-      navigateWithTransition("Form.html", "forward");
+      navigateWithTransition(`Form.html?v=${Date.now()}`, "forward");
     });
 
     signOutBtn.addEventListener("click", async () => {
