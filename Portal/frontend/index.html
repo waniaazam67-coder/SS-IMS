@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=requisition-1">
+  <link rel="stylesheet" href="css/styles.css?v=approvals-buttons-1">
 </head>
 <body>
   <div class="app-shell">
@@ -16,9 +16,10 @@
       <div class="brand">
         <div class="brand-mark"><i data-lucide="package-open"></i></div>
         <span>INVENTORY</span>
-        <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Collapse sidebar" aria-expanded="true"><i data-lucide="panel-left-close"></i></button>
+        <button class="sidebar-toggle sidebar-toggle-main" id="sidebarToggle" type="button" aria-label="Collapse sidebar" aria-expanded="true"><i data-lucide="panel-left-close"></i></button>
       </div>
       <nav class="side-nav" id="sideNav">
+        <div class="nav-label">Main</div>
         <div class="nav-section single">
           <button class="nav-item active" data-view="dashboard"><span class="nav-icon"><i data-lucide="layout-grid"></i></span><span>Dashboard</span></button>
         </div>
@@ -52,21 +53,23 @@
         <div class="nav-section single">
           <button class="nav-item" data-view="reports"><span class="nav-icon"><i data-lucide="chart-column"></i></span><span>Reports</span></button>
         </div>
+      </nav>
+      <div class="sidebar-footer">
         <div class="nav-section single">
           <button class="nav-item admin-only" data-view="settings"><span class="nav-icon"><i data-lucide="settings"></i></span><span>Settings</span></button>
         </div>
-      </nav>
+      </div>
     </aside>
 
     <main class="main-content">
       <header class="topbar">
+        <button class="sidebar-toggle topbar-sidebar-toggle" id="topbarSidebarToggle" type="button" aria-label="Expand sidebar" aria-expanded="false"><i data-lucide="panel-left-open"></i></button>
         <div class="search">
           <i data-lucide="search"></i>
           <input id="globalSearch" type="search" placeholder="Search anything">
         </div>
         <div class="top-actions">
           <button class="icon-btn notification" id="notificationBtn" type="button" aria-label="Notifications" aria-expanded="false" aria-controls="notificationCenter"><i data-lucide="bell"></i></button>
-          <button class="icon-btn admin-only" id="topSettingsBtn" type="button" aria-label="Settings"><i data-lucide="settings"></i></button>
           <div class="profile-wrap">
             <button class="profile" id="profileBtn" type="button" aria-label="Inventory Manager" data-profile-name="Inventory Manager"><span class="avatar">IM</span><span class="profile-name">Inventory Manager</span><i data-lucide="chevron-down"></i></button>
             <div class="profile-menu" id="profileMenu" aria-hidden="true">
@@ -101,36 +104,11 @@
         <div class="notification-list" id="notificationList"></div>
       </aside>
 
-      <section class="view active" id="dashboardView">
-        <div class="dashboard-grid">
-          <div class="dashboard-stats">
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="view-requests"><span class="stat-icon"><i data-lucide="package"></i></span><span class="stat-copy"><strong id="kpiRequests">0</strong><span title="Inventory Requests">Inventory Requests</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="transport-requests"><span class="stat-icon"><i data-lucide="truck"></i></span><span class="stat-copy"><strong id="kpiTransport">0</strong><span title="Transport Requests">Transport Requests</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="view-requests"><span class="stat-icon"><i data-lucide="circle-check"></i></span><span class="stat-copy"><strong id="kpiApprovedRequests">0</strong><span title="Approved Requests">Approved Requests</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="low-stock"><span class="stat-icon"><i data-lucide="triangle-alert"></i></span><span class="stat-copy"><strong id="kpiStockLow">0</strong><span title="Low Stock Items">Low Stock Items</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="out-of-stock"><span class="stat-icon"><i data-lucide="ban"></i></span><span class="stat-copy"><strong id="kpiOutOfStock">0</strong><span title="Out of Stock Items">Out of Stock Items</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="clipboard-list"></i></span><span class="stat-copy"><strong id="kpiOpenPO">0</strong><span title="Opened PO">Opened PO</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="send"></i></span><span class="stat-copy"><strong id="kpiOrderedPO">0</strong><span title="Ordered PO">Ordered PO</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="clipboard-check"></i></span><span class="stat-copy"><strong id="kpiClosedDeliveredPO">0</strong><span title="Closed/Delivered PO">Closed/Delivered PO</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="clock"></i></span><span class="stat-copy"><strong id="kpiPartialDeliveredPO">0</strong><span title="Partially Delivered PO">Partially Delivered PO</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="x"></i></span><span class="stat-copy"><strong id="kpiCancelledPO">0</strong><span title="Cancelled PO">Cancelled PO</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="open-po"><span class="stat-icon"><i data-lucide="store"></i></span><span class="stat-copy"><strong id="kpiVendors">0</strong><span title="Active Vendors">Active Vendors</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="pending-grns"><span class="stat-icon"><i data-lucide="receipt-text"></i></span><span class="stat-copy"><strong id="kpiTotalGRNs">0</strong><span title="Total GRNs">Total GRNs</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="inventory-items"><span class="stat-icon"><i data-lucide="layers"></i></span><span class="stat-copy"><strong id="kpiInventoryItems">0</strong><span title="Total Items">Total Items</span></span></article>
-            <article class="stat-card" role="button" tabindex="0" data-dashboard-action="inventory-items"><span class="stat-icon"><i data-lucide="tag"></i></span><span class="stat-copy"><strong id="kpiItemCategories">0</strong><span title="Item Categories">Item Categories</span></span></article>
-          </div>
-          <article class="card dashboard-card dashboard-table-card">
-            <div class="card-head"><h2>Recent Requests</h2><div class="kebab-wrap"><button class="dots" type="button" data-menu-toggle="recentRequestsMenu" aria-label="Recent request options" aria-expanded="false"><i data-lucide="more-vertical"></i></button><div class="kebab-menu" id="recentRequestsMenu" aria-hidden="true"><button type="button" data-dashboard-action="view-requests">Open Requests</button><button type="button" data-dashboard-action="refresh">Refresh</button></div></div></div>
-            <div class="table-wrap dashboard-scroll"><table><thead><tr><th>Request ID</th><th>Requested By</th><th>Department</th><th>Date</th><th>Approval Status</th><th>Issuance Status</th></tr></thead><tbody id="dashboardRecentRequests"></tbody></table></div>
-          </article>
-          <article class="card dashboard-card dashboard-table-card">
-            <div class="card-head"><h2>Approval Queue <strong id="pendingApprovalCount">0</strong></h2><div class="kebab-wrap"><button class="dots" type="button" data-menu-toggle="pendingApprovalsMenu" aria-label="Approval queue options" aria-expanded="false"><i data-lucide="more-vertical"></i></button><div class="kebab-menu" id="pendingApprovalsMenu" aria-hidden="true"><button type="button" data-dashboard-action="pending-approvals">View Details</button><button type="button" data-dashboard-action="refresh">Refresh</button></div></div></div>
-            <div class="table-wrap dashboard-scroll"><table><thead><tr><th>Request ID</th><th>Requested By</th><th>Department</th><th>Date</th><th>Status</th></tr></thead><tbody id="dashboardPendingApprovals"></tbody></table></div>
-          </article>
-          <article class="card dashboard-card dashboard-table-card activity-card">
-            <div class="card-head"><h2>Recent Activity</h2><div class="kebab-wrap"><button class="dots" type="button" data-menu-toggle="recentActivityMenu" aria-label="Recent activity options" aria-expanded="false"><i data-lucide="more-vertical"></i></button><div class="kebab-menu" id="recentActivityMenu" aria-hidden="true"><button type="button" data-dashboard-action="refresh">Refresh</button></div></div></div>
-            <div class="table-wrap dashboard-scroll"><table><thead><tr><th>Activity</th><th>Reference</th><th>Details</th><th>Date</th></tr></thead><tbody id="dashboardRecentActivity"></tbody></table></div>
-          </article>
+      <section class="view active empty-dashboard" id="dashboardView">
+        <div class="dashboard-empty-state">
+          <p>Welcome back</p>
+          <h2>IMS Portal</h2>
+          <span>Your dashboard is ready for a new design.</span>
         </div>
       </section>
 
@@ -313,7 +291,7 @@
       <section class="view" id="approvalsView">
         <div class="card table-card">
           <div class="section-title"><h2>Inventory Request Approvals</h2><p>Pending item requests assigned to line managers for approval.</p><button class="secondary" type="button" data-history-page="approvals">History</button></div>
-          <div class="table-wrap"><table><thead><tr><th>Request ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Date</th><th>Action</th></tr></thead><tbody id="inventoryApprovalsTable"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Request ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Date</th><th>Status</th><th>Action</th></tr></thead><tbody id="inventoryApprovalsTable"></tbody></table></div>
         </div>
         <div class="card table-card">
           <div class="section-title"><h2>Transport Request Approvals</h2><p>Pending transport requests awaiting line manager approval.</p></div>
@@ -438,9 +416,22 @@
     </form>
   </div>
 
+  <div class="modal-backdrop" id="deleteUserModal" aria-hidden="true">
+    <div class="card modal-card delete-user-card">
+      <div class="modal-head">
+        <div class="section-title"><h2>Delete User</h2><p id="deleteUserMessage">This will remove the user from the database and remove assigned roles.</p></div>
+        <button class="icon-btn" id="closeDeleteUserModal" type="button" aria-label="Close delete user confirmation"><i data-lucide="x"></i></button>
+      </div>
+      <div class="form-actions">
+        <button class="secondary" id="cancelDeleteUser" type="button">Cancel</button>
+        <button class="danger-btn" id="confirmDeleteUser" type="button"><i data-lucide="trash-2"></i>Delete User</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="js/firebase-config.js?v=firebase-1"></script>
   <script src="js/inventory-data.js?v=inventory-clean-1"></script>
-  <script src="js/script.js?v=firebase-loop-fix-1"></script>
+  <script src="js/script.js?v=type-options-clean-3"></script>
 </body>
 </html>

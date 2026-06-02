@@ -1,7 +1,17 @@
 const { pool } = require("../config/database");
 const config = require("../config/env");
 
-const DEFAULT_ROLE = "Requester";
+const DEFAULT_ROLE = "requestor";
+const ROLE_DEFINITIONS = Object.freeze([
+  { key: "admin", dbName: "Admin", label: "Admin" },
+  { key: "requestor", dbName: "Requester", label: "Requestor" },
+  { key: "approver", dbName: "Approver", label: "Approver" },
+  { key: "inventory_manager", dbName: "Inventory Manager", label: "Inventory Manager" },
+  { key: "procurement", dbName: "Procurement Officer", label: "Procurement" },
+  { key: "viewer", dbName: "Viewer", label: "Viewer" }
+]);
+const ROLE_BY_KEY = new Map(ROLE_DEFINITIONS.map((role) => [role.key, role]));
+const ROLE_KEY_BY_DB_NAME = new Map(ROLE_DEFINITIONS.map((role) => [role.dbName.toLowerCase(), role.key]));
 let firebaseAdminAuth = null;
 
 function getFirebaseAdminAuth() {
@@ -20,6 +30,25 @@ function getFirebaseAdminAuth() {
 
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
+}
+
+function normalizeRoleKey(role) {
+  return String(role || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
+
+function toRoleKey(dbName) {
+  const normalized = String(dbName || "").trim().toLowerCase();
+  return ROLE_KEY_BY_DB_NAME.get(normalized) || normalizeRoleKey(dbName);
+}
+
+function toDbRoleName(roleKey) {
+  const role = ROLE_BY_KEY.get(normalizeRoleKey(roleKey));
+  if (!role) {
+    const error = new Error(`Unsupported role: ${roleKey}`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return role.dbName;
 }
 
 async function getUserAuthContextByEmail(email, fallbackName = "") {
@@ -70,7 +99,7 @@ async function getUserAuthContextByEmail(email, fallbackName = "") {
       isLineManager: Boolean(user.isLineManager),
       status: "active"
     },
-    roles: roleRows.map((row) => row.name),
+    roles: roleRows.map((row) => toRoleKey(row.name)),
     permissions: permissionRows.map((row) => row.permission)
   };
 }
@@ -81,7 +110,7 @@ async function ensureUserExists(email, fallbackName) {
   await pool.execute(
     `INSERT INTO users (full_name, email, is_active)
      VALUES (?, ?, 1)
-     ON DUPLICATE KEY UPDATE deleted_at = NULL, is_active = 1`,
+     ON DUPLICATE KEY UPDATE deleted_at = NULL`,
     [name, email]
   );
 
@@ -91,7 +120,7 @@ async function ensureUserExists(email, fallbackName) {
        FROM users u
        JOIN roles r ON r.name = ?
       WHERE LOWER(u.email) = ?`,
-    [DEFAULT_ROLE, email]
+    [toDbRoleName(DEFAULT_ROLE), email]
   );
 }
 
@@ -119,7 +148,8 @@ async function listUsers() {
     name: row.name,
     email: row.email,
     isActive: Boolean(row.isActive),
-    roles: row.roles ? row.roles.split(",") : []
+    status: Number(row.isActive) ? "active" : "inactive",
+    roles: row.roles ? row.roles.split(",").map(toRoleKey) : []
   }));
 }
 
@@ -129,32 +159,145 @@ async function listRoles() {
        FROM roles
       ORDER BY name`
   );
-  return rows.map((row) => ({ ...row, isSystem: Boolean(row.isSystem) }));
+  return rows
+    .map((row) => ({
+      id: row.id,
+      name: toRoleKey(row.name),
+      label: ROLE_BY_KEY.get(toRoleKey(row.name))?.label || row.name,
+      description: row.description,
+      isSystem: Boolean(row.isSystem)
+    }))
+    .filter((row) => ROLE_BY_KEY.has(row.name));
 }
 
 async function assignRoleToUser(userId, roleName, assignedBy) {
+  const dbRoleName = toDbRoleName(roleName);
   const [result] = await pool.execute(
     `INSERT IGNORE INTO user_roles (user_id, role_id, assigned_by)
      SELECT u.id, r.id, ?
        FROM users u
        JOIN roles r ON r.name = ?
       WHERE u.id = ? AND u.deleted_at IS NULL`,
-    [assignedBy || null, roleName, userId]
+    [assignedBy || null, dbRoleName, userId]
   );
 
-  if (!result.affectedRows) await assertUserAndRole(userId, roleName);
+  if (!result.affectedRows) await assertUserAndRole(userId, dbRoleName);
 }
 
 async function removeRoleFromUser(userId, roleName) {
+  const dbRoleName = toDbRoleName(roleName);
   const [result] = await pool.execute(
     `DELETE ur
        FROM user_roles ur
        JOIN roles r ON r.id = ur.role_id
       WHERE ur.user_id = ? AND r.name = ?`,
-    [userId, roleName]
+    [userId, dbRoleName]
   );
 
-  if (!result.affectedRows) await assertUserAndRole(userId, roleName);
+  if (!result.affectedRows) await assertUserAndRole(userId, dbRoleName);
+}
+
+async function setUserRoles(userId, roles, assignedBy) {
+  if (!Array.isArray(roles)) {
+    const error = new Error("roles must be an array.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedRoles = [...new Set(roles.map(normalizeRoleKey))];
+  if (!normalizedRoles.length) {
+    const error = new Error("A user must have at least one role.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const dbRoleNames = normalizedRoles.map(toDbRoleName);
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [users] = await connection.execute(
+      `SELECT id FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1`,
+      [userId]
+    );
+    if (!users.length) {
+      const error = new Error("User not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    await connection.execute(`DELETE FROM user_roles WHERE user_id = ?`, [userId]);
+    for (const dbRoleName of dbRoleNames) {
+      await connection.execute(
+        `INSERT INTO user_roles (user_id, role_id, assigned_by)
+         SELECT ?, id, ? FROM roles WHERE name = ?`,
+        [userId, assignedBy || null, dbRoleName]
+      );
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  return getUserById(userId);
+}
+
+async function getUserById(userId) {
+  const users = await listUsers();
+  return users.find((user) => Number(user.id) === Number(userId)) || null;
+}
+
+async function setUserActiveStatus(userId, isActive, updatedBy) {
+  const activeValue = isActive ? 1 : 0;
+  const [result] = await pool.execute(
+    `UPDATE users
+        SET is_active = ?, updated_by = ?
+      WHERE id = ? AND deleted_at IS NULL`,
+    [activeValue, updatedBy || null, userId]
+  );
+
+  if (!result.affectedRows) {
+    const error = new Error("User not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return getUserById(userId);
+}
+
+async function deleteUser(userId) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [users] = await connection.execute(
+      `SELECT id FROM users WHERE id = ? LIMIT 1`,
+      [userId]
+    );
+
+    if (!users.length) {
+      const error = new Error("User not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    await connection.execute(`DELETE FROM user_roles WHERE user_id = ?`, [userId]);
+    const [result] = await connection.execute(`DELETE FROM users WHERE id = ?`, [userId]);
+
+    if (!result.affectedRows) {
+      const error = new Error("User not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 async function assertUserAndRole(userId, roleName) {
@@ -180,8 +323,12 @@ async function assertUserAndRole(userId, roleName) {
 
 module.exports = {
   assignRoleToUser,
+  deleteUser,
+  getUserById,
   listRoles,
   listUsers,
   removeRoleFromUser,
+  setUserActiveStatus,
+  setUserRoles,
   resolveAuthContextFromToken
 };

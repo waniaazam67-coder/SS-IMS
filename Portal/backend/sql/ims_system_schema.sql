@@ -846,7 +846,8 @@ VALUES
   ('Inventory Manager', 'Manage inventory, stock movements, GRNs, and issuance.', 1),
   ('Procurement Officer', 'Manage vendors and purchase orders.', 1),
   ('Approver', 'Approve or reject requests and purchase orders.', 1),
-  ('Requester', 'Create and track own requests.', 1)
+  ('Requester', 'Create and track own requests.', 1),
+  ('Viewer', 'Read-only dashboard and reports access.', 1)
 ON DUPLICATE KEY UPDATE description = VALUES(description), is_system = VALUES(is_system);
 
 INSERT INTO permissions (permission_key, module, description)
@@ -890,9 +891,24 @@ JOIN permissions p ON (
   OR (r.name = 'Inventory Manager' AND p.permission_key IN ('inventory.view', 'inventory.manage', 'inventory.issue', 'grn.manage', 'audit.view'))
   OR (r.name = 'Procurement Officer' AND p.permission_key IN ('inventory.view', 'purchase_order.manage', 'grn.manage'))
   OR (r.name = 'Approver' AND p.permission_key IN ('request.create', 'request.approve', 'inventory.view'))
+  OR (r.name = 'Viewer' AND p.permission_key IN ('inventory.view', 'audit.view'))
 );
 
 INSERT IGNORE INTO user_roles (user_id, role_id, assigned_by)
 SELECT 1, id, 1
 FROM roles
 WHERE name = 'Admin';
+
+INSERT INTO users (full_name, email, is_line_manager, is_active)
+VALUES ('Wania Azam', 'wania.azam@shehersaaz.org.pk', 1, 1)
+ON DUPLICATE KEY UPDATE
+  full_name = VALUES(full_name),
+  is_line_manager = VALUES(is_line_manager),
+  is_active = VALUES(is_active),
+  deleted_at = NULL;
+
+INSERT IGNORE INTO user_roles (user_id, role_id, assigned_by)
+SELECT u.id, r.id, 1
+FROM users u
+JOIN roles r ON r.name = 'Admin'
+WHERE LOWER(u.email) = 'wania.azam@shehersaaz.org.pk';

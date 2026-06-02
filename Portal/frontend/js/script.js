@@ -4,14 +4,38 @@ const SETTINGS_API_BASE = "/api/settings";
 const THEME_STORAGE_KEY = "imsTheme";
 const BUSINESS_DATA_API_BASE = "/api";
 const AUTO_REFRESH_INTERVAL_MS = 10000;
+const AVAILABLE_USER_ROLES = [
+  { key: "admin", label: "admin" },
+  { key: "requestor", label: "requestor" },
+  { key: "approver", label: "approver" },
+  { key: "inventory_manager", label: "inventory_manager" },
+  { key: "procurement", label: "procurement" },
+  { key: "viewer", label: "viewer" }
+];
+const VIEW_ROLE_ACCESS = {
+  dashboard: ["admin", "viewer", "requestor", "approver", "inventory_manager", "procurement"],
+  requisition: ["admin", "requestor"],
+  requests: ["admin", "requestor", "approver", "inventory_manager"],
+  approvals: ["admin", "approver"],
+  inventory: ["admin", "inventory_manager", "viewer"],
+  stockIn: ["admin", "inventory_manager"],
+  issue: ["admin", "inventory_manager"],
+  grn: ["admin", "inventory_manager"],
+  po: ["admin", "procurement"],
+  vendors: ["admin", "procurement"],
+  transport: ["admin", "requestor", "approver", "inventory_manager"],
+  reports: ["admin", "viewer"],
+  settings: ["admin"],
+  history: ["admin", "viewer", "requestor", "approver", "inventory_manager", "procurement"]
+};
 let seedTxCounter = 0;
 let currentUser = {
   id: 1,
   uid: "local-admin",
   name: "Inventory Manager",
   email: "",
-  role: "Admin",
-  roles: ["Admin"],
+  role: "admin",
+  roles: ["admin"],
   permissions: [],
   status: "active"
 };
@@ -44,12 +68,15 @@ let requestsPage = 1;
 let requestsFilter = "All";
 const REQUESTS_PAGE_SIZE = 10;
 let settingsState = {};
-let activeSettingsGroup = "organization";
+let userManagementUsers = [];
+let userManagementLoaded = false;
+let activeSettingsGroup = "user_management";
 let activeNotificationTab = "direct";
 let unreadOnly = false;
 const readNotificationIds = new Set();
 let pendingPurchaseOrder = null;
 let pendingCancelPoNumber = "";
+let pendingDeleteUserId = "";
 let activeHistorySection = "requests";
 let previousHistoryView = "dashboard";
 let activeHistoryFilter = "all";
@@ -61,6 +88,28 @@ function redirectToLogin() {
     : `${window.location.pathname}${window.location.search}${window.location.hash}`;
   const returnTo = encodeURIComponent(target);
   window.location.replace(`login.html?returnTo=${returnTo}`);
+}
+
+function normalizeRoleKey(role) {
+  const value = String(role || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (value === "requester") return "requestor";
+  if (value === "inventory_manager") return "inventory_manager";
+  if (value === "procurement_officer") return "procurement";
+  return value;
+}
+
+function userRoles() {
+  return [...new Set((currentUser.roles || []).map(normalizeRoleKey).filter(Boolean))];
+}
+
+function hasRole(role) {
+  const roles = userRoles();
+  return roles.includes("admin") || roles.includes(normalizeRoleKey(role));
+}
+
+function canAccessView(view) {
+  const allowedRoles = VIEW_ROLE_ACCESS[view] || [];
+  return allowedRoles.some((role) => hasRole(role));
 }
 
 async function ensureFirebaseReady() {
@@ -105,17 +154,17 @@ async function requirePortalSession() {
       uid: user.uid,
       name: authUser.name || user.displayName || user.email || "IMS User",
       email: authUser.email || user.email || "",
-      roles: Array.isArray(session.roles) ? session.roles : [],
+      roles: Array.isArray(session.roles) ? session.roles.map(normalizeRoleKey) : [],
       permissions: Array.isArray(session.permissions) ? session.permissions : [],
       status: authUser.status || "active"
     };
-    currentUser.role = currentUser.roles[0] || "Requester";
+    currentUser.role = currentUser.roles[0] || "requestor";
   } catch (error) {
     localStorage.removeItem("firebase_token");
     redirectToLogin();
     return null;
   }
-  isAdmin = currentUser.roles.includes("Admin");
+  isAdmin = hasRole("admin");
   return { user, access_token: token };
 }
 
@@ -133,6 +182,7 @@ const settingsSections = [
     ["permission_assignment_enabled", "Permission assignment enabled", "checkbox"], ["department_assignment_enabled", "Department assignment enabled", "checkbox"],
     ["location_assignment_enabled", "Location assignment enabled", "checkbox"], ["inactive_users_allowed", "Active/inactive status enabled", "checkbox"]
   ] },
+  { group: "user_management", title: "User Management", icon: "user-cog", description: "Manage user account roles and access.", adminOnly: true, fields: [] },
   { group: "inventory", title: "Inventory", icon: "boxes", description: "Inventory masters and stock movement rules.", fields: [
     ["item_categories", "Item categories", "textarea"], ["units_of_measurement", "Units of measurement", "textarea"],
     ["stock_status_rules", "Stock status rules", "textarea"], ["allow_negative_stock", "Allow negative stock", "checkbox"], ["allow_manual_stock_in", "Allow manual stock in", "checkbox"],
@@ -206,6 +256,17 @@ const settingsSections = [
   ] },
 ];
 
+const removedSettingsGroups = new Set([
+  "organization",
+  "theme",
+  "users_roles",
+  "inventory",
+  "locations",
+  "requisitions",
+  "vendors",
+  "print_templates"
+]);
+
 function tx(itemCode, location, type, quantity, sourceId, notes) {
   return {
     id: `TX-${String(++seedTxCounter).padStart(3, "0")}`,
@@ -277,6 +338,14 @@ function findItem(code) {
   return state.items.find((item) => item.code === code);
 }
 
+function findItemBySelection(name, typeOrCode, category = "") {
+  return state.items.find((item) =>
+    item.name === name &&
+    (!category || item.category === category) &&
+    (item.code === typeOrCode || item.type === typeOrCode)
+  );
+}
+
 function categories() {
   return [...new Set(state.items.map((item) => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
@@ -296,6 +365,11 @@ function itemNamesForCategory(category) {
 function itemTypesForName(name, category = "") {
   return state.items
     .filter((item) => item.name === name && (!category || item.category === category))
+    .filter((item) => {
+      const type = String(item.type || "").trim();
+      const code = String(item.code || "").trim();
+      return Boolean(type) && type !== code && !/^ITM[-_]/i.test(type);
+    })
     .sort((a, b) => String(a.type || "").localeCompare(String(b.type || "")));
 }
 
@@ -425,6 +499,11 @@ function escapeHtml(value) {
   }[char]));
 }
 
+function escapeCssIdentifier(value) {
+  if (window.CSS?.escape) return CSS.escape(String(value));
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+}
+
 function settingValueType(type) {
   if (type === "checkbox") return "boolean";
   if (type === "number") return "number";
@@ -476,9 +555,28 @@ async function loadSettings(options = {}) {
   renderSettings();
 }
 
+async function loadUserManagement({ silent = false } = {}) {
+  if (!isAdmin) return;
+  try {
+    const data = await apiRequest("/auth/users");
+    userManagementUsers = (data.users || []).map((user) => ({
+      ...user,
+      roles: Array.isArray(user.roles) ? user.roles.map(normalizeRoleKey) : []
+    }));
+    userManagementLoaded = true;
+    renderSettings();
+  } catch (error) {
+    if (!silent) showToast(error.message || "Unable to load users.", "error");
+  }
+}
+
 function renderSettingsTabs() {
   const tabs = document.getElementById("settingsTabs");
-  tabs.innerHTML = settingsSections.map((section) => `
+  const visibleSections = settingsSections.filter((section) => !removedSettingsGroups.has(section.group) && (!section.adminOnly || isAdmin));
+  if (!visibleSections.some((section) => section.group === activeSettingsGroup)) {
+    activeSettingsGroup = visibleSections[0]?.group || "";
+  }
+  tabs.innerHTML = visibleSections.map((section) => `
     <button class="settings-tab ${section.group === activeSettingsGroup ? "active" : ""}" type="button" data-settings-group="${section.group}">
       <i data-lucide="${section.icon}"></i><span>${section.title}</span>
     </button>
@@ -487,7 +585,14 @@ function renderSettingsTabs() {
 
 function renderSettings() {
   if (!isAdmin) return;
-  const section = settingsSections.find((item) => item.group === activeSettingsGroup) || settingsSections[0];
+  renderSettingsTabs();
+  const visibleSections = settingsSections.filter((item) => !removedSettingsGroups.has(item.group) && (!item.adminOnly || isAdmin));
+  const section = visibleSections.find((item) => item.group === activeSettingsGroup) || visibleSections[0];
+  if (!section) return;
+  if (section.group === "user_management") {
+    renderUserManagement(section);
+    return;
+  }
   const values = settingsState[section.group] || {};
   document.getElementById("settingsSectionTitle").textContent = section.title;
   document.getElementById("settingsSectionDescription").textContent = section.description;
@@ -519,10 +624,151 @@ function renderSettings() {
   if (window.lucide) window.lucide.createIcons();
 }
 
+function renderUserManagement(section) {
+  document.getElementById("settingsSectionTitle").textContent = section.title;
+  document.getElementById("settingsSectionDescription").textContent = section.description;
+  const form = document.getElementById("settingsForm");
+
+  if (!userManagementLoaded) {
+    form.innerHTML = `
+      <div class="user-management-empty">Loading users...</div>
+      <div class="settings-actions"><button class="secondary" type="button" id="reloadUsersBtn">Reload Users</button></div>
+    `;
+    renderSettingsTabs();
+    loadUserManagement({ silent: true });
+    return;
+  }
+
+  form.innerHTML = `
+    <div class="user-management-list" role="table" aria-label="User Management">
+      <div class="user-management-header" role="row">
+        <span>User</span>
+        <span>Status</span>
+        <span>Roles</span>
+        <span>Actions</span>
+      </div>
+      ${userManagementUsers.map((user) => {
+        const roles = user.roles || [];
+        const isSelf = String(user.id) === String(currentUser.id);
+        const isActive = user.status ? String(user.status).toLowerCase() !== "inactive" : user.isActive !== false;
+        return `
+          <article class="user-management-card" data-user-id="${escapeHtml(user.id)}" role="row">
+            <div class="user-management-person">
+              <strong>${escapeHtml(user.name || "Unnamed user")}</strong>
+              <span>${escapeHtml(user.email || "")}</span>
+            </div>
+            <div class="user-management-status">
+              ${statusBadge(user.status || (user.isActive ? "active" : "inactive"))}
+            </div>
+            <div class="role-checkbox-grid">
+              ${AVAILABLE_USER_ROLES.map((role) => `
+                <label class="role-pill ${roles.includes(role.key) ? "selected" : ""}">
+                  <input type="checkbox" name="roles-${escapeHtml(user.id)}" value="${role.key}" ${roles.includes(role.key) ? "checked" : ""}>
+                  <span>${role.label}</span>
+                </label>
+              `).join("")}
+            </div>
+            <div class="user-management-actions">
+              <button class="user-save-btn save-user-roles" type="button" data-user-id="${escapeHtml(user.id)}">Save</button>
+              <button class="user-status-btn toggle-user-status" type="button" data-user-id="${escapeHtml(user.id)}" data-next-active="${isActive ? "false" : "true"}" ${isSelf ? "disabled" : ""}>${isActive ? "Deactivate" : "Activate"}</button>
+              ${isSelf ? `<button class="user-delete-btn" type="button" disabled aria-label="Cannot delete your own account"><i data-lucide="trash-2"></i></button>` : `<button class="user-delete-btn delete-user" type="button" data-user-id="${escapeHtml(user.id)}" aria-label="Delete ${escapeHtml(user.name || user.email || "user")}"><i data-lucide="trash-2"></i></button>`}
+            </div>
+          </article>
+        `;
+      }).join("") || `<div class="user-management-empty">No users found.</div>`}
+    </div>
+    <div class="settings-actions"><button class="secondary" type="button" id="reloadUsersBtn">Reload Users</button></div>
+  `;
+  renderSettingsTabs();
+  if (window.lucide) window.lucide.createIcons();
+}
+
+async function saveUserRoles(userId) {
+  if (!isAdmin) return showToast("Admin access is required.", "error");
+  const checkedRoles = Array.from(document.querySelectorAll(`input[name="roles-${escapeCssIdentifier(userId)}"]:checked`))
+    .map((input) => input.value);
+  if (!checkedRoles.length) return showToast("Select at least one role.", "error");
+  if (String(userId) === String(currentUser.id) && !checkedRoles.includes("admin")) {
+    return showToast("Keep admin selected for your own account.", "error");
+  }
+
+  try {
+    const data = await apiRequest(`/auth/users/${encodeURIComponent(userId)}/roles`, {
+      method: "PUT",
+      body: JSON.stringify({ roles: checkedRoles })
+    });
+    const updatedUser = data.user;
+    userManagementUsers = userManagementUsers.map((user) => String(user.id) === String(userId)
+      ? { ...user, ...updatedUser, roles: (updatedUser.roles || []).map(normalizeRoleKey) }
+      : user);
+    renderSettings();
+    showToast("User roles updated.");
+  } catch (error) {
+    showToast(error.message || "Unable to update user roles.", "error");
+  }
+}
+
+async function toggleUserStatus(userId, nextActive) {
+  if (!isAdmin) return showToast("Admin access is required.", "error");
+  if (String(userId) === String(currentUser.id) && !nextActive) {
+    return showToast("You cannot deactivate your own account.", "error");
+  }
+
+  try {
+    const data = await apiRequest(`/auth/users/${encodeURIComponent(userId)}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ isActive: nextActive })
+    });
+    const updatedUser = data.user;
+    userManagementUsers = userManagementUsers.map((user) => String(user.id) === String(userId)
+      ? { ...user, ...updatedUser, roles: (updatedUser.roles || user.roles || []).map(normalizeRoleKey) }
+      : user);
+    renderSettings();
+    showToast(nextActive ? "User activated." : "User deactivated.");
+  } catch (error) {
+    showToast(error.message || "Unable to update user status.", "error");
+  }
+}
+
+async function deleteUser(userId) {
+  if (!isAdmin) return showToast("Admin access is required.", "error");
+  if (String(userId) === String(currentUser.id)) {
+    return showToast("You cannot delete your own account.", "error");
+  }
+  const user = userManagementUsers.find((item) => String(item.id) === String(userId));
+  const label = user?.email || user?.name || "this user";
+  pendingDeleteUserId = String(userId);
+  document.getElementById("deleteUserMessage").textContent = `Delete ${label}? This will remove the user from the database and remove assigned roles.`;
+  document.getElementById("deleteUserModal").classList.add("show");
+  document.getElementById("deleteUserModal").setAttribute("aria-hidden", "false");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function closeDeleteUserModal() {
+  pendingDeleteUserId = "";
+  document.getElementById("deleteUserModal").classList.remove("show");
+  document.getElementById("deleteUserModal").setAttribute("aria-hidden", "true");
+}
+
+async function confirmDeleteUser() {
+  const userId = pendingDeleteUserId;
+  if (!userId) return;
+  try {
+    await apiRequest(`/auth/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+    userManagementUsers = userManagementUsers.filter((item) => String(item.id) !== String(userId));
+    closeDeleteUserModal();
+    renderSettings();
+    showToast("User deleted.");
+  } catch (error) {
+    showToast(error.message || "Unable to delete user.", "error");
+  }
+}
+
 async function saveActiveSettings(event) {
   event.preventDefault();
   if (!isAdmin) return showToast("Admin access is required.", "error");
-  const section = settingsSections.find((item) => item.group === activeSettingsGroup);
+  const section = settingsSections.find((item) => item.group === activeSettingsGroup && !removedSettingsGroups.has(item.group));
+  if (!section) return showToast("This settings section is no longer available.", "error");
   const form = event.currentTarget;
   if (!form.reportValidity()) return;
   const payload = {};
@@ -630,6 +876,9 @@ function startAutoRefresh() {
 function applyAdminVisibility() {
   document.querySelectorAll(".admin-only").forEach((element) => {
     element.hidden = !isAdmin;
+  });
+  document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
+    item.hidden = !canAccessView(item.dataset.view);
   });
 }
 
@@ -846,8 +1095,9 @@ function syncSelectOptions(scope = document) {
     const categorySourceId = field.dataset.categorySource;
     const category = categorySourceId ? document.getElementById(categorySourceId)?.value : "";
     const items = itemName ? itemTypesForName(itemName, category) : [];
-    setChoiceOptions(field, "Select type", items, (item) => item.code, (item) => item.type || item.code);
-    if (selected && items.some((item) => item.code === selected)) field.value = selected;
+    setChoiceOptions(field, "Select type", items, (item) => item.type, (item) => item.type);
+    const selectedItem = items.find((item) => item.code === selected || item.type === selected);
+    if (selectedItem) field.value = selectedItem.type;
   });
   scope.querySelectorAll("[data-vendors]").forEach((field) => {
     const selected = field.value;
@@ -871,7 +1121,10 @@ function renderCategoryTabs() {
 }
 
 function updateSelectedItemId(typeSelectId, displayInputId) {
-  const item = findItem(document.getElementById(typeSelectId).value);
+  const typeField = document.getElementById(typeSelectId);
+  const itemName = typeField.dataset.itemSource ? document.getElementById(typeField.dataset.itemSource)?.value : "";
+  const category = typeField.dataset.categorySource ? document.getElementById(typeField.dataset.categorySource)?.value : "";
+  const item = findItemBySelection(itemName, typeField.value, category);
   document.getElementById(displayInputId).value = item ? item.code : "";
 }
 
@@ -894,8 +1147,8 @@ function closeItemModal() {
 }
 
 function setView(view) {
-  if (view === "settings" && !isAdmin) {
-    showToast("Admin access is required for Settings.", "error");
+  if (!canAccessView(view)) {
+    showToast("You do not have access to this section.", "error");
     return;
   }
   document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
@@ -1160,9 +1413,11 @@ function renderDashboard() {
         </td>
       </tr>
     `);
-  document.getElementById("dashboardRecentRequests").innerHTML = recentRows.join("") || emptyRow(6);
+  const recentRequestsTable = document.getElementById("dashboardRecentRequests");
+  if (recentRequestsTable) recentRequestsTable.innerHTML = recentRows.join("") || emptyRow(6);
 
-  document.getElementById("dashboardPendingApprovals").innerHTML = pendingRequests
+  const pendingApprovalsTable = document.getElementById("dashboardPendingApprovals");
+  if (pendingApprovalsTable) pendingApprovalsTable.innerHTML = pendingRequests
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 5)
     .map((request) => `
@@ -1196,7 +1451,8 @@ function renderDashboard() {
     ...state.grns.map((grn) => ({ date: grn.date, activity: "GRN received", reference: grn.grnNumber, details: grn.poNumber || grn.itemCode || "" }))
   ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
 
-  document.getElementById("dashboardRecentActivity").innerHTML = activities.map((activity) => `
+  const recentActivityTable = document.getElementById("dashboardRecentActivity");
+  if (recentActivityTable) recentActivityTable.innerHTML = activities.map((activity) => `
     <tr>
       <td colspan="4">
         <div class="dashboard-feed-row">
@@ -1671,9 +1927,12 @@ function transportDestination(row) {
   return row.dropoffLocation || row.destinationCityArea || row.meetingVisitLocation || row.destination || "";
 }
 
+function isPendingApproval(status) {
+  return String(status || "").toLowerCase() === "pending";
+}
+
 function renderApprovals() {
   const inventoryRows = state.requests.flatMap((request) => request.items
-    .filter((item) => item.approvalStatus === "Pending")
     .map((item) => ({ request, item })));
   document.getElementById("inventoryApprovalsTable").innerHTML = inventoryRows.map(({ request, item }) => `
     <tr>
@@ -1687,11 +1946,12 @@ function renderApprovals() {
       <td>${escapeHtml(item.type || "")}</td>
       <td>${escapeHtml(item.quantity)}</td>
       <td>${formatDate(request.date)}</td>
-      <td class="button-cell"><button class="tiny success" onclick="setRequestApproval('${request.requestId}','${item.id}','Approved')">Approve</button><button class="tiny danger" onclick="setRequestApproval('${request.requestId}','${item.id}','Rejected')">Reject</button></td>
+      <td>${statusBadge(item.approvalStatus)}</td>
+      <td class="button-cell">${isPendingApproval(item.approvalStatus) ? `<button class="tiny success" onclick="setRequestApproval('${request.requestId}','${item.id}','Approved')">Approve</button><button class="tiny danger" onclick="setRequestApproval('${request.requestId}','${item.id}','Rejected')">Reject</button>` : ""}</td>
     </tr>
-  `).join("") || emptyRow(11);
+  `).join("") || emptyRow(12);
 
-  const transportRows = state.transportRequests.filter((row) => row.approvalStatus === "Pending");
+  const transportRows = state.transportRequests;
   document.getElementById("transportApprovalsTable").innerHTML = transportRows.map((row) => `
     <tr>
       <td>${escapeHtml(row.id)}</td>
@@ -1703,7 +1963,7 @@ function renderApprovals() {
       <td>${escapeHtml(transportDestination(row))}</td>
       <td>${escapeHtml(row.purpose || row.goodsDescription || "")}</td>
       <td>${statusBadge(row.approvalStatus)}</td>
-      <td class="button-cell"><button class="tiny success" onclick="setTransportApproval('${row.id}','Approved')">Approve</button><button class="tiny danger" onclick="setTransportApproval('${row.id}','Rejected')">Reject</button></td>
+      <td class="button-cell">${isPendingApproval(row.approvalStatus) ? `<button class="tiny success" onclick="setTransportApproval('${row.id}','Approved')">Approve</button><button class="tiny danger" onclick="setTransportApproval('${row.id}','Rejected')">Reject</button>` : ""}</td>
     </tr>
   `).join("") || emptyRow(10);
 }
@@ -2113,7 +2373,7 @@ function printHtml(html) {
   setTimeout(() => printWindow.print(), 150);
 }
 
-document.getElementById("sideNav").addEventListener("click", (event) => {
+document.querySelector(".sidebar")?.addEventListener("click", (event) => {
   const toggle = event.target.closest(".nav-section-toggle");
   if (toggle) {
     const section = toggle.closest(".nav-section");
@@ -2233,10 +2493,9 @@ document.addEventListener("keydown", (event) => {
     closeDashboardMenus();
     closeNotificationCenter();
     closePoCancelModal();
+    closeDeleteUserModal();
   }
 });
-
-document.getElementById("topSettingsBtn")?.addEventListener("click", () => setView("settings"));
 
 document.getElementById("profileBtn")?.addEventListener("click", (event) => {
   event.stopPropagation();
@@ -2257,23 +2516,44 @@ document.getElementById("settingsTabs").addEventListener("click", (event) => {
   if (!button) return;
   activeSettingsGroup = button.dataset.settingsGroup;
   renderSettings();
+  if (activeSettingsGroup === "user_management") loadUserManagement({ silent: true });
 });
 
 document.getElementById("settingsForm").addEventListener("submit", saveActiveSettings);
 
 document.getElementById("settingsForm").addEventListener("click", (event) => {
   if (event.target.id === "reloadSettingsBtn") loadSettings({ silent: false });
+  if (event.target.id === "reloadUsersBtn") loadUserManagement({ silent: false });
+  const saveButton = event.target.closest(".save-user-roles");
+  if (saveButton) saveUserRoles(saveButton.dataset.userId);
+  const statusButton = event.target.closest(".toggle-user-status");
+  if (statusButton) toggleUserStatus(statusButton.dataset.userId, statusButton.dataset.nextActive === "true");
+  const deleteButton = event.target.closest(".delete-user");
+  if (deleteButton) deleteUser(deleteButton.dataset.userId);
 });
 
-document.getElementById("sidebarToggle").addEventListener("click", () => {
+document.getElementById("settingsForm").addEventListener("change", (event) => {
+  const input = event.target.closest(".role-pill input");
+  if (!input) return;
+  input.closest(".role-pill").classList.toggle("selected", input.checked);
+});
+
+function toggleSidebar() {
   const shell = document.querySelector(".app-shell");
   const collapsed = shell.classList.toggle("sidebar-collapsed");
-  const toggle = document.getElementById("sidebarToggle");
-  toggle.setAttribute("aria-expanded", String(!collapsed));
-  toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
-  toggle.innerHTML = `<i data-lucide="${collapsed ? "panel-left-open" : "panel-left-close"}"></i>`;
+  const sidebarToggle = document.getElementById("sidebarToggle");
+  const topbarToggle = document.getElementById("topbarSidebarToggle");
+  [sidebarToggle, topbarToggle].forEach((toggle) => {
+    if (!toggle) return;
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+    toggle.innerHTML = `<i data-lucide="${collapsed ? "panel-left-open" : "panel-left-close"}"></i>`;
+  });
   if (window.lucide) window.lucide.createIcons();
-});
+}
+
+document.getElementById("sidebarToggle")?.addEventListener("click", toggleSidebar);
+document.getElementById("topbarSidebarToggle")?.addEventListener("click", toggleSidebar);
 
 document.getElementById("categoryTabs").addEventListener("click", (event) => {
   const button = event.target.closest("[data-category]");
@@ -2340,6 +2620,12 @@ document.getElementById("dismissPoCancel").addEventListener("click", closePoCanc
 document.getElementById("poCancelForm").addEventListener("submit", submitPoCancellation);
 document.getElementById("poCancelModal").addEventListener("click", (event) => {
   if (event.target.id === "poCancelModal") closePoCancelModal();
+});
+document.getElementById("closeDeleteUserModal")?.addEventListener("click", closeDeleteUserModal);
+document.getElementById("cancelDeleteUser")?.addEventListener("click", closeDeleteUserModal);
+document.getElementById("confirmDeleteUser")?.addEventListener("click", confirmDeleteUser);
+document.getElementById("deleteUserModal")?.addEventListener("click", (event) => {
+  if (event.target.id === "deleteUserModal") closeDeleteUserModal();
 });
 
 document.getElementById("stockInCategory").addEventListener("change", () => {
@@ -2439,6 +2725,9 @@ document.getElementById("requestForm").addEventListener("submit", async (event) 
 document.getElementById("stockInForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
+  const item = findItemBySelection(form.get("itemName"), form.get("itemCode"), form.get("category"));
+  if (!item) return showToast("Select a valid item type.", "error");
+  form.set("itemCode", item.code);
   try {
     await apiRequest("/stock/in/manual", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     event.currentTarget.reset();
@@ -2453,7 +2742,10 @@ document.getElementById("stockInForm").addEventListener("submit", async (event) 
 document.getElementById("manualStockOutForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  const itemCode = form.get("itemCode");
+  const item = findItemBySelection(form.get("itemName"), form.get("itemCode"), form.get("category"));
+  if (!item) return showToast("Select a valid item type.", "error");
+  form.set("itemCode", item.code);
+  const itemCode = item.code;
   const location = form.get("location");
   const quantity = Number(form.get("quantity"));
   const available = stockFor(itemCode, location);

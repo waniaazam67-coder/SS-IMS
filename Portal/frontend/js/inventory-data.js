@@ -164,6 +164,15 @@ window.IMS_IMPORTED_INVENTORY = {
       "notes": ""
     },
     {
+      "code": "ITM-CTY",
+      "name": "Cable Ties",
+      "type": "NA",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
       "code": "ITM-CGG",
       "name": "Clamps",
       "type": "14 Guage GI",
@@ -578,6 +587,15 @@ window.IMS_IMPORTED_INVENTORY = {
       "notes": ""
     },
     {
+      "code": "ITM-HBL",
+      "name": "Helmet",
+      "type": "Blue",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
       "code": "ITM-HOE",
       "name": "Hoe",
       "type": "NA",
@@ -686,6 +704,60 @@ window.IMS_IMPORTED_INVENTORY = {
       "notes": ""
     },
     {
+      "code": "ITM-NBZ",
+      "name": "Nebulizer",
+      "type": "NA",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
+      "code": "ITM-DTH",
+      "name": "Digital thermometer",
+      "type": "NA",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
+      "code": "ITM-SFG",
+      "name": "Syrup",
+      "type": "Flagyl",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
+      "code": "ITM-SBR",
+      "name": "Syrup",
+      "type": "Brufen",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
+      "code": "ITM-DAL",
+      "name": "Dextrose Ampule",
+      "type": "NA",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
+      "code": "ITM-NSL",
+      "name": "Normal Saline",
+      "type": "NA",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
       "code": "ITM-MSR",
       "name": "Manual siren",
       "type": "NA",
@@ -752,6 +824,15 @@ window.IMS_IMPORTED_INVENTORY = {
       "code": "ITM-SPL",
       "name": "Photovoltaic (PV) Modules (Solar panels)",
       "type": "NA",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
+      "code": "ITM-SLG",
+      "name": "Screen Printing",
+      "type": "Large Planters",
       "category": "PROGRESSIVE",
       "unit": "",
       "active": true,
@@ -1010,6 +1091,15 @@ window.IMS_IMPORTED_INVENTORY = {
       "notes": ""
     },
     {
+      "code": "ITM-SPD2",
+      "name": "Surge Protection Device (SPD)",
+      "type": "NA",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
       "code": "ITM-STC",
       "name": "Steel cutter",
       "type": "NA",
@@ -1075,6 +1165,15 @@ window.IMS_IMPORTED_INVENTORY = {
     {
       "code": "ITM-TBG",
       "name": "Tool bag",
+      "type": "NA",
+      "category": "PROGRESSIVE",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
+      "code": "ITM-TRB",
+      "name": "Triangular bandage",
       "type": "NA",
       "category": "PROGRESSIVE",
       "unit": "",
@@ -2018,15 +2117,6 @@ window.IMS_IMPORTED_INVENTORY = {
       "notes": ""
     },
     {
-      "code": "TC-NA",
-      "name": "Transportation Charges",
-      "type": "NA",
-      "category": "RWHU",
-      "unit": "",
-      "active": true,
-      "notes": ""
-    },
-    {
       "code": "UG-001",
       "name": "User guidelines",
       "type": "NA",
@@ -2234,15 +2324,6 @@ window.IMS_IMPORTED_INVENTORY = {
       "notes": ""
     },
     {
-      "code": "ITM-CRT",
-      "name": "Certificates",
-      "type": "NA",
-      "category": "Stationary",
-      "unit": "",
-      "active": true,
-      "notes": ""
-    },
-    {
       "code": "ITM-CPN",
       "name": "Correction pen (Whiteners)",
       "type": "NA",
@@ -2264,24 +2345,6 @@ window.IMS_IMPORTED_INVENTORY = {
       "code": "ITM-CTB",
       "name": "Cushion Tape (Brown)",
       "type": "NA",
-      "category": "Stationary",
-      "unit": "",
-      "active": true,
-      "notes": ""
-    },
-    {
-      "code": "RM-DML",
-      "name": "Dollar Dry Erase Re-filled Marker",
-      "type": "Black",
-      "category": "Stationary",
-      "unit": "",
-      "active": true,
-      "notes": ""
-    },
-    {
-      "code": "RM-DMB",
-      "name": "Dollar Dry Erase Re-filled Marker",
-      "type": "Blue",
       "category": "Stationary",
       "unit": "",
       "active": true,
@@ -2531,6 +2594,15 @@ window.IMS_IMPORTED_INVENTORY = {
       "notes": ""
     },
     {
+      "code": "ITM-MWD",
+      "name": "Mouse",
+      "type": "Wired",
+      "category": "Stationary",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
       "code": "ITM-PMK",
       "name": "Paint Marker",
       "type": "NA",
@@ -2551,6 +2623,15 @@ window.IMS_IMPORTED_INVENTORY = {
     {
       "code": "ITM-PPR",
       "name": "Paper Rims",
+      "type": "NA",
+      "category": "Stationary",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
+      "code": "ITM-PLE",
+      "name": "Pencils (LEAD)",
       "type": "NA",
       "category": "Stationary",
       "unit": "",
@@ -2738,18 +2819,27 @@ window.IMS_IMPORTED_INVENTORY = {
       "notes": ""
     },
     {
-      "code": "ITM-TMP",
-      "name": "Training manual",
-      "type": "Participant",
+      "code": "ITM-TPR",
+      "name": "Toner for printer",
+      "type": "NA",
       "category": "Stationary",
       "unit": "",
       "active": true,
       "notes": ""
     },
     {
-      "code": "ITM-TMT",
-      "name": "Training manual",
-      "type": "Trainer",
+      "code": "ITM-SSA",
+      "name": "Sticker sheet",
+      "type": "A4",
+      "category": "Stationary",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
+      "code": "ITM-USB",
+      "name": "USB",
+      "type": "NA",
       "category": "Stationary",
       "unit": "",
       "active": true,
@@ -2795,6 +2885,15 @@ window.IMS_IMPORTED_INVENTORY = {
       "code": "ITM-WTS",
       "name": "White Tape",
       "type": "Small",
+      "category": "Stationary",
+      "unit": "",
+      "active": true,
+      "notes": ""
+    },
+    {
+      "code": "ITM-BCP",
+      "name": "Battery Cell",
+      "type": "Pencil",
       "category": "Stationary",
       "unit": "",
       "active": true,

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=auth-reset-1">
+  <link rel="stylesheet" href="css/styles.css?v=google-auth-1">
 </head>
 <body>
   <main class="auth-page">
@@ -21,20 +21,11 @@
         </div>
       </div>
 
-      <form class="auth-form" onsubmit="handleLogin(event)">
-        <label>Email
-          <input type="email" id="email" placeholder="Enter your email" required>
-        </label>
-        <label>Password
-          <input type="password" id="password" placeholder="Enter your password" required>
-        </label>
+      <div class="auth-form google-only-auth">
         <p id="errorMsg" style="color:red; font-size:13px; display:none;"></p>
         <p id="successMsg" style="color:green; font-size:13px; display:none;"></p>
-        <button class="auth-link-btn" type="button" onclick="handleForgotPassword()">Forgot password?</button>
-        <button class="primary auth-submit" type="submit">Login</button>
-      </form>
-      <div class="auth-divider"><span>or</span></div>
-      <button class="secondary auth-google" type="button" onclick="handleGoogleLogin()">Sign in with Google</button>
+        <button class="secondary auth-google" type="button" onclick="handleGoogleLogin()">Sign in with Google</button>
+      </div>
 
       <p class="auth-switch">Don't have an account? <a href="signup.html">Sign up</a></p>
     </section>
@@ -43,7 +34,7 @@
   <script src="js/firebase-config.js?v=firebase-1"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+    import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
     const app = initializeApp(window.IMS_FIREBASE_CONFIG);
     const auth = getAuth(app);
@@ -65,27 +56,6 @@
       goToPortal();
     });
 
-    window.handleLogin = async function handleLogin(event) {
-      event.preventDefault();
-
-      const email    = document.getElementById('email').value;
-      const password = document.getElementById('password').value;
-      const errorMsg = document.getElementById('errorMsg');
-      const successMsg = document.getElementById('successMsg');
-
-      errorMsg.style.display = 'none';
-      successMsg.style.display = 'none';
-
-      try {
-        const { user } = await signInWithEmailAndPassword(auth, email, password);
-        localStorage.setItem('firebase_token', await user.getIdToken());
-        goToPortal();
-      } catch (error) {
-        errorMsg.textContent = error.message;
-        errorMsg.style.display = 'block';
-      }
-    }
-
     window.handleGoogleLogin = async function handleGoogleLogin() {
       const errorMsg = document.getElementById('errorMsg');
       const successMsg = document.getElementById('successMsg');
@@ -95,27 +65,6 @@
         const { user } = await signInWithPopup(auth, googleProvider);
         localStorage.setItem('firebase_token', await user.getIdToken());
         goToPortal();
-      } catch (error) {
-        errorMsg.textContent = error.message;
-        errorMsg.style.display = 'block';
-      }
-    }
-
-    window.handleForgotPassword = async function handleForgotPassword() {
-      const email = document.getElementById('email').value.trim();
-      const errorMsg = document.getElementById('errorMsg');
-      const successMsg = document.getElementById('successMsg');
-      errorMsg.style.display = 'none';
-      successMsg.style.display = 'none';
-      if (!email) {
-        errorMsg.textContent = 'Enter your email first, then click forgot password.';
-        errorMsg.style.display = 'block';
-        return;
-      }
-      try {
-        await sendPasswordResetEmail(auth, email);
-        successMsg.textContent = 'Password reset email sent. Please check your inbox.';
-        successMsg.style.display = 'block';
       } catch (error) {
         errorMsg.textContent = error.message;
         errorMsg.style.display = 'block';
