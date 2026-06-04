@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IMS Portal</title>
+  <title>SS IMS</title>
   <link rel="icon" type="image/png" href="assets/ims-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -64,6 +64,11 @@
     <main class="main-content">
       <header class="topbar">
         <button class="sidebar-toggle topbar-sidebar-toggle" id="topbarSidebarToggle" type="button" aria-label="Expand sidebar" aria-expanded="false"><i data-lucide="panel-left-open"></i></button>
+        <nav class="topbar-breadcrumb" id="topbarBreadcrumb" aria-label="Breadcrumb">
+          <span>Workspace</span>
+          <i data-lucide="chevron-right"></i>
+          <strong>Dashboard</strong>
+        </nav>
         <div class="search">
           <i data-lucide="search"></i>
           <input id="globalSearch" type="search" placeholder="Search anything">
@@ -92,14 +97,14 @@
         <div class="notification-head">
           <h2>Notifications</h2>
           <div class="notification-tools">
-            <label class="unread-toggle">Only show unread<input id="unreadOnlyToggle" type="checkbox"><span></span></label>
-            <button class="icon-btn" id="markNotificationsRead" type="button" aria-label="Mark all as read"><i data-lucide="check-check"></i></button>
+            <label class="unread-toggle">Unread<input id="unreadOnlyToggle" type="checkbox"><span></span></label>
+            <button class="mark-read-link" id="markNotificationsRead" type="button">Mark all as read</button>
             <button class="icon-btn" id="closeNotificationCenter" type="button" aria-label="Close notifications"><i data-lucide="x"></i></button>
           </div>
         </div>
         <div class="notification-tabs" role="tablist">
-          <button class="notification-tab active" type="button" data-notification-tab="direct">Direct</button>
-          <button class="notification-tab" type="button" data-notification-tab="watching">Watching</button>
+          <button class="notification-tab active" type="button" data-notification-tab="direct">All</button>
+          <button class="notification-tab" type="button" data-notification-tab="watching">Unread</button>
         </div>
         <div class="notification-list" id="notificationList"></div>
       </aside>
@@ -156,7 +161,9 @@
 
       <section class="view" id="inventoryView">
         <div class="card table-card">
-          <div class="section-title"><h2>Inventory</h2><p>Current stock is calculated from the transaction ledger by Item ID + Location.</p></div>
+          <div class="inventory-search-row">
+            <label class="inventory-search-filter">Search items<input id="inventorySearchInput" type="search" placeholder="Search item ID, name, type, category, location"></label>
+          </div>
           <div class="inventory-toolbar">
             <div class="category-tabs" id="categoryTabs"></div>
             <label class="inventory-location-filter">Location<input id="inventoryLocationFilter" data-locations list="inventoryLocationOptions" placeholder="All locations"></label>
@@ -198,6 +205,7 @@
             <label>Location<input required name="location" data-locations list="stockOutLocationOptions" placeholder="Select location"></label>
             <label>Quantity<input required min="1" type="number" name="quantity"></label>
             <label>Issued by<input name="issuedBy" placeholder="Inventory Manager"></label>
+            <label>Issued to<input name="issuedTo" placeholder="Person, team, or department"></label>
             <label class="span-2">Notes<input name="notes" placeholder="Optional remarks"></label>
           </div>
           <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-minus"></i>Stock Out</button></div>
@@ -211,37 +219,69 @@
       <section class="view" id="poView">
         <form id="poForm" class="card form-card">
           <div class="section-title"><h2>Purchase Order</h2><p>PO tracks procurement only. It does not change inventory stock.</p></div>
-          <div class="form-grid">
-            <label>PO number<input name="poNumber" placeholder="Leave blank for auto number"></label>
-            <label>Issue date<input name="issueDate" type="date"></label>
-            <label>Vendor<input required name="vendorId" data-vendors list="vendorOptions" placeholder="Select vendor"></label>
-            <label>Vendor contact<input name="vendorContact" readonly placeholder="Auto from vendor"></label>
-            <label class="span-2">Vendor address<input name="vendorAddress" placeholder="Vendor address"></label>
-            <label>Focal person from Shehersaaz<input name="focalPerson" placeholder="Name"></label>
-            <label>Budget line / donor<input name="budgetLine" placeholder="Budget line, grant, or donor"></label>
-            <label>Bank<input name="bankName" value="Soneri Bank"></label>
-            <label>A/C title<input name="accountTitle" placeholder="Account title"></label>
-            <label>A/C no.<input name="accountNo" value="0030520013181005"></label>
-            <label>Status<input name="status" list="poStatusOptions" value="Open"><datalist id="poStatusOptions"><option value="Open"></option><option value="Ordered"></option><option value="Closed"></option></datalist></label>
-            <label>Location<input required name="location" data-locations list="poLocationOptions" placeholder="Select location"></label>
-            <label>Arrived by<input name="arrivedBy" type="date"></label>
-            <label>Service start date<input name="serviceStartDate" type="date"></label>
-            <label>Service completion date<input name="serviceCompletionDate" type="date"></label>
-            <label>Payment terms<input name="paymentTerms" value="As per Shehersaaz Standard Payment terms (30 days)"></label>
-            <label>Delivery terms<input name="deliveryTerms" placeholder="Delivery terms"></label>
-            <label class="span-2">Quotation reference<input name="quotationReference" placeholder="Quotation number / reference"></label>
-            <label>Category<input required name="category" id="poCategory" data-categories list="poCategoryOptions" placeholder="Select category"></label>
-            <label>Item name<input required name="itemName" id="poItemName" data-item-names data-category-source="poCategory" list="poItemNameOptions" placeholder="Select item"></label>
-            <label>Type<input required name="itemCode" id="poItemType" data-item-types data-item-source="poItemName" data-category-source="poCategory" list="poItemTypeOptions" placeholder="Select type"></label>
-            <label>Item ID<input readonly name="itemIdDisplay" id="poItemId" placeholder="Auto from item and type"></label>
-            <label class="span-2">Specifications<input required name="specifications" placeholder="Item details, specifications, or procurement description"></label>
-            <label>Quantity ordered<input required min="0" step="0.01" type="number" name="quantityOrdered"></label>
-            <label>Unit price<input min="0" step="0.01" type="number" name="unitPrice" value="0"></label>
-            <label>GST %<input min="0" step="0.01" type="number" name="taxRate" value="18"></label>
-            <label>PO amount<input readonly name="poAmount" value="0"></label>
-            <label>Approved by<input name="approvedBy" placeholder="Approver name"></label>
-            <label>Supplier signatory<input name="supplierSignatory" placeholder="Supplier signatory"></label>
-            <label class="span-2">Notes / remarks<input name="notesRemarks" placeholder="Optional remarks"></label>
+          <div class="po-entry-layout">
+            <fieldset class="po-entry-section">
+              <legend>PO Reference</legend>
+              <div class="form-grid">
+                <label>PO number<input name="poNumber" placeholder="Leave blank for auto number"></label>
+                <label>Issue date<input name="issueDate" type="date"></label>
+                <label>Status<input name="status" list="poStatusOptions" placeholder="Select status"><datalist id="poStatusOptions"><option value="Open"></option><option value="Ordered"></option><option value="Closed"></option></datalist></label>
+                <label>Budget line / donor<input name="budgetLine" placeholder="Budget line, grant, or donor"></label>
+              </div>
+            </fieldset>
+            <div class="po-entry-columns">
+              <fieldset class="po-entry-section">
+                <legend>Vendor Details</legend>
+                <div class="form-grid">
+                  <label class="span-2">Vendor<input required name="vendorId" data-vendors list="vendorOptions" placeholder="Select vendor"></label>
+                  <label class="span-2">Vendor contact<input name="vendorContact" readonly placeholder="Auto from vendor"></label>
+                  <label class="span-2">Vendor address<input name="vendorAddress" placeholder="Vendor address"></label>
+                </div>
+              </fieldset>
+              <fieldset class="po-entry-section">
+                <legend>Delivery Details</legend>
+                <div class="form-grid">
+                  <label>Location<input required name="location" data-locations list="poLocationOptions" placeholder="Select location"></label>
+                  <label>Focal person from Shehersaaz<input name="focalPerson" placeholder="Name"></label>
+                  <label>NTN number<input readonly name="deliveryNtn" value="424701-0"></label>
+                  <label>Service start date<input name="serviceStartDate" type="date"></label>
+                  <label>Service completion date<input name="serviceCompletionDate" type="date"></label>
+                </div>
+              </fieldset>
+            </div>
+            <fieldset class="po-entry-section">
+              <legend>Bank Account Details</legend>
+              <div class="form-grid">
+                <label>Bank<input name="bankName"></label>
+                <label>A/C title<input name="accountTitle" placeholder="Account title"></label>
+                <label>A/C no.<input name="accountNo"></label>
+              </div>
+            </fieldset>
+            <fieldset class="po-entry-section">
+              <legend>Terms & Reference</legend>
+              <div class="form-grid">
+                <label>Payment terms<input name="paymentTerms" value="As per Shehersaaz Standard Payment terms (30 days)"></label>
+                <label>Delivery terms<input name="deliveryTerms" placeholder="Delivery terms"></label>
+                <label class="span-2">Quotation reference<input name="quotationReference" placeholder="Quotation number / reference"></label>
+              </div>
+            </fieldset>
+            <fieldset class="po-entry-section">
+              <legend>Item Details</legend>
+              <div class="po-items-toolbar">
+                <span>Up to 20 items can be ordered from this vendor on one PO.</span>
+                <button class="secondary" id="addPoItem" type="button"><i data-lucide="plus"></i>Add item</button>
+              </div>
+              <div id="poItems" class="po-items-editor"></div>
+            </fieldset>
+            <fieldset class="po-entry-section">
+              <legend>Amount</legend>
+              <div class="form-grid po-amount-grid">
+                <label>GST %<input min="0" step="0.01" type="number" name="taxRate" value="18"></label>
+                <label>PO amount<input readonly name="poAmount" value="0"></label>
+                <label>Approved by<input name="approvedBy" placeholder="Approver name"></label>
+                <label class="span-2">Notes / remarks<input name="notesRemarks" placeholder="Optional remarks"></label>
+              </div>
+            </fieldset>
           </div>
           <div class="form-actions"><button class="primary" type="submit"><i data-lucide="file-plus"></i>Generate PO</button></div>
         </form>
@@ -251,11 +291,30 @@
         </div>
       </section>
 
+      <template id="poItemTemplate">
+        <div class="po-item-row">
+          <div class="po-item-row-header">
+            <strong>Item <span data-po-line-number>1</span></strong>
+            <button class="icon-btn remove-po-item" type="button" aria-label="Remove PO item"><i data-lucide="trash-2"></i></button>
+          </div>
+          <div class="form-grid">
+            <label>Category<input required name="category" data-categories placeholder="Select category"></label>
+            <label>Item name<input required name="itemName" data-item-names placeholder="Select item"></label>
+            <label>Type<input required name="itemCode" data-item-types placeholder="Select type"></label>
+            <label>Item ID<input readonly name="itemIdDisplay" placeholder="Auto from item and type"></label>
+            <label>Quantity ordered<input required min="0" step="0.01" type="number" name="quantityOrdered"></label>
+            <label>Unit price<input min="0" step="0.01" type="number" name="unitPrice" value="0"></label>
+            <label class="span-2">Specifications<input required name="specifications" placeholder="Item details, specifications, or procurement description"></label>
+          </div>
+        </div>
+      </template>
+
       <section class="view" id="grnView">
         <form id="grnForm" class="card form-card">
           <div class="section-title"><h2>Goods Received Note</h2><p>Accepted quantity creates GRN_STOCK_IN for the exact Item ID + Location.</p></div>
           <div class="form-grid">
             <label>PO Number<input required name="poNumber" id="poSelect" list="poNumberOptions" placeholder="Select PO number"></label>
+            <label>PO item<select required name="poLineId" id="grnPoLineItem"><option value="">Select PO item</option></select></label>
             <label>Item name<input readonly name="itemName" id="grnItemName"></label>
             <label>Type<input readonly name="itemType" id="grnItemType"></label>
             <label>Item ID<input readonly required name="itemCode" id="grnItemCode"></label>
@@ -269,21 +328,21 @@
         </form>
         <div class="card table-card">
           <div class="section-title"><h2>GRN Records</h2><p>Imported GRNs are shown here. Older sheet rows without Item ID are retained as records only.</p></div>
-          <div class="table-wrap"><table><thead><tr><th>GRN #</th><th>PO #</th><th>Item ID</th><th>Item / Specification</th><th>Location</th><th>Received</th><th>Accepted</th><th>Stock Movement</th><th>Received By</th><th>Date</th></tr></thead><tbody id="grnTable"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>GRN #</th><th>PO #</th><th>Item ID</th><th>Item / Specification</th><th>Location</th><th>Received</th><th>Accepted</th><th>Received By</th><th>Date</th><th>Actions</th></tr></thead><tbody id="grnTable"></tbody></table></div>
         </div>
       </section>
 
       <section class="view" id="transportView">
         <div class="card table-card">
-          <div class="section-title"><h2>Goods Transport</h2><p>Goods, equipment, stock, furniture, or other physical item movements.</p></div>
+          <div class="section-title"><h2>Goods Transport</h2><p>Goods, equipment, stock, furniture, or other physical item movements.</p><button class="secondary" type="button" data-history-page="transport">History</button></div>
           <div class="table-wrap"><table><thead><tr><th>ID</th><th>Requester</th><th>Line Manager Email</th><th>Required Date</th><th>Pickup Time</th><th>Pickup</th><th>Drop-off</th><th>Goods / Items</th><th>Quantity / Weight / Size</th><th>Vehicle</th><th>Purpose / Notes</th><th>Approval</th><th>Arrangement</th><th>Action</th></tr></thead><tbody id="goodsTransportTable"></tbody></table></div>
         </div>
         <div class="card table-card">
-          <div class="section-title"><h2>Travel Requests</h2><p>Official staff travel outside the city or longer planned duty travel.</p></div>
+          <div class="section-title"><h2>Travel Requests</h2><p>Official staff travel outside the city or longer planned duty travel.</p><button class="secondary" type="button" data-history-page="transport">History</button></div>
           <div class="table-wrap"><table><thead><tr><th>ID</th><th>Requester</th><th>Line Manager Email</th><th>Travel Date</th><th>Departure Time</th><th>Return Date</th><th>Pickup</th><th>Destination City / Area</th><th>Trip Duration</th><th>Advance Required</th><th>Travelers</th><th>Vehicle</th><th>Purpose / Notes</th><th>Approval</th><th>Arrangement</th><th>Action</th></tr></thead><tbody id="travelTransportTable"></tbody></table></div>
         </div>
         <div class="card table-card">
-          <div class="section-title"><h2>Local Visit / Meeting Transport</h2><p>In-city meetings, field visits, errands, and same-day official movements.</p></div>
+          <div class="section-title"><h2>Local Visit / Meeting Transport</h2><p>In-city meetings, field visits, errands, and same-day official movements.</p><button class="secondary" type="button" data-history-page="transport">History</button></div>
           <div class="table-wrap"><table><thead><tr><th>ID</th><th>Requester</th><th>Line Manager Email</th><th>Visit Date</th><th>Departure</th><th>Return</th><th>Pickup</th><th>Meeting / Visit Location</th><th>Expected Duration</th><th>Passengers</th><th>Vehicle</th><th>Purpose / Notes</th><th>Approval</th><th>Arrangement</th><th>Action</th></tr></thead><tbody id="localTransportTable"></tbody></table></div>
         </div>
       </section>
@@ -304,14 +363,8 @@
           <div class="history-heading">
             <div>
               <h2 id="historyTitle">Requests history</h2>
-              <p id="historyDescription">Tap any entry to see details</p>
             </div>
             <button class="secondary" type="button" id="historyBackBtn">Back</button>
-          </div>
-          <div class="history-tabs" role="tablist">
-            <button class="history-tab active" type="button" data-history-filter="all">All activity</button>
-            <button class="history-tab" type="button" data-history-filter="transport">Transport</button>
-            <button class="history-tab" type="button" data-history-filter="items">Items</button>
           </div>
           <div class="history-list" id="historyList"></div>
         </div>
@@ -321,14 +374,18 @@
         <form id="vendorForm" class="card form-card">
           <div class="section-title"><h2>Vendor Master</h2><p>Vendor records used by purchase orders.</p></div>
           <div class="form-grid">
+            <input type="hidden" name="id">
             <label>Name<input required name="name"></label>
             <label>Phone<input name="phone"></label>
             <label>Contact person<input name="contact"></label>
+            <label>Bank<input name="bankName"></label>
+            <label>A/C title<input name="accountTitle"></label>
+            <label>A/C no.<input name="accountNo"></label>
             <label class="span-2">Address<input name="address"></label>
           </div>
-          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="building-2"></i>Add Vendor</button></div>
+          <div class="form-actions"><button class="secondary" id="cancelVendorEdit" type="button" hidden>Cancel edit</button><button class="primary" id="saveVendorButton" type="submit"><i data-lucide="building-2"></i>Add Vendor</button></div>
         </form>
-        <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Contact</th><th>Address</th></tr></thead><tbody id="vendorsTable"></tbody></table></div></div>
+        <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Contact</th><th>Bank</th><th>A/C Title</th><th>A/C No.</th><th>Address</th><th>Actions</th></tr></thead><tbody id="vendorsTable"></tbody></table></div></div>
       </section>
 
       <section class="view" id="reportsView">
@@ -376,8 +433,7 @@
       <div class="form-grid">
         <label>Category<input name="category" id="itemCategorySelect" data-categories list="itemCategoryOptions" placeholder="Select category"></label>
         <label>New category<input name="newCategory" placeholder="Only fill this to create a new category"></label>
-        <label>Item name<input required name="name" placeholder="Enter item name"></label>
-        <label>Unit<input name="unit" placeholder="pcs, box, kg"></label>
+        <label class="span-2">Item name<input required name="name" placeholder="Enter item name"></label>
       </div>
       <div class="line-builder">
         <h3>Item Types</h3>
@@ -431,7 +487,9 @@
 
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="js/firebase-config.js?v=firebase-1"></script>
-  <script src="js/inventory-data.js?v=inventory-clean-1"></script>
+  <script src="js/inventory data/progressive.js?v=inventory-split-1"></script>
+  <script src="js/inventory data/rwhu.js?v=inventory-split-1"></script>
+  <script src="js/inventory data/stationary.js?v=inventory-split-1"></script>
   <script src="js/script.js?v=type-options-clean-3"></script>
 </body>
 </html>

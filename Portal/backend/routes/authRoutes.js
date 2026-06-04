@@ -18,6 +18,15 @@ router.get("/users", requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), a
   }
 });
 
+router.post("/users", requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), async (req, res, next) => {
+  try {
+    const user = await authService.createUser(req.body, req.auth.user.id);
+    ok(res, { user, message: "User added." }, 201);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/roles", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), async (req, res, next) => {
   try {
     ok(res, { roles: await authService.listRoles() });

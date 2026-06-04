@@ -3,6 +3,8 @@ const path = require("path");
 const mysql = require("mysql2/promise");
 const config = require("./env");
 
+const databaseName = "ims_system";
+
 const requiredDatabaseVars = ["DB_HOST", "DB_NAME", "DB_USER"];
 const missingDatabaseVars = requiredDatabaseVars.filter((key) => !process.env[key]);
 
@@ -30,7 +32,6 @@ async function initializeDatabase() {
     port: config.database.port,
     user: config.database.user,
     password: config.database.password,
-    database: config.database.name,
     multipleStatements: false
   });
 
@@ -47,9 +48,12 @@ async function initializeDatabase() {
 }
 
 async function testDatabaseConnection() {
+  assertDatabaseConfig();
+
   const connection = await pool.getConnection();
   try {
     await connection.ping();
+    console.log(`Connected to database: ${databaseName}`);
   } finally {
     connection.release();
   }
@@ -58,6 +62,12 @@ async function testDatabaseConnection() {
 function assertDatabaseConfig() {
   if (missingDatabaseVars.length) {
     const error = new Error(`Missing database environment variables: ${missingDatabaseVars.join(", ")}`);
+    error.statusCode = 500;
+    throw error;
+  }
+
+  if (config.database.name !== databaseName) {
+    const error = new Error(`Invalid database configured: ${config.database.name}. Expected ${databaseName}.`);
     error.statusCode = 500;
     throw error;
   }

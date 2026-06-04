@@ -58,10 +58,14 @@ const seedState = {
   auditLogs: []
 };
 
+const VENDOR_ACCOUNT_DETAILS_KEY = "imsVendorAccountDetails";
+const vendorAccountDetails = loadVendorAccountDetails();
+
 let state = loadState();
 let inventoryCategoryFilter = "All";
 let inventoryLocationFilter = "All";
 let inventoryStatusFilter = "All";
+let inventorySearchTerm = "";
 let inventoryPage = 1;
 const INVENTORY_PAGE_SIZE = 15;
 let requestsPage = 1;
@@ -73,13 +77,15 @@ let userManagementLoaded = false;
 let activeSettingsGroup = "user_management";
 let activeNotificationTab = "direct";
 let unreadOnly = false;
-const readNotificationIds = new Set();
+let notifications = [];
+let notificationsLoaded = false;
+const knownUnreadNotificationIds = new Set();
+let notificationSoundUnlocked = false;
 let pendingPurchaseOrder = null;
 let pendingCancelPoNumber = "";
 let pendingDeleteUserId = "";
 let activeHistorySection = "requests";
 let previousHistoryView = "dashboard";
-let activeHistoryFilter = "all";
 const expandedHistoryIds = new Set();
 
 function redirectToLogin() {
@@ -184,7 +190,7 @@ const settingsSections = [
   ] },
   { group: "user_management", title: "User Management", icon: "user-cog", description: "Manage user account roles and access.", adminOnly: true, fields: [] },
   { group: "inventory", title: "Inventory", icon: "boxes", description: "Inventory masters and stock movement rules.", fields: [
-    ["item_categories", "Item categories", "textarea"], ["units_of_measurement", "Units of measurement", "textarea"],
+    ["item_categories", "Item categories", "textarea"],
     ["stock_status_rules", "Stock status rules", "textarea"], ["allow_negative_stock", "Allow negative stock", "checkbox"], ["allow_manual_stock_in", "Allow manual stock in", "checkbox"],
     ["allow_stock_adjustments", "Allow stock adjustments", "checkbox"]
   ] },
@@ -195,15 +201,6 @@ const settingsSections = [
   { group: "requisitions", title: "Requisitions", icon: "list-checks", description: "Request numbering, status, field, and approval rules.", fields: [
     ["request_id_format", "Request ID format", "text", true], ["request_statuses", "Request statuses", "textarea", true], ["required_fields", "Required fields", "textarea"],
     ["allow_cancellation", "Allow cancellation", "checkbox"], ["allow_editing_before_approval", "Allow editing before approval", "checkbox"], ["approval_levels", "Approval levels", "number"]
-  ] },
-  { group: "purchase_orders", title: "PO", icon: "file-pen-line", description: "Purchase order numbering, defaults, tax, approval, and print rules.", fields: [
-    ["po_number_format", "PO number format", "text", true], ["po_statuses", "PO statuses", "textarea", true], ["default_payment_terms", "Default payment terms", "text"],
-    ["default_delivery_terms", "Default delivery terms", "text"], ["gst_tax_percentage", "GST/tax percentage", "number"], ["po_approval_rules", "PO approval rules", "textarea"],
-    ["po_terms_conditions", "PO terms and conditions", "textarea"], ["printable_po_template", "Printable PO template settings", "textarea"]
-  ] },
-  { group: "grn", title: "GRN", icon: "truck", description: "GRN numbering, status, receiving, and PO requirement rules.", fields: [
-    ["grn_id_format", "GRN ID format", "text", true], ["grn_statuses", "GRN statuses", "textarea", true], ["allow_partial_receiving", "Allow partial receiving", "checkbox"],
-    ["allow_over_receiving", "Allow over-receiving", "checkbox"], ["require_po_for_grn", "Require PO for GRN", "checkbox"], ["require_accepted_rejected_qty", "Require accepted/rejected quantity", "checkbox"]
   ] },
   { group: "vendors", title: "Vendors", icon: "building", description: "Vendor required fields, bank details, inactive status, and duplicate checks.", fields: [
     ["required_vendor_fields", "Required vendor fields", "textarea"], ["bank_detail_requirements", "Bank detail requirements", "textarea"],
@@ -263,7 +260,10 @@ const removedSettingsGroups = new Set([
   "inventory",
   "locations",
   "requisitions",
+  "purchase_orders",
+  "grn",
   "vendors",
+  "notifications",
   "print_templates"
 ]);
 
@@ -293,7 +293,10 @@ function loadState() {
 }
 
 function importedInventoryState() {
-  const imported = window.IMS_IMPORTED_INVENTORY || {};
+  const imported = window.IMS_IMPORTED_INVENTORY || {
+    locations: [],
+    items: window.IMS_IMPORTED_INVENTORY_ITEMS || []
+  };
   return {
     locations: Array.isArray(imported.locations) ? structuredClone(imported.locations) : [],
     items: Array.isArray(imported.items) ? structuredClone(imported.items) : []
@@ -373,6 +376,76 @@ function itemTypesForName(name, category = "") {
     .sort((a, b) => String(a.type || "").localeCompare(String(b.type || "")));
 }
 
+function loadVendorAccountDetails() {
+  try {
+    return JSON.parse(localStorage.getItem(VENDOR_ACCOUNT_DETAILS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveVendorAccountDetails() {
+  localStorage.setItem(VENDOR_ACCOUNT_DETAILS_KEY, JSON.stringify(vendorAccountDetails));
+}
+
+function vendorAccountKeys(vendor = {}) {
+  return [
+    vendor.id ? `id:${vendor.id}` : "",
+    vendor.vendorId ? `vendor:${vendor.vendorId}` : "",
+    vendor.name ? `name:${String(vendor.name).trim().toLowerCase()}` : ""
+  ].filter(Boolean);
+}
+
+function normalizeVendorRecord(vendor = {}) {
+  const savedDetails = vendorAccountKeys(vendor)
+    .map((key) => vendorAccountDetails[key])
+    .find(Boolean) || {};
+
+  return {
+    ...vendor,
+    bankName: vendor.bankName || vendor.bank_name || savedDetails.bankName || "",
+    accountTitle: vendor.accountTitle || vendor.account_title || savedDetails.accountTitle || "",
+    accountNo: vendor.accountNo || vendor.account_no || savedDetails.accountNo || ""
+  };
+}
+
+function rememberVendorAccountDetails(vendor = {}) {
+  const normalized = normalizeVendorRecord(vendor);
+  const details = {
+    bankName: normalized.bankName || "",
+    accountTitle: normalized.accountTitle || "",
+    accountNo: normalized.accountNo || ""
+  };
+
+  if (!details.bankName && !details.accountTitle && !details.accountNo) return;
+  vendorAccountKeys(normalized).forEach((key) => {
+    vendorAccountDetails[key] = details;
+  });
+  saveVendorAccountDetails();
+}
+
+async function saveVendorRecord(vendorId, payload) {
+  if (!vendorId) {
+    return apiRequest("/vendors", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  }
+
+  try {
+    return await apiRequest(`/vendors/${encodeURIComponent(vendorId)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    if (![404, 405].includes(error.statusCode)) throw error;
+    return apiRequest(`/vendors/${encodeURIComponent(vendorId)}`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  }
+}
+
 function stockFor(itemCode, location) {
   const dbRow = (state.inventoryRows || []).find((row) => row.code === itemCode && row.location === location);
   if (dbRow) return Number(dbRow.available ?? dbRow.stock ?? 0);
@@ -436,10 +509,20 @@ async function apiRequest(path, options = {}) {
       ...(options.headers || {})
     }
   });
-  const data = await response.json().catch(() => ({}));
+  const responseText = await response.text();
+  let data = {};
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    data = {};
+  }
   if (!response.ok) {
-    const error = new Error(data.error?.message || "IMS API request failed.");
+    const fallbackMessage = responseText && !responseText.trim().startsWith("<")
+      ? responseText.trim()
+      : `IMS API request failed (${response.status}).`;
+    const error = new Error(data.error?.message || data.message || fallbackMessage);
     error.statusCode = response.status;
+    error.data = data;
     throw error;
   }
   return data;
@@ -640,7 +723,38 @@ function renderUserManagement(section) {
   }
 
   form.innerHTML = `
+    <div class="user-management-page-head">
+      <div class="user-management-title-icon"><i data-lucide="shield-user"></i></div>
+      <div>
+        <h2>User Management</h2>
+        <p>Manage user account roles and access.</p>
+      </div>
+      <button class="secondary user-export-btn" type="button"><i data-lucide="download"></i>Export Users</button>
+    </div>
+    <div class="add-user-panel">
+      <div>
+        <strong>Add User</strong>
+        <span>Create a portal user and assign roles manually.</span>
+      </div>
+      <div class="add-user-fields">
+        <label>Full Name<input id="newUserName" name="newUserName" placeholder="Enter full name" required></label>
+        <label>Email Address<input id="newUserEmail" name="newUserEmail" type="email" placeholder="Enter email address" required></label>
+      </div>
+      <div class="role-checkbox-grid add-user-roles">
+        ${AVAILABLE_USER_ROLES.map((role) => `
+          <label class="role-pill ${role.key === "requestor" ? "selected" : ""}">
+            <input type="checkbox" name="newUserRoles" value="${role.key}" ${role.key === "requestor" ? "checked" : ""}>
+            <span>${role.label}</span>
+          </label>
+        `).join("")}
+      </div>
+      <button class="user-save-btn" id="addUserBtn" type="button"><i data-lucide="user-plus"></i>Add User</button>
+    </div>
     <div class="user-management-list" role="table" aria-label="User Management">
+      <div class="user-management-toolbar">
+        <label>Show <select aria-label="Entries per page"><option>10</option></select> entries</label>
+        <label class="user-management-search">Search users<input type="search" placeholder="Search by name or email..." aria-label="Search users"></label>
+      </div>
       <div class="user-management-header" role="row">
         <span>User</span>
         <span>Status</span>
@@ -654,8 +768,8 @@ function renderUserManagement(section) {
         return `
           <article class="user-management-card" data-user-id="${escapeHtml(user.id)}" role="row">
             <div class="user-management-person">
-              <strong>${escapeHtml(user.name || "Unnamed user")}</strong>
-              <span>${escapeHtml(user.email || "")}</span>
+              <span class="user-management-avatar">${escapeHtml(initialsFor(user.name || user.email || "U"))}</span>
+              <span class="user-management-identity"><strong>${escapeHtml(user.name || "Unnamed user")}</strong><span>${escapeHtml(user.email || "")}</span></span>
             </div>
             <div class="user-management-status">
               ${statusBadge(user.status || (user.isActive ? "active" : "inactive"))}
@@ -669,7 +783,7 @@ function renderUserManagement(section) {
               `).join("")}
             </div>
             <div class="user-management-actions">
-              <button class="user-save-btn save-user-roles" type="button" data-user-id="${escapeHtml(user.id)}">Save</button>
+              <button class="user-save-btn save-user-roles" type="button" data-user-id="${escapeHtml(user.id)}"><i data-lucide="save"></i>Save</button>
               <button class="user-status-btn toggle-user-status" type="button" data-user-id="${escapeHtml(user.id)}" data-next-active="${isActive ? "false" : "true"}" ${isSelf ? "disabled" : ""}>${isActive ? "Deactivate" : "Activate"}</button>
               ${isSelf ? `<button class="user-delete-btn" type="button" disabled aria-label="Cannot delete your own account"><i data-lucide="trash-2"></i></button>` : `<button class="user-delete-btn delete-user" type="button" data-user-id="${escapeHtml(user.id)}" aria-label="Delete ${escapeHtml(user.name || user.email || "user")}"><i data-lucide="trash-2"></i></button>`}
             </div>
@@ -677,7 +791,7 @@ function renderUserManagement(section) {
         `;
       }).join("") || `<div class="user-management-empty">No users found.</div>`}
     </div>
-    <div class="settings-actions"><button class="secondary" type="button" id="reloadUsersBtn">Reload Users</button></div>
+    <div class="user-management-footer"><span>Showing 1 to ${userManagementUsers.length} of ${userManagementUsers.length} entries</span><button class="secondary" type="button" id="reloadUsersBtn">Reload Users</button></div>
   `;
   renderSettingsTabs();
   if (window.lucide) window.lucide.createIcons();
@@ -705,6 +819,38 @@ async function saveUserRoles(userId) {
     showToast("User roles updated.");
   } catch (error) {
     showToast(error.message || "Unable to update user roles.", "error");
+  }
+}
+
+async function addUserFromManagement() {
+  if (!isAdmin) return showToast("Admin access is required.", "error");
+  const nameField = document.getElementById("newUserName");
+  const emailField = document.getElementById("newUserEmail");
+  const roles = Array.from(document.querySelectorAll("input[name='newUserRoles']:checked")).map((input) => input.value);
+  const name = String(nameField?.value || "").trim();
+  const email = String(emailField?.value || "").trim();
+  if (!name) return showToast("Enter the user's full name.", "error");
+  if (!email) return showToast("Enter the user's email.", "error");
+  if (!roles.length) return showToast("Select at least one role.", "error");
+
+  try {
+    const data = await apiRequest("/auth/users", {
+      method: "POST",
+      body: JSON.stringify({ name, email, roles })
+    });
+    const createdUser = data.user;
+    if (createdUser) {
+      userManagementUsers = [
+        { ...createdUser, roles: (createdUser.roles || []).map(normalizeRoleKey) },
+        ...userManagementUsers.filter((user) => String(user.id) !== String(createdUser.id))
+      ];
+    } else {
+      await loadUserManagement({ silent: true });
+    }
+    renderSettings();
+    showToast("User added.");
+  } catch (error) {
+    showToast(error.message || "Unable to add user.", "error");
   }
 }
 
@@ -814,6 +960,7 @@ async function loadBusinessData({ silent = false } = {}) {
     }
     if (key === "items") return;
     state[key] = result.value[key] || state[key] || [];
+    if (key === "vendors") state.vendors = state.vendors.map(normalizeVendorRecord);
   });
   state = applyImportedInventoryBase(state);
   if (!importedInventoryState().locations.length) {
@@ -861,6 +1008,8 @@ async function autoRefreshBusinessData() {
       render();
       showToast("Portal updated with latest activity.");
     }
+    await loadNotifications({ silent: true });
+    if (document.getElementById("notificationCenter").classList.contains("show")) renderNotificationCenter();
   } catch (error) {
     console.warn("Auto-refresh failed:", error);
   } finally {
@@ -941,41 +1090,139 @@ function notificationSeed() {
   return items;
 }
 
+function notificationAudience(item = {}) {
+  return item.metadata?.audience === "system" || (!item.recipientUserId && !item.recipientEmail) ? "watching" : "direct";
+}
+
+function notificationInitials(item = {}) {
+  const label = item.type || item.entityType || item.title || "Notification";
+  return String(label)
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase() || "IN";
+}
+
+function notificationTone(item = {}) {
+  const type = String(item.type || "").toLowerCase();
+  if (type.includes("approved") || type.includes("grn")) return "green";
+  if (type.includes("stock") || type.includes("transport")) return "teal";
+  return "";
+}
+
+function unlockNotificationSound() {
+  notificationSoundUnlocked = true;
+}
+
+function playNotificationSound() {
+  if (!notificationSoundUnlocked) return;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return;
+  const context = new AudioContext();
+  const now = context.currentTime;
+  const gain = context.createGain();
+  gain.connect(context.destination);
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.18, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.55);
+
+  [740, 980].forEach((frequency, index) => {
+    const oscillator = context.createOscillator();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, now + index * 0.16);
+    oscillator.connect(gain);
+    oscillator.start(now + index * 0.16);
+    oscillator.stop(now + index * 0.16 + 0.22);
+  });
+  setTimeout(() => context.close(), 800);
+}
+
+function syncNotificationSoundState(nextNotifications = [], { allowSound = true } = {}) {
+  const unreadIds = nextNotifications
+    .filter((item) => item.unread)
+    .map((item) => String(item.id));
+  const hasNewUnread = unreadIds.some((id) => !knownUnreadNotificationIds.has(id));
+  knownUnreadNotificationIds.clear();
+  unreadIds.forEach((id) => knownUnreadNotificationIds.add(id));
+  if (allowSound && hasNewUnread) playNotificationSound();
+}
+
+async function loadNotifications({ silent = false } = {}) {
+  const list = document.getElementById("notificationList");
+  if (!silent && list) list.innerHTML = `<div class="notification-empty">Loading notifications...</div>`;
+  try {
+    const wasLoaded = notificationsLoaded;
+    const data = await apiRequest(`/notifications${unreadOnly ? "?unreadOnly=true" : ""}`);
+    notifications = Array.isArray(data.notifications) ? data.notifications : [];
+    notificationsLoaded = true;
+    syncNotificationSoundState(notifications, { allowSound: wasLoaded });
+    updateNotificationBadge();
+    return notifications;
+  } catch (error) {
+    if (!silent && list) list.innerHTML = `<div class="notification-empty">Unable to load notifications.</div>`;
+    showToast(error.message || "Unable to load notifications.", "error");
+    return [];
+  }
+}
+
+async function markNotificationRead(id) {
+  const item = notifications.find((row) => String(row.id) === String(id));
+  if (!item || !item.unread) return;
+  try {
+    await apiRequest(`/notifications/${encodeURIComponent(id)}/read`, { method: "PATCH" });
+    notifications = notifications.map((row) => String(row.id) === String(id) ? { ...row, unread: false, status: "read" } : row);
+    updateNotificationBadge();
+    renderNotificationCenter();
+  } catch (error) {
+    showToast(error.message || "Unable to mark notification as read.", "error");
+  }
+}
+
 function renderNotificationCenter() {
   const list = document.getElementById("notificationList");
-  const rows = notificationSeed()
-    .map((item) => ({ ...item, unread: item.unread && !readNotificationIds.has(item.id) }))
-    .filter((item) => item.tab === activeNotificationTab && (!unreadOnly || item.unread));
+  const rows = notifications
+    .filter((item) => !unreadOnly || item.unread);
   document.querySelectorAll(".notification-tab").forEach((tab) => {
-    tab.classList.toggle("active", tab.dataset.notificationTab === activeNotificationTab);
+    tab.classList.toggle("active", tab.dataset.notificationTab === (unreadOnly ? "watching" : "direct"));
   });
-  list.innerHTML = `<div class="notification-section-label">Latest</div>${rows.map((item) => `
-    <article class="notification-item ${item.unread ? "" : "read"}">
-      <div class="notification-avatar ${item.avatarClass || ""}">${item.avatar}</div>
+  const unreadToggle = document.getElementById("unreadOnlyToggle");
+  if (unreadToggle) unreadToggle.checked = unreadOnly;
+  if (!notificationsLoaded) {
+    list.innerHTML = `<div class="notification-empty">Loading notifications...</div>`;
+    return;
+  }
+  list.innerHTML = `${rows.slice(0, 6).map((item) => `
+    <article class="notification-item ${item.unread ? "" : "read"}" data-notification-id="${escapeHtml(item.id)}" title="${escapeHtml(item.message || item.body || "")}">
+      <div class="notification-avatar ${notificationTone(item)}">${escapeHtml(notificationInitials(item))}</div>
       <div class="notification-body">
-        <strong>${escapeHtml(item.title)} <span class="notification-meta" style="display:inline">${escapeHtml(item.age)}</span></strong>
-        <p>${escapeHtml(item.body)}</p>
-        <span class="notification-meta">${escapeHtml(item.meta)}</span>
-        ${item.reply ? `<div class="notification-reply"><p>${escapeHtml(item.reply)}</p><div class="notification-reply-actions"><button type="button">👍</button><button type="button">👏</button><button type="button"></button><button type="button">☺</button><button class="reply-btn" type="button">Reply</button><button class="thread-btn" type="button">View thread</button></div></div>` : ""}
+        <strong>${escapeHtml(item.title)}</strong>
+        <p>${escapeHtml(item.message || item.body || "")}</p>
       </div>
-      <span class="notification-dot"></span>
+      <span class="notification-arrow"><i data-lucide="arrow-right"></i></span>
+      ${item.unread ? `<span class="notification-dot"></span>` : ""}
     </article>
-  `).join("") || `<div class="notification-empty">No notifications to show</div>`}`;
+  `).join("") || `<div class="notification-empty">${unreadOnly ? "No unread notifications." : "No notifications yet."}</div>`}
+  ${rows.length ? `<button class="notification-see-all" type="button">See all</button>` : ""}`;
+  if (window.lucide) lucide.createIcons();
 }
 
 function updateNotificationBadge() {
-  const hasUnread = notificationSeed().some((item) => item.unread && !readNotificationIds.has(item.id));
+  const hasUnread = notifications.some((item) => item.unread);
   const btn = document.getElementById("notificationBtn");
   if (!btn) return;
   btn.classList.toggle("has-unread", hasUnread);
   btn.setAttribute("aria-label", hasUnread ? "Notifications, unread" : "Notifications");
 }
 
-function openNotificationCenter() {
+async function openNotificationCenter() {
   const panel = document.getElementById("notificationCenter");
   panel.classList.add("show");
   panel.setAttribute("aria-hidden", "false");
   document.getElementById("notificationBtn").setAttribute("aria-expanded", "true");
+  renderNotificationCenter();
+  await loadNotifications();
   renderNotificationCenter();
 }
 
@@ -988,7 +1235,8 @@ function closeNotificationCenter() {
 
 function toggleNotificationCenter() {
   const panel = document.getElementById("notificationCenter");
-  panel.classList.contains("show") ? closeNotificationCenter() : openNotificationCenter();
+  if (panel.classList.contains("show")) closeNotificationCenter();
+  else openNotificationCenter();
 }
 
 function money(value) {
@@ -1003,6 +1251,31 @@ function formatDate(value) {
 
 function remainingPoQuantity(po) {
   return Math.max(Number(po?.quantityOrdered || 0) - Number(po?.quantityReceived || 0), 0);
+}
+
+function remainingPoLineQuantity(item) {
+  return Math.max(Number(item?.quantityOrdered || 0) - Number(item?.quantityReceived || 0), 0);
+}
+
+function poLineItems(po) {
+  if (Array.isArray(po?.items) && po.items.length) return po.items;
+  return [{
+    category: po?.category || "",
+    itemName: po?.itemName || "",
+    itemType: po?.itemType || po?.type || "",
+    itemCode: po?.itemCode || "",
+    specifications: po?.specifications || po?.description || "",
+    quantityOrdered: Number(po?.quantityOrdered ?? po?.quantity ?? 0),
+    unitPrice: Number(po?.unitPrice || 0),
+    subtotal: Number(po?.subtotal ?? (po?.quantityOrdered || po?.quantity || 0) * (po?.unitPrice || 0))
+  }];
+}
+
+function poItemSummary(po) {
+  const lines = poLineItems(po);
+  if (lines.length > 1) return `${lines.length} items: ${lines.map((item) => item.itemName || item.itemCode || item.specifications || "Item").filter(Boolean).slice(0, 3).join(", ")}${lines.length > 3 ? "..." : ""}`;
+  const item = lines[0] || {};
+  return `${item.itemCode ? `${item.itemCode} - ` : ""}${item.itemName || item.specifications || ""}`;
 }
 
 function canReceivePo(po) {
@@ -1032,6 +1305,7 @@ function optionsHtml(values, getValue = (row) => row, getLabel = (row) => row) {
 }
 
 function setChoiceOptions(field, placeholder, values, getValue = (row) => row, getLabel = (row) => row) {
+  if (!field) return;
   const selected = field.value;
   if (field.tagName === "SELECT") {
     field.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${optionsHtml(values, getValue, getLabel)}`;
@@ -1065,12 +1339,12 @@ function syncSelectOptions(scope = document) {
     setChoiceOptions(field, "Select location", state.locations);
   });
   const inventoryLocationSelect = document.getElementById("inventoryLocationFilter");
-  setChoiceOptions(inventoryLocationSelect, "All locations", ["All", ...state.locations]);
+  setChoiceOptions(inventoryLocationSelect, "All locations", state.locations);
   if (state.locations.includes(inventoryLocationFilter)) {
     inventoryLocationSelect.value = inventoryLocationFilter;
   } else {
     inventoryLocationFilter = "All";
-    inventoryLocationSelect.value = "All";
+    inventoryLocationSelect.value = "";
   }
   scope.querySelectorAll("[data-items]").forEach((field) => {
     const selected = field.value;
@@ -1107,8 +1381,34 @@ function syncSelectOptions(scope = document) {
   const poSelect = document.getElementById("poSelect");
   const selectedPo = poSelect.value;
   const receivablePos = state.purchaseOrders.filter(canReceivePo);
-  setChoiceOptions(poSelect, "Select PO number", receivablePos, (po) => po.poNumber, (po) => `${po.poNumber} - ${po.itemCode || po.specifications || "Item"} (${money(remainingPoQuantity(po))} remaining)`);
+  setChoiceOptions(poSelect, "Select PO number", receivablePos, (po) => po.poNumber, (po) => `${po.poNumber} - ${poItemSummary(po)} (${money(remainingPoQuantity(po))} remaining)`);
   if (selectedPo && receivablePos.some((po) => po.poNumber === selectedPo)) poSelect.value = selectedPo;
+}
+
+function enableDatalistRefocusOptions() {
+  document.addEventListener("focusin", (event) => {
+    const field = event.target;
+    if (!(field instanceof HTMLInputElement) || !field.getAttribute("list") || !field.value) return;
+    field.dataset.previousDatalistValue = field.value;
+    field.dataset.datalistChanged = "false";
+    field.value = "";
+  });
+
+  document.addEventListener("input", (event) => {
+    const field = event.target;
+    if (!(field instanceof HTMLInputElement) || !field.dataset.previousDatalistValue) return;
+    field.dataset.datalistChanged = "true";
+  });
+
+  document.addEventListener("focusout", (event) => {
+    const field = event.target;
+    if (!(field instanceof HTMLInputElement) || !field.dataset.previousDatalistValue) return;
+    const previousValue = field.dataset.previousDatalistValue;
+    const changed = field.dataset.datalistChanged === "true";
+    if (!changed && !field.value) field.value = previousValue;
+    delete field.dataset.previousDatalistValue;
+    delete field.dataset.datalistChanged;
+  });
 }
 
 function renderCategoryTabs() {
@@ -1146,6 +1446,34 @@ function closeItemModal() {
   document.getElementById("itemModal").setAttribute("aria-hidden", "true");
 }
 
+const breadcrumbByView = {
+  dashboard: ["Dashboard"],
+  requisition: ["Requests", "Requisition Form"],
+  requests: ["Requests"],
+  inventory: ["Inventory"],
+  stockIn: ["Inventory", "Stock In"],
+  issue: ["Inventory", "Stock Issue"],
+  grn: ["Inventory", "GRN"],
+  po: ["Procurement", "PO"],
+  vendors: ["Procurement", "Vendors"],
+  transport: ["Requests", "Transport Requests"],
+  approvals: ["Approvals"],
+  reports: ["Reports"],
+  settings: ["Settings"],
+  history: ["History"]
+};
+
+function updateTopbarBreadcrumb(view) {
+  const breadcrumb = document.getElementById("topbarBreadcrumb");
+  if (!breadcrumb) return;
+  const parts = breadcrumbByView[view] || ["Dashboard"];
+  breadcrumb.innerHTML = `<span>Workspace</span>${parts.map((part, index) => `
+    <i data-lucide="chevron-right"></i>
+    ${index === parts.length - 1 ? `<strong>${escapeHtml(part)}</strong>` : `<span>${escapeHtml(part)}</span>`}
+  `).join("")}`;
+  if (window.lucide) lucide.createIcons();
+}
+
 function setView(view) {
   if (!canAccessView(view)) {
     showToast("You do not have access to this section.", "error");
@@ -1156,6 +1484,7 @@ function setView(view) {
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
   const active = document.querySelector(`.nav-item[data-view="${view}"] span:last-child`);
   document.getElementById("pageTitle").textContent = view === "history" ? "History" : active ? active.textContent : "Dashboard";
+  updateTopbarBreadcrumb(view);
   render();
 }
 
@@ -1163,7 +1492,6 @@ function openHistoryPage(section) {
   const activePanel = document.querySelector(".view.active");
   previousHistoryView = activePanel ? activePanel.id.replace(/View$/, "") : "dashboard";
   activeHistorySection = section;
-  activeHistoryFilter = "all";
   expandedHistoryIds.clear();
   setView("history");
 }
@@ -1184,6 +1512,76 @@ function addItemTypeLine() {
     if (document.querySelectorAll("#itemTypeRows .item-type-row").length > 1) row.remove();
   });
   document.getElementById("itemTypeRows").appendChild(row);
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function updatePoLineNumbers() {
+  document.querySelectorAll("#poItems .po-item-row").forEach((row, index) => {
+    row.querySelector("[data-po-line-number]").textContent = index + 1;
+    row.querySelector(".remove-po-item").hidden = document.querySelectorAll("#poItems .po-item-row").length === 1;
+  });
+}
+
+function updatePoRowItemId(row) {
+  const itemName = row.querySelector("[name='itemName']").value;
+  const itemType = row.querySelector("[name='itemCode']").value;
+  const category = row.querySelector("[name='category']").value;
+  const item = findItemBySelection(itemName, itemType, category);
+  row.querySelector("[name='itemIdDisplay']").value = item ? item.code : "";
+  const specifications = row.querySelector("[name='specifications']");
+  if (item && !specifications.value) specifications.value = `${item.name} - ${item.type}`;
+}
+
+function syncPoRowOptions(row) {
+  const categoryField = row.querySelector("[name='category']");
+  const itemNameField = row.querySelector("[name='itemName']");
+  const itemTypeField = row.querySelector("[name='itemCode']");
+  itemNameField.dataset.categorySource = categoryField.id;
+  itemTypeField.dataset.itemSource = itemNameField.id;
+  itemTypeField.dataset.categorySource = categoryField.id;
+  syncSelectOptions(row);
+}
+
+function addPoItemLine() {
+  const currentRows = document.querySelectorAll("#poItems .po-item-row");
+  if (currentRows.length >= 20) return showToast("A PO can include up to 20 items.", "error");
+  const template = document.getElementById("poItemTemplate");
+  const row = template.content.firstElementChild.cloneNode(true);
+  const uid = `poLine${Date.now()}${currentRows.length}`;
+  row.querySelector("[name='category']").id = `${uid}Category`;
+  row.querySelector("[name='itemName']").id = `${uid}ItemName`;
+  row.querySelector("[name='itemCode']").id = `${uid}ItemType`;
+  row.querySelector("[name='itemIdDisplay']").id = `${uid}ItemId`;
+  row.querySelector(".remove-po-item").addEventListener("click", () => {
+    if (document.querySelectorAll("#poItems .po-item-row").length <= 1) return;
+    row.remove();
+    updatePoLineNumbers();
+    updatePOAmount();
+  });
+  row.querySelector("[name='category']").addEventListener("change", () => {
+    row.querySelector("[name='itemName']").value = "";
+    row.querySelector("[name='itemCode']").value = "";
+    updatePoRowItemId(row);
+    syncPoRowOptions(row);
+  });
+  row.querySelector("[name='itemName']").addEventListener("change", () => {
+    row.querySelector("[name='itemCode']").value = "";
+    updatePoRowItemId(row);
+    syncPoRowOptions(row);
+  });
+  row.querySelector("[name='itemName']").addEventListener("input", () => {
+    row.querySelector("[name='itemCode']").value = "";
+    updatePoRowItemId(row);
+    syncPoRowOptions(row);
+  });
+  row.querySelector("[name='itemCode']").addEventListener("change", () => updatePoRowItemId(row));
+  row.querySelector("[name='itemCode']").addEventListener("input", () => updatePoRowItemId(row));
+  row.querySelector("[name='quantityOrdered']").addEventListener("input", updatePOAmount);
+  row.querySelector("[name='unitPrice']").addEventListener("input", updatePOAmount);
+  document.getElementById("poItems").appendChild(row);
+  syncPoRowOptions(row);
+  updatePoLineNumbers();
+  updatePOAmount();
   if (window.lucide) window.lucide.createIcons();
 }
 
@@ -1316,11 +1714,17 @@ function handleDashboardAction(action) {
     "pending-issue": () => setView("issue"),
     "low-stock": () => {
       inventoryStatusFilter = "Restock needed";
+      inventorySearchTerm = "";
+      const inventorySearchInput = document.getElementById("inventorySearchInput");
+      if (inventorySearchInput) inventorySearchInput.value = "";
       inventoryPage = 1;
       setView("inventory");
     },
     "out-of-stock": () => {
       inventoryStatusFilter = "Out of stock";
+      inventorySearchTerm = "";
+      const inventorySearchInput = document.getElementById("inventorySearchInput");
+      if (inventorySearchInput) inventorySearchInput.value = "";
       inventoryPage = 1;
       setView("inventory");
     },
@@ -1328,6 +1732,9 @@ function handleDashboardAction(action) {
       inventoryCategoryFilter = "All";
       inventoryLocationFilter = "All";
       inventoryStatusFilter = "All";
+      inventorySearchTerm = "";
+      const inventorySearchInput = document.getElementById("inventorySearchInput");
+      if (inventorySearchInput) inventorySearchInput.value = "";
       inventoryPage = 1;
       setView("inventory");
     },
@@ -1469,6 +1876,7 @@ function renderDashboard() {
 
 function renderRequests() {
   const rows = state.requests.flatMap((request) => request.items.map((item) => ({ request, item })))
+    .filter(({ item }) => !isRequestLineHistory(item))
     .filter(({ item }) => requestsFilter === "All" || item.approvalStatus === requestsFilter);
   const pageCount = Math.max(1, Math.ceil(rows.length / REQUESTS_PAGE_SIZE));
   requestsPage = Math.min(Math.max(1, requestsPage), pageCount);
@@ -1494,6 +1902,11 @@ function renderRequests() {
   document.getElementById("requestsPageInfo").textContent = `Page ${requestsPage} of ${pageCount}`;
   document.getElementById("requestsPrev").disabled = requestsPage === 1;
   document.getElementById("requestsNext").disabled = requestsPage === pageCount;
+}
+
+function isRequestLineHistory(item = {}) {
+  return ["Approved", "Issued", "Rejected", "Cancelled"].includes(item.approvalStatus)
+    || ["Issued", "Rejected", "Cancelled"].includes(item.issuanceStatus);
 }
 
 function requesterMatchesCurrentUser(request) {
@@ -1534,11 +1947,14 @@ function renderRequisition() {
 }
 
 function renderInventory() {
+  const searchTerm = inventorySearchTerm.trim().toLowerCase();
   const rows = stockRows().filter((row) => {
     const matchesCategory = inventoryCategoryFilter === "All" || row.category === inventoryCategoryFilter;
     const matchesLocation = inventoryLocationFilter === "All" || row.location === inventoryLocationFilter;
     const matchesStatus = inventoryStatusFilter === "All" || row.status === inventoryStatusFilter;
-    return matchesCategory && matchesLocation && matchesStatus;
+    const matchesSearch = !searchTerm || [row.code, row.name, row.type, row.category, row.location, row.status]
+      .some((value) => String(value || "").toLowerCase().includes(searchTerm));
+    return matchesCategory && matchesLocation && matchesStatus && matchesSearch;
   });
   const pageCount = Math.max(1, Math.ceil(rows.length / INVENTORY_PAGE_SIZE));
   inventoryPage = Math.min(Math.max(1, inventoryPage), pageCount);
@@ -1547,7 +1963,7 @@ function renderInventory() {
   document.getElementById("inventoryTable").innerHTML = pageRows.map((row) => `
     <tr><td>${row.code}</td><td>${row.name}</td><td>${row.type}</td><td>${row.category}</td><td>${row.location}</td><td>${row.stock}</td><td>${statusBadge(row.status)}</td></tr>
   `).join("") || emptyRow(7);
-  document.getElementById("inventoryPageInfo").textContent = `Page ${inventoryPage} of ${pageCount}`;
+  document.getElementById("inventoryPageInfo").textContent = `Page ${inventoryPage} of ${pageCount} - ${rows.length} item${rows.length === 1 ? "" : "s"}`;
   document.getElementById("inventoryPrev").disabled = inventoryPage === 1;
   document.getElementById("inventoryNext").disabled = inventoryPage === pageCount;
 }
@@ -1576,7 +1992,7 @@ function renderPO() {
       <td>${po.poNumber}</td>
       <td>${formatDate(po.issueDate || po.date)}</td>
       <td>${po.vendorName}</td>
-      <td>${po.itemCode ? `${po.itemCode} - ` : ""}${po.itemName || po.specifications || po.description || ""}</td>
+      <td>${escapeHtml(poItemSummary(po))}</td>
       <td>${money(po.quantityOrdered ?? po.quantity)}</td>
       <td>${money(po.unitPrice)}</td>
       <td>${money(po.poAmount ?? po.total)}</td>
@@ -1597,11 +2013,28 @@ function collectPurchaseOrder(formElement) {
   const form = new FormData(formElement);
   const vendorValue = String(form.get("vendorId") || "").trim().toLowerCase();
   const vendor = state.vendors.find((row) => String(row.id) === String(form.get("vendorId")) || String(row.name || "").trim().toLowerCase() === vendorValue);
-  const item = findItem(form.get("itemCode"));
-  const quantityOrdered = Number(form.get("quantityOrdered"));
-  const unitPrice = Number(form.get("unitPrice"));
+  const items = [...document.querySelectorAll("#poItems .po-item-row")].map((row) => {
+    const category = String(row.querySelector("[name='category']").value || "").trim();
+    const itemNameValue = String(row.querySelector("[name='itemName']").value || "").trim();
+    const itemTypeValue = String(row.querySelector("[name='itemCode']").value || "").trim();
+    const item = findItemBySelection(itemNameValue, itemTypeValue, category) || findItem(row.querySelector("[name='itemIdDisplay']").value);
+    const quantityOrdered = Number(row.querySelector("[name='quantityOrdered']").value);
+    const unitPrice = Number(row.querySelector("[name='unitPrice']").value) || 0;
+    return {
+      category: category || item?.category || "",
+      itemName: itemNameValue || item?.name || "",
+      itemType: item?.type || itemTypeValue,
+      itemCode: item?.code || String(row.querySelector("[name='itemIdDisplay']").value || itemTypeValue).trim(),
+      specifications: String(row.querySelector("[name='specifications']").value || "").trim(),
+      quantityOrdered,
+      unitPrice,
+      subtotal: quantityOrdered * unitPrice
+    };
+  });
+  const firstItem = items[0] || {};
+  const quantityOrdered = items.reduce((sum, item) => sum + Number(item.quantityOrdered || 0), 0);
+  const subtotal = items.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
   const taxRate = Number(form.get("taxRate")) || 0;
-  const subtotal = quantityOrdered * unitPrice;
   const taxAmount = subtotal * (taxRate / 100);
   const poNumber = String(form.get("poNumber") || "").trim() || nextId("PO", state.purchaseOrders.map((po) => ({ poNumber: po.poNumber })));
 
@@ -1613,45 +2046,44 @@ function collectPurchaseOrder(formElement) {
     vendorAddress: String(form.get("vendorAddress") || vendor?.address || "").trim(),
     issueDate: form.get("issueDate") || isoToday(),
     focalPerson: String(form.get("focalPerson") || "").trim(),
+    deliveryNtn: String(form.get("deliveryNtn") || "424701-0").trim(),
     budgetLine: String(form.get("budgetLine") || "").trim(),
     bankName: String(form.get("bankName") || "").trim(),
     accountTitle: String(form.get("accountTitle") || "").trim(),
     accountNo: String(form.get("accountNo") || "").trim(),
     status: form.get("status"),
     location: form.get("location"),
-    arrivedBy: form.get("arrivedBy"),
+    arrivedBy: form.get("arrivedBy") || "",
     serviceStartDate: form.get("serviceStartDate"),
     serviceCompletionDate: form.get("serviceCompletionDate"),
     paymentTerms: String(form.get("paymentTerms") || "").trim(),
     deliveryTerms: String(form.get("deliveryTerms") || "").trim(),
     quotationReference: String(form.get("quotationReference") || "").trim(),
-    category: String(form.get("category") || item?.category || "").trim(),
-    itemName: String(form.get("itemName") || item?.name || "").trim(),
-    itemType: item?.type || "",
-    itemCode: String(form.get("itemCode") || "").trim(),
-    specifications: String(form.get("specifications") || "").trim(),
+    category: firstItem.category || "",
+    itemName: firstItem.itemName || "",
+    itemType: firstItem.itemType || "",
+    itemCode: firstItem.itemCode || "",
+    specifications: items.map((item) => item.specifications).filter(Boolean).join(" | "),
+    items,
     quantityOrdered,
-    unitPrice,
+    unitPrice: items.length === 1 ? Number(firstItem.unitPrice || 0) : 0,
     subtotal,
     taxRate,
     taxAmount,
     poAmount: subtotal + taxAmount,
     quantityReceived: 0,
     approvedBy: String(form.get("approvedBy") || "").trim(),
-    supplierSignatory: String(form.get("supplierSignatory") || "").trim(),
     notesRemarks: String(form.get("notesRemarks") || "").trim(),
     date: new Date().toISOString()
   };
 }
 
 function renderPurchaseOrderSheet(po) {
-  const subTotal = Number(po.subtotal ?? (po.quantityOrdered || 0) * (po.unitPrice || 0));
+  const lines = poLineItems(po);
+  const subTotal = Number(po.subtotal ?? lines.reduce((sum, item) => sum + Number(item.subtotal ?? (item.quantityOrdered || 0) * (item.unitPrice || 0)), 0));
   const taxRate = Number(po.taxRate || 0);
   const taxAmount = Number(po.taxAmount ?? subTotal * (taxRate / 100));
   const grandTotal = Number(po.poAmount ?? po.total ?? subTotal + taxAmount);
-  const itemDescription = [po.itemName, po.itemType, po.specifications || po.description]
-    .filter(Boolean)
-    .join(" - ");
   const deliveryContact = [po.focalPerson, po.vendorContact && po.focalPerson ? "" : null]
     .filter(Boolean)
     .join("");
@@ -1729,15 +2161,21 @@ function renderPurchaseOrderSheet(po) {
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td>
-                <strong>${escapeHtml(itemDescription || po.itemCode || "Item / service")}</strong>
-                ${po.itemCode ? `<span>Item ID: ${escapeHtml(po.itemCode)}</span>` : ""}
-              </td>
-              <td>${money(po.quantityOrdered ?? po.quantity)}</td>
-              <td>Rs. ${money(po.unitPrice)}</td>
-              <td>Rs. ${money(subTotal)}</td>
-            </tr>
+            ${lines.map((item) => {
+              const itemDescription = [item.itemName, item.itemType, item.specifications || item.description]
+                .filter(Boolean)
+                .join(" - ");
+              const lineTotal = Number(item.subtotal ?? (item.quantityOrdered || item.quantity || 0) * (item.unitPrice || 0));
+              return `<tr>
+                <td>
+                  <strong>${escapeHtml(itemDescription || item.itemCode || "Item / service")}</strong>
+                  ${item.itemCode ? `<span>Item ID: ${escapeHtml(item.itemCode)}</span>` : ""}
+                </td>
+                <td>${money(item.quantityOrdered ?? item.quantity)}</td>
+                <td>Rs. ${money(item.unitPrice)}</td>
+                <td>Rs. ${money(lineTotal)}</td>
+              </tr>`;
+            }).join("")}
           </tbody>
         </table>
         <div class="po-total-lines">
@@ -1810,10 +2248,11 @@ function resetPoForm() {
   });
   form.elements.vendorContact.value = "";
   form.elements.vendorAddress.value = "";
-  form.elements.itemIdDisplay.value = "";
+  form.elements.deliveryNtn.value = "424701-0";
+  form.elements.status.value = "";
   form.elements.poAmount.value = "0";
-  document.getElementById("poItemName").value = "";
-  document.getElementById("poItemType").value = "";
+  document.getElementById("poItems").innerHTML = "";
+  addPoItemLine();
   syncSelectOptions(form);
   updatePOAmount();
 }
@@ -1828,6 +2267,7 @@ function resetGrnForm() {
   document.getElementById("grnItemName").value = "";
   document.getElementById("grnItemType").value = "";
   document.getElementById("grnItemCode").value = "";
+  document.getElementById("grnPoLineItem").innerHTML = `<option value="">Select PO item</option>`;
   ["qtyReceived", "qtyAccepted"].forEach((name) => {
     form.elements[name].removeAttribute("max");
     form.elements[name].placeholder = "";
@@ -1852,8 +2292,87 @@ async function savePendingPO() {
 
 function renderGRN() {
   document.getElementById("grnTable").innerHTML = state.grns.map((grn) => `
-    <tr><td>${grn.grnNumber}</td><td>${grn.poNumber || "Manual"}</td><td>${grn.itemCode || ""}</td><td>${grn.itemName || grn.description || grn.itemType || "Specification only"}</td><td>${grn.location}</td><td>${money(grn.qtyReceived)}</td><td>${money(grn.qtyAccepted)}</td><td>${grn.stockMovementId ? `#${grn.stockMovementId}` : ""}</td><td>${grn.receivedBy}</td><td>${formatDate(grn.date)}</td></tr>
+    <tr><td>${grn.grnNumber}</td><td>${grn.poNumber || "Manual"}</td><td>${grn.itemCode || ""}</td><td>${grn.itemName || grn.description || grn.itemType || "Specification only"}</td><td>${grn.location}</td><td>${money(grn.qtyReceived)}</td><td>${money(grn.qtyAccepted)}</td><td>${grn.receivedBy}</td><td>${formatDate(grn.date)}</td><td class="button-cell"><button class="tiny" onclick="printGRN('${escapeHtml(grn.grnNumber)}')">Print</button></td></tr>
   `).join("") || emptyRow(10);
+}
+
+function renderGrnSheet(grn) {
+  const po = state.purchaseOrders.find((row) => row.poNumber === grn.poNumber) || {};
+  const description = grn.itemName || grn.description || grn.itemType || po.specifications || "Specification only";
+  const received = Number(grn.qtyReceived || 0);
+  const accepted = Number(grn.qtyAccepted || 0);
+  const rejected = Math.max(received - accepted, 0);
+
+  return `
+    <section class="po-sheet grn-sheet">
+      <header class="po-form-header">
+        <div class="po-form-title">
+          <h1>GOODS RECEIVED NOTE</h1>
+          <h1>Shehersaaz</h1>
+          <p>Al-Zahir Plaza, Suite No: 04, 2nd Floor<br>Banigala, Islamabad</p>
+        </div>
+      </header>
+
+      <div class="po-detail-grid">
+        <div class="po-form-party">
+          <h2>GRN INFORMATION</h2>
+          <dl>
+            <dt>GRN Number:</dt><dd>${escapeHtml(grn.grnNumber)}</dd>
+            <dt>GRN Date:</dt><dd>${formatDate(grn.date)}</dd>
+            <dt>PO Number:</dt><dd>${escapeHtml(grn.poNumber || "Manual")}</dd>
+          </dl>
+        </div>
+        <div class="po-form-party">
+          <h2>RECEIVING DETAILS</h2>
+          <dl>
+            <dt>Location:</dt><dd>${escapeHtml(grn.location || po.location || "")}</dd>
+            <dt>Received By:</dt><dd>${escapeHtml(grn.receivedBy || "")}</dd>
+            <dt>Vendor:</dt><dd>${escapeHtml(po.vendorName || "")}</dd>
+            <dt>Status:</dt><dd>${escapeHtml(grn.status || "Received")}</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="po-form-section">
+        <h2 class="po-section-bar">GOODS RECEIVED DETAILS</h2>
+        <table class="po-items-table grn-items-table">
+          <thead>
+            <tr>
+              <th>Item / Specification</th>
+              <th>Item ID</th>
+              <th>Qty Received</th>
+              <th>Qty Accepted</th>
+              <th>Qty Rejected</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>${escapeHtml(description)}</strong>${grn.notes ? `<span>${escapeHtml(grn.notes)}</span>` : ""}</td>
+              <td>${escapeHtml(grn.itemCode || po.itemCode || "")}</td>
+              <td>${money(received)}</td>
+              <td>${money(accepted)}</td>
+              <td>${money(rejected)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <footer class="po-signature-grid">
+        <div>
+          <p>Received By:</p>
+          <strong>${escapeHtml(grn.receivedBy || "")}</strong>
+          <strong>Signature</strong>
+          <em>Date: ___________</em>
+        </div>
+        <div>
+          <p>Verified By:</p>
+          <span>Inventory / Procurement</span>
+          <strong>Signature</strong>
+          <em>Date: ___________</em>
+        </div>
+      </footer>
+    </section>
+  `;
 }
 
 function applySelectedPoToGrn() {
@@ -1863,24 +2382,40 @@ function applySelectedPoToGrn() {
     resetGrnForm();
     return;
   }
+  const lineSelect = document.getElementById("grnPoLineItem");
+  const lines = poLineItems(po).filter((item) => remainingPoLineQuantity(item) > 0);
+  lineSelect.innerHTML = `<option value="">Select PO item</option>${lines.map((item, index) => `
+    <option value="${escapeHtml(item.lineId || "")}" ${index === 0 ? "selected" : ""}>
+      ${escapeHtml(item.itemCode || "Item")} - ${escapeHtml(item.itemName || item.specifications || "")} (${money(remainingPoLineQuantity(item))} remaining)
+    </option>
+  `).join("")}`;
+  applySelectedPoLineToGrn();
+}
+
+function applySelectedPoLineToGrn() {
+  const poNumber = document.getElementById("poSelect")?.value;
+  const po = state.purchaseOrders.find((row) => row.poNumber === poNumber);
+  const selectedLineId = document.getElementById("grnPoLineItem")?.value;
+  const selectedLine = poLineItems(po).find((item) => String(item.lineId) === String(selectedLineId));
+  if (!po || !selectedLine) return;
   const itemNameInput = document.getElementById("grnItemName");
   const itemTypeInput = document.getElementById("grnItemType");
   const itemCodeInput = document.getElementById("grnItemCode");
   const locationSelect = document.querySelector("#grnForm [name='location']");
   const receivedInput = document.querySelector("#grnForm [name='qtyReceived']");
   const acceptedInput = document.querySelector("#grnForm [name='qtyAccepted']");
-  const item = findItem(po.itemCode) || {};
-  itemNameInput.value = po.itemName || item.name || "";
-  itemTypeInput.value = po.itemType || item.type || "";
-  itemCodeInput.value = po.itemCode || "";
+  const item = findItem(selectedLine.itemCode) || {};
+  itemNameInput.value = selectedLine.itemName || item.name || "";
+  itemTypeInput.value = selectedLine.itemType || item.type || "";
+  itemCodeInput.value = selectedLine.itemCode || "";
   if (po.location) locationSelect.value = po.location;
-  const remaining = remainingPoQuantity(po);
+  const remaining = remainingPoLineQuantity(selectedLine);
   receivedInput.max = remaining || "";
   acceptedInput.max = remaining || "";
   receivedInput.placeholder = remaining ? `Remaining: ${money(remaining)}` : "No quantity remaining";
   acceptedInput.placeholder = remaining ? `Remaining: ${money(remaining)}` : "No quantity remaining";
-  if (remaining > 0 && !receivedInput.value) receivedInput.value = remaining;
-  if (remaining > 0 && !acceptedInput.value) acceptedInput.value = remaining;
+  receivedInput.value = remaining > 0 ? remaining : "";
+  acceptedInput.value = remaining > 0 ? remaining : "";
 }
 
 function applySelectedVendorToPo() {
@@ -1889,16 +2424,9 @@ function applySelectedVendorToPo() {
   const vendor = state.vendors.find((row) => String(row.id) === String(form.elements.vendorId.value) || String(row.name || "").trim().toLowerCase() === vendorValue);
   form.elements.vendorContact.value = vendor ? [vendor.contact, vendor.phone, vendor.email].filter(Boolean).join(" / ") : "";
   form.elements.vendorAddress.value = vendor?.address || "";
-}
-
-function updatePoItemId() {
-  const form = document.getElementById("poForm");
-  const itemCode = form.elements.itemCode.value;
-  const item = findItem(itemCode);
-  form.elements.itemIdDisplay.value = itemCode || "";
-  if (item && !form.elements.specifications.value) {
-    form.elements.specifications.value = `${item.name} - ${item.type}`;
-  }
+  form.elements.bankName.value = vendor?.bankName || vendor?.bank_name || "";
+  form.elements.accountTitle.value = vendor?.accountTitle || vendor?.account_title || "";
+  form.elements.accountNo.value = vendor?.accountNo || vendor?.account_no || "";
 }
 
 function renderTransport() {
@@ -1906,9 +2434,10 @@ function renderTransport() {
     if (row.approvalStatus !== "Approved") return `<td></td>`;
     return `<td class="button-cell"><button class="tiny success" onclick="setTransport('${row.id}','Arranged')">Arrange</button><button class="tiny danger" onclick="setTransport('${row.id}','Cancelled')">Cancel</button></td>`;
   };
-  const goodsRows = state.transportRequests.filter((row) => row.transportType === "Goods Transport");
-  const travelRows = state.transportRequests.filter((row) => row.transportType === "Travel Request");
-  const localRows = state.transportRequests.filter((row) => row.transportType === "Local Visit / Meeting Transport");
+  const activeTransportRows = state.transportRequests.filter((row) => !isTransportHistory(row));
+  const goodsRows = activeTransportRows.filter((row) => row.transportType === "Goods Transport");
+  const travelRows = activeTransportRows.filter((row) => row.transportType === "Travel Request");
+  const localRows = activeTransportRows.filter((row) => row.transportType === "Local Visit / Meeting Transport");
 
   document.getElementById("goodsTransportTable").innerHTML = goodsRows.map((row) => `
     <tr><td>${row.id}</td><td>${row.requester}</td><td>${row.managerEmail || ""}</td><td>${formatDate(row.travelDate)}</td><td>${row.pickupTime || row.departureTime || ""}</td><td>${row.pickupLocation || ""}</td><td>${row.dropoffLocation || row.destination || ""}</td><td>${row.goodsDescription || ""}</td><td>${row.goodsQuantity || ""}</td><td>${row.vehicleType || ""}</td><td>${row.purpose || ""}</td><td>${statusBadge(row.approvalStatus)}</td><td>${statusBadge(row.arrangementStatus)}</td>${actionCell(row)}</tr>
@@ -1923,6 +2452,11 @@ function renderTransport() {
   `).join("") || emptyRow(15);
 }
 
+function isTransportHistory(row = {}) {
+  return ["Arranged", "Completed", "Cancelled"].includes(row.arrangementStatus)
+    || row.approvalStatus === "Rejected";
+}
+
 function transportDestination(row) {
   return row.dropoffLocation || row.destinationCityArea || row.meetingVisitLocation || row.destination || "";
 }
@@ -1933,6 +2467,7 @@ function isPendingApproval(status) {
 
 function renderApprovals() {
   const inventoryRows = state.requests.flatMap((request) => request.items
+    .filter((item) => isPendingApproval(item.approvalStatus))
     .map((item) => ({ request, item })));
   document.getElementById("inventoryApprovalsTable").innerHTML = inventoryRows.map(({ request, item }) => `
     <tr>
@@ -1951,7 +2486,7 @@ function renderApprovals() {
     </tr>
   `).join("") || emptyRow(12);
 
-  const transportRows = state.transportRequests;
+  const transportRows = state.transportRequests.filter((row) => isPendingApproval(row.approvalStatus));
   document.getElementById("transportApprovalsTable").innerHTML = transportRows.map((row) => `
     <tr>
       <td>${escapeHtml(row.id)}</td>
@@ -1970,9 +2505,45 @@ function renderApprovals() {
 
 function renderVendors() {
   document.getElementById("vendorsTable").innerHTML = state.vendors.map((vendor) => `
-    <tr><td>${vendor.name}</td><td>${vendor.phone || ""}</td><td>${vendor.contact || ""}</td><td>${vendor.address || ""}</td></tr>
-  `).join("") || emptyRow(4);
+    <tr>
+      <td>${escapeHtml(vendor.name)}</td>
+      <td>${escapeHtml(vendor.phone || "")}</td>
+      <td>${escapeHtml(vendor.contact || "")}</td>
+      <td>${escapeHtml(vendor.bankName || "")}</td>
+      <td>${escapeHtml(vendor.accountTitle || "")}</td>
+      <td>${escapeHtml(vendor.accountNo || "")}</td>
+      <td>${escapeHtml(vendor.address || "")}</td>
+      <td><button class="tiny" type="button" onclick="editVendor('${escapeHtml(vendor.id)}')">Edit</button></td>
+    </tr>
+  `).join("") || emptyRow(8);
 }
+
+function resetVendorForm() {
+  const form = document.getElementById("vendorForm");
+  form.reset();
+  form.elements.id.value = "";
+  document.getElementById("saveVendorButton").innerHTML = `<i data-lucide="building-2"></i>Add Vendor`;
+  document.getElementById("cancelVendorEdit").hidden = true;
+  if (window.lucide) window.lucide.createIcons();
+}
+
+window.editVendor = function (vendorId) {
+  const vendor = state.vendors.find((row) => String(row.id) === String(vendorId));
+  if (!vendor) return showToast("Vendor not found.", "error");
+  const form = document.getElementById("vendorForm");
+  form.elements.id.value = vendor.id;
+  form.elements.name.value = vendor.name || "";
+  form.elements.phone.value = vendor.phone || "";
+  form.elements.contact.value = vendor.contact || "";
+  form.elements.bankName.value = vendor.bankName || "";
+  form.elements.accountTitle.value = vendor.accountTitle || "";
+  form.elements.accountNo.value = vendor.accountNo || "";
+  form.elements.address.value = vendor.address || "";
+  document.getElementById("saveVendorButton").innerHTML = `<i data-lucide="save"></i>Update Vendor`;
+  document.getElementById("cancelVendorEdit").hidden = false;
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (window.lucide) window.lucide.createIcons();
+};
 
 function renderAudit() {
   document.getElementById("auditTable").innerHTML = state.auditLogs.map((log) => `
@@ -2047,12 +2618,84 @@ function historyRows(section) {
   return state.auditLogs.filter((log) => {
     if (!isVisibleHistoryEvent(log)) return false;
     const entity = String(log.entityType || "").toLowerCase();
-    if (section === "requests") return entity.includes("request") || isIssuedStockHistory(log);
+    if (section === "requests") return !entity.includes("transport") && (entity.includes("request") || isIssuedStockHistory(log));
+    if (section === "transport") return entity.includes("transport");
     if (section === "approvals") return isApprovedHistory(log);
     if (section === "stockIn") return false;
     if (section === "stockOut") return isIssuedStockHistory(log);
     return false;
   });
+}
+
+function recordHistoryEntries(section) {
+  if (section === "requests") {
+    return state.requests.flatMap((request) => request.items
+      .filter(isRequestLineHistory)
+      .map((item) => {
+        const titleStatus = item.issuanceStatus === "Issued" ? "issued" : String(item.approvalStatus || "completed").toLowerCase();
+        return {
+          id: `request-record-${request.requestId}-${item.id}-${titleStatus}`,
+          kind: "items",
+          ref: request.requestId,
+          title: `${request.requestId} item ${titleStatus}`,
+          subtitle: `${item.itemName || item.itemCode || "Request item"} moved to history`,
+          log: { date: request.date },
+          details: {
+            requestId: request.requestId,
+            requester: request.requester,
+            requesterEmail: request.requesterEmail,
+            department: request.department,
+            location: request.location,
+            managerEmail: request.managerEmail,
+            requestDate: request.date,
+            itemId: item.id,
+            itemCode: item.itemCode,
+            itemName: item.itemName,
+            type: item.type,
+            quantity: item.quantity,
+            quantityApproved: item.quantityApproved,
+            quantityIssued: item.quantityIssued,
+            notes: request.notes || request.notes_remarks,
+            status: [item.approvalStatus, item.issuanceStatus].filter(Boolean).join(" / ")
+          }
+        };
+      }));
+  }
+
+  if (section === "transport") {
+    return state.transportRequests
+      .filter(isTransportHistory)
+      .map((row) => {
+        const status = row.arrangementStatus === "Pending" ? row.approvalStatus : row.arrangementStatus;
+        return {
+          id: `transport-record-${row.id}-${status}`,
+          kind: "transport",
+          ref: row.requestId || `TRQ-${row.id}`,
+          title: `${row.requestId || `TRQ-${row.id}`} ${String(status || "completed").toLowerCase()}`,
+          subtitle: status === "Arranged" ? "Transport has been scheduled" : "Transport request moved to history",
+          log: { date: row.updatedAt || row.date || row.travelDate },
+          details: {
+            id: row.id,
+            requestNumber: row.requestId,
+            requester: row.requester,
+            requesterEmail: row.requesterEmail,
+            department: row.department,
+            transportType: row.transportType,
+            purpose: row.purpose || row.notes,
+            pickupLocation: row.pickupLocation,
+            destination: transportDestination(row),
+            travelDate: row.travelDate,
+            departureTime: row.departureTime || row.localDepartureTime || row.pickupTime,
+            vehicleType: row.vehicleType,
+            passengers: row.passengers || row.travelers || row.localPassengers,
+            duration: row.expectedDuration || row.tripDuration,
+            status: [row.approvalStatus, row.arrangementStatus].filter(Boolean).join(" / ")
+          }
+        };
+      });
+  }
+
+  return [];
 }
 
 function compactDate(value) {
@@ -2113,10 +2756,21 @@ function requestForHistory(entry) {
   return state.requests.find((row) => row.requestId === entry.ref || row.items?.some((item) => String(item.id) === String(entry.details.itemId)));
 }
 
+function requestItemForHistory(entry, request) {
+  if (!request) return null;
+  const d = entry.details || {};
+  return request.items?.find((item) =>
+    String(item.id) === String(d.itemId)
+    || (d.itemCode && item.itemCode === d.itemCode)
+    || (d.itemName && item.itemName === d.itemName)
+  );
+}
+
 function historyDetailGrid(entry) {
   if (!expandedHistoryIds.has(entry.id)) return "";
   const transport = entry.kind === "transport" ? transportForHistory(entry) : null;
   const request = entry.kind === "items" ? requestForHistory(entry) : null;
+  const item = entry.kind === "items" ? requestItemForHistory(entry, request) : null;
   const d = entry.details;
   const cells = entry.kind === "transport" ? [
     ["Requested by", transport?.requester || d.requester],
@@ -2136,9 +2790,16 @@ function historyDetailGrid(entry) {
     ["Requester", request?.requester || d.requester],
     ["Department", request?.department || d.department],
     ["Location", request?.location || d.location],
+    ["Request date", formatDate(request?.date || d.requestDate || d.date)],
+    ["Requester email", request?.requesterEmail || d.requesterEmail],
+    ["Manager email", request?.managerEmail || d.managerEmail],
     ["Status", [d.fromStatus, d.toStatus].filter(Boolean).join(" -> ") || d.status],
-    ["Item", d.itemCode || d.itemId || d.itemName],
-    ["Quantity", d.quantity],
+    ["Item name", item?.itemName || d.itemName],
+    ["Item ID", item?.itemCode || d.itemCode || d.itemId],
+    ["Type", item?.type || d.type],
+    ["Requested quantity", item?.quantity ?? d.quantity],
+    ["Approved quantity", item?.quantityApproved ?? d.quantityApproved],
+    ["Issued quantity", item?.quantityIssued ?? d.quantityIssued],
     ["Movement", d.movementNumber],
     ["Notes", d.notes || d.details]
   ];
@@ -2149,22 +2810,19 @@ function historyDetailGrid(entry) {
 
 function renderHistoryPage() {
   const titles = {
-    requests: ["Requests history", "Tap any entry to see details"],
-    approvals: ["Approvals history", "Tap any entry to see details"],
-    stockIn: ["Stock in history", "Tap any entry to see details"],
-    stockOut: ["Stock out history", "Tap any entry to see details"]
+    requests: "Requests history",
+    transport: "Transport history",
+    approvals: "Approvals history",
+    stockIn: "Stock in history",
+    stockOut: "Stock out history"
   };
-  const [title, description] = titles[activeHistorySection] || titles.requests;
-  setText("historyTitle", title);
-  setText("historyDescription", description);
-  document.querySelectorAll("[data-history-filter]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.historyFilter === activeHistoryFilter);
-  });
+  setText("historyTitle", titles[activeHistorySection] || titles.requests);
   const list = document.getElementById("historyList");
   if (!list) return;
-  const entries = historyRows(activeHistorySection)
-    .map((log) => ({ log, ...historySummary(log) }))
-    .filter((entry) => activeHistoryFilter === "all" || entry.kind === activeHistoryFilter);
+  const auditEntries = historyRows(activeHistorySection)
+    .map((log) => ({ log, ...historySummary(log) }));
+  const entries = [...recordHistoryEntries(activeHistorySection), ...auditEntries]
+    .sort((a, b) => new Date(b.log?.date || 0) - new Date(a.log?.date || 0));
   list.innerHTML = entries.map((entry) => {
     const [icon, tone] = historyIcon(entry);
     const open = expandedHistoryIds.has(entry.id);
@@ -2294,6 +2952,12 @@ window.printPO = function (poNumber) {
   }));
 };
 
+window.printGRN = function (grnNumber) {
+  const grn = state.grns.find((row) => String(row.grnNumber) === String(grnNumber));
+  if (!grn) return showToast("GRN not found.", "error");
+  printHtml(renderGrnSheet(grn));
+};
+
 window.cancelPO = async function (poNumber) {
   const po = state.purchaseOrders.find((row) => row.poNumber === poNumber);
   if (!po) return showToast("Purchase order not found.", "error");
@@ -2351,6 +3015,8 @@ function printHtml(html) {
           .po-items-table th { padding: 10px; color: #fff; background: #34495e; border: 1px solid #ddd; font-weight: 800; text-align: left; }
           .po-items-table th:nth-child(2), .po-items-table td:nth-child(2) { width: 12%; text-align: center; }
           .po-items-table th:nth-child(3), .po-items-table th:nth-child(4), .po-items-table td:nth-child(3), .po-items-table td:nth-child(4) { width: 18%; text-align: right; }
+          .grn-items-table th:nth-child(2), .grn-items-table td:nth-child(2) { width: 16%; text-align: left; }
+          .grn-items-table th:nth-child(3), .grn-items-table th:nth-child(4), .grn-items-table th:nth-child(5), .grn-items-table td:nth-child(3), .grn-items-table td:nth-child(4), .grn-items-table td:nth-child(5) { width: 14%; text-align: right; }
           .po-items-table td { min-height: 82px; padding: 14px 10px; vertical-align: top; border: 1px solid #ddd; line-height: 1.4; }
           .po-items-table td strong, .po-items-table td span { display: block; }
           .po-items-table td span { margin-top: 8px; color: #555; }
@@ -2429,13 +3095,6 @@ document.addEventListener("click", (event) => {
 });
 
 document.getElementById("historyView").addEventListener("click", (event) => {
-  const tab = event.target.closest("[data-history-filter]");
-  if (tab) {
-    activeHistoryFilter = tab.dataset.historyFilter;
-    renderHistoryPage();
-    if (window.lucide) window.lucide.createIcons();
-    return;
-  }
   const entry = event.target.closest("[data-history-entry]");
   if (!entry) return;
   const id = entry.dataset.historyEntry;
@@ -2448,6 +3107,7 @@ document.getElementById("historyBackBtn")?.addEventListener("click", () => setVi
 
 document.getElementById("notificationBtn").addEventListener("click", (event) => {
   event.stopPropagation();
+  unlockNotificationSound();
   toggleNotificationCenter();
 });
 
@@ -2457,21 +3117,34 @@ document.getElementById("notificationCenter").addEventListener("click", (event) 
   event.stopPropagation();
   const tab = event.target.closest("[data-notification-tab]");
   if (tab) {
-    activeNotificationTab = tab.dataset.notificationTab;
+    activeNotificationTab = "direct";
+    unreadOnly = tab.dataset.notificationTab === "watching";
+    document.getElementById("unreadOnlyToggle").checked = unreadOnly;
     renderNotificationCenter();
+    return;
+  }
+  const entry = event.target.closest("[data-notification-id]");
+  if (entry) {
+    markNotificationRead(entry.dataset.notificationId);
   }
 });
 
-document.getElementById("unreadOnlyToggle").addEventListener("change", (event) => {
+document.getElementById("unreadOnlyToggle").addEventListener("change", async (event) => {
   unreadOnly = event.target.checked;
+  await loadNotifications();
   renderNotificationCenter();
 });
 
-document.getElementById("markNotificationsRead").addEventListener("click", () => {
-  notificationSeed().forEach((item) => readNotificationIds.add(item.id));
-  showToast("Notifications marked as read.");
+document.getElementById("markNotificationsRead").addEventListener("click", async () => {
+  try {
+    await apiRequest("/notifications/read-all", { method: "PATCH" });
+    showToast("Notifications marked as read.");
+  } catch (error) {
+    showToast(error.message || "Unable to mark notifications as read.", "error");
+  }
   unreadOnly = false;
   document.getElementById("unreadOnlyToggle").checked = false;
+  await loadNotifications({ silent: true });
   renderNotificationCenter();
   updateNotificationBadge();
 });
@@ -2487,6 +3160,8 @@ document.addEventListener("click", (event) => {
     }
   }
 });
+
+document.addEventListener("pointerdown", unlockNotificationSound, { once: true });
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
@@ -2524,6 +3199,7 @@ document.getElementById("settingsForm").addEventListener("submit", saveActiveSet
 document.getElementById("settingsForm").addEventListener("click", (event) => {
   if (event.target.id === "reloadSettingsBtn") loadSettings({ silent: false });
   if (event.target.id === "reloadUsersBtn") loadUserManagement({ silent: false });
+  if (event.target.id === "addUserBtn") addUserFromManagement();
   const saveButton = event.target.closest(".save-user-roles");
   if (saveButton) saveUserRoles(saveButton.dataset.userId);
   const statusButton = event.target.closest(".toggle-user-status");
@@ -2566,6 +3242,12 @@ document.getElementById("categoryTabs").addEventListener("click", (event) => {
 
 document.getElementById("inventoryLocationFilter").addEventListener("change", (event) => {
   inventoryLocationFilter = event.target.value || "All";
+  inventoryPage = 1;
+  renderInventory();
+});
+
+document.getElementById("inventorySearchInput").addEventListener("input", (event) => {
+  inventorySearchTerm = event.target.value || "";
   inventoryPage = 1;
   renderInventory();
 });
@@ -2660,29 +3342,19 @@ document.getElementById("stockOutItemType").addEventListener("change", updateSto
 
 function updatePOAmount() {
   const form = document.getElementById("poForm");
-  const quantity = Number(form.elements.quantityOrdered.value) || 0;
-  const unitPrice = Number(form.elements.unitPrice.value) || 0;
+  const subtotal = [...document.querySelectorAll("#poItems .po-item-row")].reduce((sum, row) => {
+    const quantity = Number(row.querySelector("[name='quantityOrdered']").value) || 0;
+    const unitPrice = Number(row.querySelector("[name='unitPrice']").value) || 0;
+    return sum + quantity * unitPrice;
+  }, 0);
   const taxRate = Number(form.elements.taxRate.value) || 0;
-  const subtotal = quantity * unitPrice;
   form.elements.poAmount.value = money(subtotal + subtotal * (taxRate / 100));
 }
 
-document.getElementById("poForm").elements.quantityOrdered.addEventListener("input", updatePOAmount);
-document.getElementById("poForm").elements.unitPrice.addEventListener("input", updatePOAmount);
 document.getElementById("poForm").elements.taxRate.addEventListener("input", updatePOAmount);
+document.getElementById("poForm").elements.vendorId.addEventListener("input", applySelectedVendorToPo);
 document.getElementById("poForm").elements.vendorId.addEventListener("change", applySelectedVendorToPo);
-document.getElementById("poCategory").addEventListener("change", () => {
-  document.getElementById("poItemName").value = "";
-  document.getElementById("poItemType").value = "";
-  updatePoItemId();
-  syncSelectOptions(document.getElementById("poForm"));
-});
-document.getElementById("poItemName").addEventListener("change", () => {
-  document.getElementById("poItemType").value = "";
-  updatePoItemId();
-  syncSelectOptions(document.getElementById("poForm"));
-});
-document.getElementById("poItemType").addEventListener("change", updatePoItemId);
+document.getElementById("addPoItem").addEventListener("click", addPoItemLine);
 
 document.getElementById("requestForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2748,9 +3420,12 @@ document.getElementById("manualStockOutForm").addEventListener("submit", async (
   const itemCode = item.code;
   const location = form.get("location");
   const quantity = Number(form.get("quantity"));
+  const issuedTo = String(form.get("issuedTo") || "").trim();
+  const notes = String(form.get("notes") || "").trim();
   const available = stockFor(itemCode, location);
   if (!quantity || quantity < 1) return showToast("Stock out quantity must be greater than zero.", "error");
   if (available < quantity) return showToast("Stock unavailable for this manual stock out.", "error");
+  form.set("notes", [issuedTo ? `Issued to: ${issuedTo}` : "", notes].filter(Boolean).join(" | "));
   try {
     await apiRequest("/stock/out", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     event.currentTarget.reset();
@@ -2767,7 +3442,6 @@ document.getElementById("itemForm").addEventListener("submit", async (event) => 
   const form = new FormData(event.currentTarget);
   const category = String(form.get("newCategory") || form.get("category") || "").trim();
   const name = String(form.get("name")).trim();
-  const unit = String(form.get("unit")).trim();
   const rows = [...document.querySelectorAll("#itemTypeRows .item-type-row")].map((row) => ({
     type: row.querySelector("[name='type']").value.trim(),
     code: row.querySelector("[name='code']").value.trim()
@@ -2780,7 +3454,7 @@ document.getElementById("itemForm").addEventListener("submit", async (event) => 
   const duplicate = rows.find((row) => state.items.some((item) => item.code.toLowerCase() === row.code.toLowerCase()));
   if (duplicate) return showToast(`Item ID already exists: ${duplicate.code}`, "error");
   try {
-    await apiRequest("/items", { method: "POST", body: JSON.stringify({ category, name, unit, types: rows }) });
+    await apiRequest("/items", { method: "POST", body: JSON.stringify({ category, name, types: rows }) });
     event.currentTarget.reset();
     document.getElementById("itemTypeRows").innerHTML = "";
     addItemTypeLine();
@@ -2797,9 +3471,11 @@ document.getElementById("poForm").addEventListener("submit", (event) => {
   event.preventDefault();
   const po = collectPurchaseOrder(event.currentTarget);
   if (!po.vendorId) return showToast("Select a vendor.", "error");
-  if (!po.itemCode) return showToast("Select item name and type for the PO.", "error");
-  if (!po.quantityOrdered || po.quantityOrdered <= 0) return showToast("Quantity ordered must be greater than zero.", "error");
-  if (!po.specifications) return showToast("Add PO specifications.", "error");
+  if (!po.items.length) return showToast("Add at least one PO item.", "error");
+  if (po.items.length > 20) return showToast("A PO can include up to 20 items.", "error");
+  if (po.items.some((item) => !item.itemCode)) return showToast("Select item name and type for every PO item.", "error");
+  if (po.items.some((item) => !item.quantityOrdered || item.quantityOrdered <= 0)) return showToast("Quantity ordered must be greater than zero for every item.", "error");
+  if (po.items.some((item) => !item.specifications)) return showToast("Add specifications for every PO item.", "error");
   if (state.purchaseOrders.some((row) => String(row.poNumber).toLowerCase() === po.poNumber.toLowerCase())) {
     return showToast("PO number already exists.", "error");
   }
@@ -2812,8 +3488,10 @@ document.getElementById("grnForm").addEventListener("submit", async (event) => {
   const accepted = Number(form.get("qtyAccepted"));
   const received = Number(form.get("qtyReceived"));
   const po = state.purchaseOrders.find((row) => row.poNumber === form.get("poNumber"));
-  const remaining = po ? remainingPoQuantity(po) : Infinity;
+  const poLine = poLineItems(po).find((item) => String(item.lineId) === String(form.get("poLineId")));
+  const remaining = poLine ? remainingPoLineQuantity(poLine) : Infinity;
   if (!canReceivePo(po)) return showToast("Select an open PO with remaining quantity.", "error");
+  if (!poLine) return showToast("Select a PO item to receive.", "error");
   if (accepted > received) return showToast("Accepted quantity cannot exceed received quantity.", "error");
   if (accepted > remaining) return showToast(`Accepted quantity cannot exceed remaining PO quantity (${money(remaining)}).`, "error");
   try {
@@ -2828,20 +3506,44 @@ document.getElementById("grnForm").addEventListener("submit", async (event) => {
 });
 
 document.getElementById("poSelect").addEventListener("change", applySelectedPoToGrn);
+document.getElementById("grnPoLineItem").addEventListener("change", applySelectedPoLineToGrn);
 
 document.getElementById("vendorForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
+  const vendorId = String(form.get("id") || "").trim();
+  const payload = {
+    name: String(form.get("name") || "").trim(),
+    phone: String(form.get("phone") || "").trim(),
+    contact: String(form.get("contact") || "").trim(),
+    bankName: String(form.get("bankName") || "").trim(),
+    accountTitle: String(form.get("accountTitle") || "").trim(),
+    accountNo: String(form.get("accountNo") || "").trim(),
+    address: String(form.get("address") || "").trim()
+  };
   try {
-    await apiRequest("/vendors", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
-    event.currentTarget.reset();
+    if (vendorId && !/^\d+$/.test(vendorId)) throw new Error("Vendor ID is missing. Refresh the page and try editing again.");
+    const result = await saveVendorRecord(vendorId, payload);
+    const responseVendor = result.vendor || result.data?.vendor || {};
+    const savedVendor = normalizeVendorRecord({
+      ...payload,
+      ...responseVendor,
+      id: responseVendor.id || vendorId,
+      vendorId: responseVendor.vendorId || ""
+    });
+    rememberVendorAccountDetails(savedVendor);
+    resetVendorForm();
     await loadBusinessData({ silent: true });
+    state.vendors = state.vendors.map(normalizeVendorRecord);
     render();
-    showToast("Vendor added.");
+    showToast(vendorId ? "Vendor updated." : "Vendor added.");
   } catch (error) {
     showToast(error.message, "error");
   }
 });
+
+document.getElementById("cancelVendorEdit").addEventListener("click", resetVendorForm);
 
 document.getElementById("globalSearch").addEventListener("input", (event) => {
   const term = event.target.value.toLowerCase();
@@ -2854,10 +3556,13 @@ async function initializePortal() {
   applyTheme(localStorage.getItem(THEME_STORAGE_KEY));
   const session = await requirePortalSession();
   if (!session) return;
+  enableDatalistRefocusOptions();
   applyAdminVisibility();
   addRequestLine();
   addItemTypeLine();
+  addPoItemLine();
   render();
+  await loadNotifications({ silent: true });
   syncAuthState();
 }
 

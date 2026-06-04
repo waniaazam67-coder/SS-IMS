@@ -125,6 +125,7 @@ async function ensureUserExists(email, fallbackName) {
 }
 
 async function resolveAuthContextFromToken(token) {
+  if (!token) return null;
   const adminAuth = getFirebaseAdminAuth();
   const payload = adminAuth ? await adminAuth.verifyIdToken(token) : null;
   if (!payload) return null;
@@ -168,6 +169,57 @@ async function listRoles() {
       isSystem: Boolean(row.isSystem)
     }))
     .filter((row) => ROLE_BY_KEY.has(row.name));
+}
+
+async function createUser(input = {}, createdBy) {
+  const email = normalizeEmail(input.email);
+  const name = String(input.name || input.fullName || "").trim();
+  const roles = Array.isArray(input.roles) && input.roles.length ? input.roles : [DEFAULT_ROLE];
+  if (!name) {
+    const error = new Error("User name is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    const error = new Error("A valid email is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedRoles = [...new Set(roles.map(normalizeRoleKey))];
+  const dbRoleNames = normalizedRoles.map(toDbRoleName);
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    const [result] = await connection.execute(
+      `INSERT INTO users (full_name, email, is_active, created_by, updated_by)
+       VALUES (?, ?, 1, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         id = LAST_INSERT_ID(id),
+         full_name = VALUES(full_name),
+         is_active = 1,
+         deleted_at = NULL,
+         updated_by = VALUES(updated_by)`,
+      [name, email, createdBy || null, createdBy || null]
+    );
+    const userId = result.insertId;
+    await connection.execute(`DELETE FROM user_roles WHERE user_id = ?`, [userId]);
+    for (const dbRoleName of dbRoleNames) {
+      await connection.execute(
+        `INSERT INTO user_roles (user_id, role_id, assigned_by)
+         SELECT ?, id, ? FROM roles WHERE name = ?`,
+        [userId, createdBy || null, dbRoleName]
+      );
+    }
+    await connection.commit();
+    return getUserById(userId);
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 async function assignRoleToUser(userId, roleName, assignedBy) {
@@ -323,6 +375,7 @@ async function assertUserAndRole(userId, roleName) {
 
 module.exports = {
   assignRoleToUser,
+  createUser,
   deleteUser,
   getUserById,
   listRoles,

@@ -1841,6 +1841,14 @@ const PRINT_URL = "";
 let lastSubmittedRequestId = "";
 let lastSubmittedPayload = null;
 
+function authHeaders() {
+  const token = localStorage.getItem("firebase_token");
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
+  };
+}
+
 function showSuccessRequest(requestId) {
     lastSubmittedRequestId = requestId || "";
     const message = document.getElementById("successMessage");
@@ -2200,7 +2208,7 @@ async function submitToSheets() {
     if (payload.items.length > 0) {
       const response = await fetch(`${API_BASE_URL}/requests`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           requestedBy: payload.requestedBy,
           requesterEmail: payload.requesterEmail,
@@ -2231,7 +2239,7 @@ async function submitToSheets() {
     for (const transport of payload.transportItems) {
       const response = await fetch(`${API_BASE_URL}/transport-requests`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           requestedBy: payload.requestedBy,
           requesterEmail: payload.requesterEmail,

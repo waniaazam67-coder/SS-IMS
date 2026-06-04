@@ -12,6 +12,18 @@ router.get("/inventory", requirePermission(PERMISSIONS.VIEW_INVENTORY), async (r
   try { ok(res, { inventory: await imsService.listInventory() }); } catch (error) { next(error); }
 });
 
+router.get("/notifications", async (req, res, next) => {
+  try { ok(res, { notifications: await imsService.listNotifications(req.auth, req.query) }); } catch (error) { next(error); }
+});
+
+router.patch("/notifications/read-all", async (req, res, next) => {
+  try { ok(res, await imsService.markAllNotificationsRead(req.auth)); } catch (error) { next(error); }
+});
+
+router.patch("/notifications/:id/read", async (req, res, next) => {
+  try { ok(res, await imsService.markNotificationRead(req.params.id, req.auth)); } catch (error) { next(error); }
+});
+
 router.post("/stock/in/manual", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {
   try { ok(res, await imsService.postStockMovement(req.body, req.auth.user.id, "MANUAL_IN"), 201); } catch (error) { next(error); }
 });
@@ -38,6 +50,14 @@ router.get("/vendors", requirePermission(PERMISSIONS.MANAGE_PURCHASE_ORDERS), as
 
 router.post("/vendors", requirePermission(PERMISSIONS.MANAGE_PURCHASE_ORDERS), async (req, res, next) => {
   try { ok(res, { vendor: await imsService.createVendor(req.body, req.auth.user.id) }, 201); } catch (error) { next(error); }
+});
+
+router.post("/vendors/:vendorId", requirePermission(PERMISSIONS.MANAGE_PURCHASE_ORDERS), async (req, res, next) => {
+  try { ok(res, { vendor: await imsService.updateVendor(req.params.vendorId, req.body, req.auth.user.id) }); } catch (error) { next(error); }
+});
+
+router.put("/vendors/:vendorId", requirePermission(PERMISSIONS.MANAGE_PURCHASE_ORDERS), async (req, res, next) => {
+  try { ok(res, { vendor: await imsService.updateVendor(req.params.vendorId, req.body, req.auth.user.id) }); } catch (error) { next(error); }
 });
 
 router.get("/requests", requirePermission(PERMISSIONS.CREATE_REQUESTS), async (req, res, next) => {

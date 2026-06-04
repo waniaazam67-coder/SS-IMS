@@ -5,13 +5,27 @@ const selectSettingsSql = `
   SELECT id, setting_group, setting_key, setting_value, value_type, description, updated_by, updated_at
   FROM system_settings
 `;
+const removedSettingGroups = new Set(["purchase_orders", "grn"]);
+
+function assertSettingGroupEnabled(group) {
+  if (removedSettingGroups.has(String(group || "").trim())) {
+    const error = new Error("This settings section is no longer available.");
+    error.statusCode = 404;
+    throw error;
+  }
+}
 
 async function listSettings() {
-  const [settings] = await pool.query(`${selectSettingsSql} ORDER BY setting_group, setting_key`);
+  const [settings] = await pool.query(
+    `${selectSettingsSql}
+     WHERE setting_group NOT IN ('purchase_orders', 'grn')
+     ORDER BY setting_group, setting_key`
+  );
   return settings;
 }
 
 async function listSettingsByGroup(group) {
+  assertSettingGroupEnabled(group);
   const [settings] = await pool.execute(
     `${selectSettingsSql} WHERE setting_group = ? ORDER BY setting_key`,
     [group]
@@ -20,6 +34,7 @@ async function listSettingsByGroup(group) {
 }
 
 async function upsertGroupSettings(group, settings, updatedBy) {
+  assertSettingGroupEnabled(group);
   const connection = await pool.getConnection();
 
   try {
@@ -46,6 +61,7 @@ async function upsertGroupSettings(group, settings, updatedBy) {
 }
 
 async function upsertSingleSetting(setting) {
+  assertSettingGroupEnabled(setting.group);
   await upsertSetting(pool, setting);
 }
 

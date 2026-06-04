@@ -8,10 +8,157 @@ async function audit(tableName, recordId, action, changedBy, newValues = null, c
   );
 }
 
+function isAdminContext(auth = {}) {
+  const roles = (auth.roles || []).map((role) => String(role).toLowerCase());
+  const permissions = new Set(auth.permissions || []);
+  return roles.includes("admin") || permissions.has("setting.manage") || permissions.has("user.manage");
+}
+
+function notificationVisibilityWhere(auth = {}, alias = "n") {
+  const email = String(auth.user?.email || "").trim().toLowerCase();
+  const clauses = [`${alias}.recipient_user_id = ?`];
+  const params = [auth.user?.id || 0];
+  if (email) {
+    clauses.push(`LOWER(${alias}.recipient_email) = ?`);
+    params.push(email);
+  }
+  if (isAdminContext(auth)) clauses.push(`(${alias}.recipient_user_id IS NULL AND ${alias}.recipient_email IS NULL)`);
+  return { sql: `(${clauses.join(" OR ")})`, params };
+}
+
+async function createNotification(connection, input = {}) {
+  const title = String(input.title || "").trim();
+  if (!title) return;
+  const metadata = input.metadata ? JSON.stringify(input.metadata) : null;
+  await connection.execute(
+    `INSERT INTO notifications
+      (notification_key, recipient_user_id, recipient_email, channel, title, body, entity_type, entity_id, status, priority, sent_at, metadata, created_by)
+     VALUES (?, ?, ?, 'in_app', ?, ?, ?, ?, 'sent', ?, CURRENT_TIMESTAMP, ?, ?)`,
+    [
+      input.key || null,
+      input.recipientUserId || null,
+      input.recipientEmail || null,
+      title.slice(0, 180),
+      input.body || null,
+      input.entityType || null,
+      input.entityId || null,
+      input.priority || "normal",
+      metadata,
+      input.createdBy || null
+    ]
+  );
+}
+
+async function usersWithPermission(connection, permission) {
+  const [rows] = await connection.execute(
+    `SELECT DISTINCT u.id, u.email
+       FROM users u
+       JOIN user_roles ur ON ur.user_id = u.id
+       JOIN role_permissions rp ON rp.role_id = ur.role_id
+       JOIN permissions p ON p.id = rp.permission_id
+      WHERE p.permission_key = ? AND u.is_active = 1 AND u.deleted_at IS NULL`,
+    [permission]
+  );
+  return rows;
+}
+
+async function notifyPermissionUsers(connection, permission, input = {}) {
+  const users = await usersWithPermission(connection, permission);
+  for (const user of users) {
+    await createNotification(connection, {
+      ...input,
+      recipientUserId: user.id,
+      recipientEmail: user.email
+    });
+  }
+}
+
+async function notifyLowStockIfNeeded(connection, itemId, locationId, userId) {
+  const [rows] = await connection.execute(
+    `SELECT item_id AS itemCode, item_name AS itemName, location_name AS location, quantity_available AS available, stock_status AS status
+       FROM v_inventory_stock
+      WHERE item_pk = ? AND location_id = ?
+      LIMIT 1`,
+    [itemId, locationId]
+  );
+  const stock = rows[0];
+  if (!stock || String(stock.status || "").toUpperCase() === "OK") return;
+  await notifyPermissionUsers(connection, "inventory.manage", {
+    key: `low-stock-${stock.itemCode}-${stock.location}-${Date.now()}`,
+    title: `Stock is ${String(stock.status).toLowerCase()}`,
+    body: `${stock.itemName || stock.itemCode} at ${stock.location} has ${Number(stock.available || 0)} available.`,
+    entityType: "inventory",
+    entityId: itemId,
+    priority: "high",
+    metadata: { type: "stock_low", itemCode: stock.itemCode, location: stock.location, available: stock.available, status: stock.status, audience: "direct" },
+    createdBy: userId
+  });
+}
+
+async function listNotifications(auth, query = {}) {
+  const visibility = notificationVisibilityWhere(auth, "n");
+  const unreadOnly = String(query.unreadOnly || "").toLowerCase() === "true";
+  const filters = [visibility.sql, "n.channel IN ('in_app', 'system')", "n.status <> 'dismissed'"];
+  const params = [...visibility.params];
+  if (unreadOnly) filters.push("n.status <> 'read'");
+  const [rows] = await pool.execute(
+    `SELECT n.id, n.notification_key AS notificationKey, n.title, n.body AS message,
+            n.entity_type AS entityType, n.entity_id AS entityId, n.status, n.priority,
+            n.metadata, n.created_at AS createdAt, n.read_at AS readAt,
+            n.recipient_user_id AS recipientUserId, n.recipient_email AS recipientEmail
+       FROM notifications n
+      WHERE ${filters.join(" AND ")}
+      ORDER BY n.created_at DESC, n.id DESC
+      LIMIT 100`,
+    params
+  );
+  return rows.map((row) => ({
+    ...row,
+    type: notificationType(row),
+    unread: row.status !== "read",
+    metadata: parseJson(row.metadata)
+  }));
+}
+
+async function markNotificationRead(id, auth) {
+  const visibility = notificationVisibilityWhere(auth, "notifications");
+  const [result] = await pool.execute(
+    `UPDATE notifications
+        SET status = 'read', read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+      WHERE id = ? AND ${visibility.sql}`,
+    [positive(id, "Notification"), ...visibility.params]
+  );
+  if (!result.affectedRows) throwBadRequest("Notification not found.");
+  return { id: Number(id), status: "read" };
+}
+
+async function markAllNotificationsRead(auth) {
+  const visibility = notificationVisibilityWhere(auth, "notifications");
+  const [result] = await pool.execute(
+    `UPDATE notifications
+        SET status = 'read', read_at = COALESCE(read_at, CURRENT_TIMESTAMP)
+      WHERE status <> 'read' AND status <> 'dismissed' AND ${visibility.sql}`,
+    visibility.params
+  );
+  return { updated: result.affectedRows };
+}
+
+function notificationType(row = {}) {
+  const metadata = parseJson(row.metadata);
+  if (metadata.type) return metadata.type;
+  return String(row.entityType || row.entity_type || "system").replace(/_/g, " ");
+}
+
+function parseJson(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try { return JSON.parse(value); } catch { return {}; }
+}
+
 async function listItems() {
   const [rows] = await pool.execute(
     `SELECT i.id, i.item_id AS code, i.item_name AS name, i.item_type AS type,
-            c.name AS category, i.unit, i.is_active AS active
+            c.name AS category, i.is_active AS active
      FROM items i
      JOIN item_categories c ON c.id = i.category_id
      WHERE i.deleted_at IS NULL
@@ -54,18 +201,17 @@ async function syncImportedInventory(input, userId) {
       );
       const categoryId = categoryResult.insertId;
       await connection.execute(
-        `INSERT INTO items (item_id, item_name, item_type, category_id, unit, notes_remarks, is_active, deleted_at, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        `INSERT INTO items (item_id, item_name, item_type, category_id, notes_remarks, is_active, deleted_at, created_by, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
          ON DUPLICATE KEY UPDATE
            item_name = VALUES(item_name),
            item_type = VALUES(item_type),
            category_id = VALUES(category_id),
-           unit = VALUES(unit),
            notes_remarks = VALUES(notes_remarks),
            is_active = VALUES(is_active),
            deleted_at = NULL,
            updated_by = VALUES(updated_by)`,
-        [code, name, type, categoryId, row.unit || null, row.notes || null, row.active === false ? 0 : 1, userId, userId]
+        [code, name, type, categoryId, row.notes || null, row.active === false ? 0 : 1, userId, userId]
       );
     }
 
@@ -78,7 +224,7 @@ async function syncImportedInventory(input, userId) {
       );
     }
 
-    await audit("items", 0, "UPDATE", userId, { source: "inventory-data.js", itemCount: importedCodes.length, locationCount: locations.length }, connection);
+    await audit("items", 0, "UPDATE", userId, { source: "inventory data category files", itemCount: importedCodes.length, locationCount: locations.length }, connection);
     await connection.commit();
     return { synced: importedCodes.length, locations: locations.length };
   } catch (error) {
@@ -92,7 +238,6 @@ async function syncImportedInventory(input, userId) {
 async function createItems(input, userId) {
   const category = String(input.category || "").trim();
   const name = String(input.name || "").trim();
-  const unit = String(input.unit || "").trim() || null;
   const rows = Array.isArray(input.types) ? input.types : [];
   if (!category || !name || !rows.length) throwBadRequest("Category, item name, and at least one type are required.");
 
@@ -110,11 +255,11 @@ async function createItems(input, userId) {
       const type = String(row.type || "").trim();
       if (!code || !type) throwBadRequest("Each item type requires an Item ID and type.");
       const [result] = await connection.execute(
-        `INSERT INTO items (item_id, item_name, item_type, category_id, unit, created_by, updated_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [code, name, type, categoryId, unit, userId, userId]
+        `INSERT INTO items (item_id, item_name, item_type, category_id, created_by, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [code, name, type, categoryId, userId, userId]
       );
-      created.push({ id: result.insertId, code, name, type, category, unit });
+      created.push({ id: result.insertId, code, name, type, category });
       await audit("items", result.insertId, "INSERT", userId, created[created.length - 1], connection);
     }
     await connection.commit();
@@ -129,7 +274,8 @@ async function createItems(input, userId) {
 
 async function listVendors() {
   const [rows] = await pool.execute(
-    `SELECT id, CONCAT('VEN-', LPAD(id, 3, '0')) AS vendorId, name, phone, contact, email, address
+    `SELECT id, CONCAT('VEN-', LPAD(id, 3, '0')) AS vendorId, name, phone, contact, email, address,
+            bank_name AS bankName, account_title AS accountTitle, account_no AS accountNo
      FROM vendors
      WHERE deleted_at IS NULL
      ORDER BY name`
@@ -138,13 +284,59 @@ async function listVendors() {
 }
 
 async function createVendor(input, userId) {
+  const vendor = vendorPayload(input);
   const [result] = await pool.execute(
-    `INSERT INTO vendors (name, phone, contact, address, created_by, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [required(input.name, "Vendor name"), input.phone || null, input.contact || null, input.address || null, userId, userId]
+    `INSERT INTO vendors (name, phone, contact, address, bank_name, account_title, account_no, created_by, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      required(vendor.name, "Vendor name"),
+      vendor.phone || null,
+      vendor.contact || null,
+      vendor.address || null,
+      vendor.bankName || null,
+      vendor.accountTitle || null,
+      vendor.accountNo || null,
+      userId,
+      userId
+    ]
   );
-  await audit("vendors", result.insertId, "INSERT", userId, input);
-  return { id: result.insertId, vendorId: `VEN-${String(result.insertId).padStart(3, "0")}`, ...input };
+  await audit("vendors", result.insertId, "INSERT", userId, vendor);
+  return { id: result.insertId, vendorId: `VEN-${String(result.insertId).padStart(3, "0")}`, ...vendor };
+}
+
+async function updateVendor(vendorId, input, userId) {
+  const vendor = vendorPayload(input);
+  const [result] = await pool.execute(
+    `UPDATE vendors
+        SET name = ?, phone = ?, contact = ?, address = ?, bank_name = ?, account_title = ?, account_no = ?, updated_by = ?
+      WHERE id = ? AND deleted_at IS NULL`,
+    [
+      required(vendor.name, "Vendor name"),
+      vendor.phone || null,
+      vendor.contact || null,
+      vendor.address || null,
+      vendor.bankName || null,
+      vendor.accountTitle || null,
+      vendor.accountNo || null,
+      userId,
+      positive(vendorId, "Vendor")
+    ]
+  );
+  if (!result.affectedRows) throwBadRequest("Vendor not found.");
+  await audit("vendors", vendorId, "UPDATE", userId, vendor);
+  return { id: Number(vendorId), vendorId: `VEN-${String(vendorId).padStart(3, "0")}`, ...vendor };
+}
+
+function vendorPayload(input = {}) {
+  return {
+    name: String(input.name || "").trim(),
+    phone: String(input.phone || "").trim(),
+    contact: String(input.contact || "").trim(),
+    address: String(input.address || "").trim(),
+    bankName: String(input.bankName || input.bank_name || "").trim(),
+    accountTitle: String(input.accountTitle || input.account_title || "").trim(),
+    accountNo: String(input.accountNo || input.account_no || "").trim()
+  };
 }
 
 async function listRequests() {
@@ -184,11 +376,35 @@ async function updateRequestApproval(requestNumber, itemId, input, userId) {
       return { requestId: requestNumber, itemId: item.id, status };
     }
     const approvedQuantity = status === "Approved" ? item.quantity_requested : 0;
+    const hasLegacyApprovalStatus = await tableColumnExists(connection, "request_items", "approval_status");
+    const hasLegacyIssuanceStatus = await tableColumnExists(connection, "request_items", "issuance_status");
+    const hasApprovedBy = await tableColumnExists(connection, "request_items", "approved_by");
+    const hasApprovedAt = await tableColumnExists(connection, "request_items", "approved_at");
+    const hasRejectionReason = await tableColumnExists(connection, "request_items", "rejection_reason");
+    const updateColumns = [
+      "line_status = ?",
+      "quantity_approved = ?",
+      "quantity_issued = 0",
+      ...(hasLegacyApprovalStatus ? ["approval_status = ?"] : []),
+      ...(hasLegacyIssuanceStatus ? ["issuance_status = ?"] : []),
+      ...(hasApprovedBy ? ["approved_by = ?"] : []),
+      ...(hasApprovedAt ? ["approved_at = CURRENT_TIMESTAMP"] : []),
+      ...(hasRejectionReason ? ["rejection_reason = ?"] : [])
+    ];
+    const updateValues = [
+      status,
+      approvedQuantity,
+      ...(hasLegacyApprovalStatus ? [status] : []),
+      ...(hasLegacyIssuanceStatus ? ["Not Issued"] : []),
+      ...(hasApprovedBy ? [userId] : []),
+      ...(hasRejectionReason ? [status === "Rejected" ? input.notes || null : null] : []),
+      item.id
+    ];
     await connection.execute(
       `UPDATE request_items
-       SET line_status = ?, quantity_approved = ?, quantity_issued = 0
+       SET ${updateColumns.join(", ")}
        WHERE id = ?`,
-      [status, approvedQuantity, item.id]
+      updateValues
     );
     await recomputeRequestStatuses(connection, request.id, userId);
     await audit("request_items", item.id, "UPDATE", userId, {
@@ -197,6 +413,18 @@ async function updateRequestApproval(requestNumber, itemId, input, userId) {
       toStatus: status,
       notes: input.notes || null
     }, connection);
+    await createNotification(connection, {
+      key: `request-${status.toLowerCase()}-${requestNumber}-${item.id}`,
+      recipientUserId: request.requesterUserId,
+      recipientEmail: request.requesterEmail,
+      title: `Request ${requestNumber} ${status.toLowerCase()}`,
+      body: `${item.item_name_snapshot || item.item_code_snapshot || "Requested item"} was ${status.toLowerCase()}.`,
+      entityType: "request_items",
+      entityId: item.id,
+      priority: status === "Rejected" ? "high" : "normal",
+      metadata: { type: status === "Approved" ? "request_approved" : "request_rejected", requestNumber, itemId: item.id, audience: "direct" },
+      createdBy: userId
+    });
     await connection.commit();
     return { requestId: requestNumber, itemId: item.id, status };
   } catch (error) {
@@ -274,6 +502,18 @@ async function issueRequestStock(requestNumber, itemId, input, userId) {
       quantity,
       issuedBy: input.issuedBy || null
     }, connection);
+    await createNotification(connection, {
+      key: `stock-issued-${movementNumber}`,
+      recipientUserId: request.requesterUserId,
+      recipientEmail: request.requesterEmail,
+      title: `Stock issued for ${requestNumber}`,
+      body: `${quantity} ${item.item_code_snapshot || "item"} issued. Movement ${movementNumber}.`,
+      entityType: "stock_movements",
+      entityId: movementRows[0]?.id || 0,
+      metadata: { type: "stock_issued", requestNumber, movementNumber, itemId: item.id, audience: "direct" },
+      createdBy: userId
+    });
+    await notifyLowStockIfNeeded(connection, item.item_id, item.source_location_id, userId);
     await connection.commit();
     return { requestId: requestNumber, itemId: item.id, movementNumber, status: nextStatus };
   } catch (error) {
@@ -376,6 +616,25 @@ async function createRequest(input, userId) {
       );
     }
     await audit("requests", requestResult.insertId, "INSERT", userId, { requestNumber, items }, connection);
+    await createNotification(connection, {
+      key: `request-submitted-${requestNumber}-${requestResult.insertId}`,
+      recipientUserId: requesterId || userId,
+      title: `Request ${requestNumber} submitted`,
+      body: `${normalizedInput.requestedBy || "Requester"} submitted ${items.length} item request${items.length === 1 ? "" : "s"}.`,
+      entityType: "requests",
+      entityId: requestResult.insertId,
+      metadata: { type: "request_submitted", requestNumber, audience: "direct" },
+      createdBy: userId
+    });
+    await notifyPermissionUsers(connection, "request.approve", {
+      key: `request-approval-${requestNumber}-${requestResult.insertId}`,
+      title: `Approval required for ${requestNumber}`,
+      body: `${normalizedInput.requestedBy || "Requester"} submitted ${items.length} item request${items.length === 1 ? "" : "s"}.`,
+      entityType: "requests",
+      entityId: requestResult.insertId,
+      metadata: { type: "request_submitted", requestNumber, audience: "direct" },
+      createdBy: userId
+    });
     await connection.commit();
     return { requestId: requestNumber };
   } catch (error) {
@@ -478,6 +737,18 @@ async function updateTransportApproval(id, input, userId) {
       fromStatus: transport.approval_status,
       toStatus: status
     }, connection);
+    await createNotification(connection, {
+      key: `transport-approval-${transport.request_number}-${status}`,
+      recipientUserId: transport.requesterUserId,
+      recipientEmail: transport.requesterEmail,
+      title: `Transport ${transport.request_number} ${status.toLowerCase()}`,
+      body: `Your transport request status changed from ${transport.approval_status} to ${status}.`,
+      entityType: "transport_requests",
+      entityId: transport.id,
+      priority: status === "Rejected" ? "high" : "normal",
+      metadata: { type: "transport_status_changed", requestNumber: transport.request_number, fromStatus: transport.approval_status, toStatus: status, audience: "direct" },
+      createdBy: userId
+    });
     await connection.commit();
     return { id: transport.id, requestId: transport.request_number, approvalStatus: status };
   } catch (error) {
@@ -510,6 +781,17 @@ async function updateTransportArrangement(id, input, userId) {
       fromStatus: transport.status,
       toStatus: status
     }, connection);
+    await createNotification(connection, {
+      key: `transport-arrangement-${transport.request_number}-${status}`,
+      recipientUserId: transport.requesterUserId,
+      recipientEmail: transport.requesterEmail,
+      title: `Transport ${transport.request_number} ${status.toLowerCase()}`,
+      body: `Transport arrangement status changed from ${transport.status} to ${status}.`,
+      entityType: "transport_requests",
+      entityId: transport.id,
+      metadata: { type: "transport_status_changed", requestNumber: transport.request_number, fromStatus: transport.status, toStatus: status, audience: "direct" },
+      createdBy: userId
+    });
     await connection.commit();
     return { id: transport.id, requestId: transport.request_number, arrangementStatus: status };
   } catch (error) {
@@ -649,22 +931,65 @@ function nameFromEmail(email) {
 async function listPurchaseOrders() {
   const [rows] = await pool.execute(
     `SELECT po.id, po.po_number AS poNumber, po.issue_date AS issueDate, po.status,
-            po.total_amount AS poAmount, po.expected_date AS arrivedBy, po.notes_remarks AS notesRemarks,
+            po.subtotal_amount AS subtotal, po.tax_amount AS taxAmount, po.total_amount AS poAmount,
+            po.expected_date AS arrivedBy, po.notes_remarks AS notesRemarks,
             v.id AS vendorId, v.name AS vendorName,
             CONCAT_WS(' / ', NULLIF(v.contact, ''), NULLIF(v.phone, ''), NULLIF(v.email, '')) AS vendorContact,
-            v.address AS vendorAddress, l.name AS location,
+            v.address AS vendorAddress, v.bank_name AS bankName, v.account_title AS accountTitle, v.account_no AS accountNo,
+            l.name AS location, pol.id AS lineId, pol.line_no AS lineNo,
             pol.description AS specifications, pol.quantity_ordered AS quantityOrdered,
             pol.quantity_received AS quantityReceived, pol.unit_price AS unitPrice, pol.tax_rate AS taxRate,
-            i.item_id AS itemCode, i.item_name AS itemName, i.item_type AS itemType
+            i.item_id AS itemCode, i.item_name AS itemName, i.item_type AS itemType, c.name AS category
      FROM purchase_orders po
      JOIN vendors v ON v.id = po.vendor_id
      LEFT JOIN locations l ON l.id = po.delivery_location_id
      LEFT JOIN purchase_order_lines pol ON pol.purchase_order_id = po.id
      LEFT JOIN items i ON i.id = pol.item_id
+     LEFT JOIN item_categories c ON c.id = i.category_id
      WHERE po.deleted_at IS NULL
-     ORDER BY po.created_at DESC, po.id DESC`
+     ORDER BY po.created_at DESC, po.id DESC, pol.line_no ASC`
   );
-  return rows;
+  const grouped = new Map();
+  for (const row of rows) {
+    if (!grouped.has(row.id)) {
+      grouped.set(row.id, {
+        ...row,
+        items: [],
+        quantityOrdered: 0,
+        quantityReceived: 0,
+        unitPrice: 0
+      });
+    }
+    const po = grouped.get(row.id);
+    if (!row.lineNo) continue;
+    const line = {
+      lineNo: row.lineNo,
+      lineId: row.lineId,
+      category: row.category || "",
+      itemName: row.itemName || "",
+      itemType: row.itemType || "",
+      itemCode: row.itemCode || "",
+      specifications: row.specifications || "",
+      quantityOrdered: Number(row.quantityOrdered || 0),
+      quantityReceived: Number(row.quantityReceived || 0),
+      unitPrice: Number(row.unitPrice || 0),
+      taxRate: Number(row.taxRate || 0),
+      subtotal: Number(row.quantityOrdered || 0) * Number(row.unitPrice || 0)
+    };
+    po.items.push(line);
+    po.quantityOrdered += line.quantityOrdered;
+    po.quantityReceived += line.quantityReceived;
+    if (po.items.length === 1) {
+      po.category = line.category;
+      po.itemName = line.itemName;
+      po.itemType = line.itemType;
+      po.itemCode = line.itemCode;
+      po.specifications = line.specifications;
+      po.unitPrice = line.unitPrice;
+      po.taxRate = line.taxRate;
+    }
+  }
+  return [...grouped.values()];
 }
 
 async function createPurchaseOrder(input, userId) {
@@ -673,29 +998,56 @@ async function createPurchaseOrder(input, userId) {
     await connection.beginTransaction();
     const poNumber = input.poNumber || await nextNumber(connection, "purchase_orders", "po_number", "PO");
     const locationId = await ensureNamed(connection, "locations", input.location);
-    const item = await getItemByCode(connection, input.itemCode || input.productCode, {
-      name: input.itemName || input.specifications,
-      type: input.itemType,
-      category: input.category || "Procurement",
-      userId
-    });
-    const qty = Number(input.quantityOrdered);
-    const unitPrice = Number(input.unitPrice || 0);
+    const lines = Array.isArray(input.items) && input.items.length ? input.items : [input];
+    if (lines.length > 20) throwBadRequest("A PO can include up to 20 items.");
     const taxRate = Number(input.taxRate || 0);
-    const subtotal = qty * unitPrice;
+    const preparedLines = [];
+    for (const [index, line] of lines.entries()) {
+      const item = await getItemByCode(connection, line.itemCode || line.productCode, {
+        name: line.itemName || line.specifications,
+        type: line.itemType,
+        category: line.category || input.category || "Procurement",
+        userId
+      });
+      const qty = Number(line.quantityOrdered);
+      if (!qty || qty <= 0) throwBadRequest("Quantity ordered must be greater than zero for every item.");
+      const unitPrice = Number(line.unitPrice || 0);
+      preparedLines.push({
+        lineNo: index + 1,
+        item,
+        description: line.specifications || `${item.item_name} - ${item.item_type}`,
+        qty,
+        unitPrice,
+        taxRate: Number(line.taxRate ?? taxRate)
+      });
+    }
+    const subtotal = preparedLines.reduce((sum, line) => sum + line.qty * line.unitPrice, 0);
     const tax = subtotal * taxRate / 100;
+    const statusMap = { Open: "Draft", Ordered: "Sent", Closed: "Closed" };
+    const status = statusMap[input.status] || input.status || "Draft";
     const [poResult] = await connection.execute(
       `INSERT INTO purchase_orders (po_number, issue_date, vendor_id, status, expected_date, delivery_location_id,
         subtotal_amount, tax_amount, total_amount, notes_remarks, created_by, updated_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [poNumber, input.issueDate || null, positive(input.vendorId, "Vendor"), "Draft", input.arrivedBy || null, locationId, subtotal, tax, subtotal + tax, input.notesRemarks || null, userId, userId]
+      [poNumber, input.issueDate || null, positive(input.vendorId, "Vendor"), status, input.arrivedBy || null, locationId, subtotal, tax, subtotal + tax, input.notesRemarks || null, userId, userId]
     );
-    await connection.execute(
-      `INSERT INTO purchase_order_lines (purchase_order_id, line_no, item_id, description, quantity_ordered, quantity_received, unit_price, tax_rate)
-       VALUES (?, 1, ?, ?, ?, ?, ?, ?)`,
-      [poResult.insertId, item.id, input.specifications || `${item.item_name} - ${item.item_type}`, qty, 0, unitPrice, taxRate]
-    );
+    for (const line of preparedLines) {
+      await connection.execute(
+        `INSERT INTO purchase_order_lines (purchase_order_id, line_no, item_id, description, quantity_ordered, quantity_received, unit_price, tax_rate)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [poResult.insertId, line.lineNo, line.item.id, line.description, line.qty, 0, line.unitPrice, line.taxRate]
+      );
+    }
     await audit("purchase_orders", poResult.insertId, "INSERT", userId, { poNumber }, connection);
+    await notifyPermissionUsers(connection, "purchase_order.manage", {
+      key: `po-created-${poNumber}-${poResult.insertId}`,
+      title: `PO ${poNumber} created`,
+      body: `Purchase order ${poNumber} was created with ${preparedLines.length} line${preparedLines.length === 1 ? "" : "s"}.`,
+      entityType: "purchase_orders",
+      entityId: poResult.insertId,
+      metadata: { type: "po_created", poNumber, audience: "direct" },
+      createdBy: userId
+    });
     await connection.commit();
     return { poNumber };
   } catch (error) {
@@ -744,6 +1096,8 @@ async function cancelPurchaseOrder(poNumber, input, userId) {
 
 async function listGrns() {
   const receivedByColumn = await getColumnType(pool, "grns", "received_by");
+  const hasLegacyPoId = await tableColumnExists(pool, "grns", "po_id");
+  const poJoinExpression = hasLegacyPoId ? "COALESCE(g.purchase_order_id, g.po_id)" : "g.purchase_order_id";
   const receivedBySelect = receivedByColumn.includes("int")
     ? "u.full_name AS receivedBy"
     : "g.received_by AS receivedBy";
@@ -753,7 +1107,7 @@ async function listGrns() {
             gl.quantity_accepted AS qtyAccepted, i.item_id AS itemCode,
             i.item_name AS itemName, i.item_type AS itemType, gl.stock_movement_id AS stockMovementId
      FROM grns g
-     LEFT JOIN purchase_orders po ON po.id = COALESCE(g.purchase_order_id, g.po_id)
+     LEFT JOIN purchase_orders po ON po.id = ${poJoinExpression}
      JOIN locations l ON l.id = g.location_id
      LEFT JOIN users u ON u.id = g.received_by
      LEFT JOIN grn_lines gl ON gl.grn_id = g.id
@@ -773,7 +1127,7 @@ async function createGrn(input, userId) {
     const qtyAccepted = Number(input.qtyAccepted);
     if (!qtyReceived || qtyReceived <= 0) throwBadRequest("Quantity received must be greater than zero.");
     if (qtyAccepted < 0 || qtyAccepted > qtyReceived) throwBadRequest("Accepted quantity must be between zero and received quantity.");
-    const po = await getPurchaseOrderForGrn(connection, input.poNumber, item.id, item.item_id);
+    const po = await getPurchaseOrderForGrn(connection, input.poNumber, item.id, item.item_id, input.poLineId);
     const remainingPoQuantity = Math.max(Number(po.quantityOrdered || 0) - Number(po.quantityReceived || 0), 0);
     if (qtyAccepted > remainingPoQuantity) {
       throwBadRequest(`Accepted quantity cannot exceed remaining PO quantity (${remainingPoQuantity}).`);
@@ -826,6 +1180,7 @@ async function createGrn(input, userId) {
       );
       const [movementRows] = await connection.execute("SELECT id FROM stock_movements WHERE movement_number = ?", [movementNumber]);
       stockMovementId = movementRows[0]?.id || null;
+      await reconcileInventoryBalance(connection, item.id, locationId);
     }
     await connection.execute(
       `INSERT INTO grn_lines (grn_id, purchase_order_line_id, line_no, item_id, quantity_received, quantity_accepted, quantity_rejected, stock_movement_id)
@@ -842,6 +1197,15 @@ async function createGrn(input, userId) {
       await refreshPurchaseOrderStatus(connection, po.id);
     }
     await audit("grns", grnResult.insertId, "INSERT", userId, { grnNumber, itemCode: item.item_id, stockMovementId }, connection);
+    await notifyPermissionUsers(connection, "grn.manage", {
+      key: `grn-created-${grnNumber}-${grnResult.insertId}`,
+      title: `GRN ${grnNumber} created`,
+      body: `${qtyAccepted} of ${item.item_id} accepted at ${input.location}.`,
+      entityType: "grns",
+      entityId: grnResult.insertId,
+      metadata: { type: "grn_created", grnNumber, itemCode: item.item_id, audience: "direct" },
+      createdBy: userId
+    });
     await connection.commit();
     return { grnNumber };
   } catch (error) {
@@ -852,9 +1216,21 @@ async function createGrn(input, userId) {
   }
 }
 
-async function getPurchaseOrderForGrn(connection, poNumber, itemId, itemCode) {
+async function getPurchaseOrderForGrn(connection, poNumber, itemId, itemCode, poLineId) {
   const cleanPoNumber = String(poNumber || "").trim();
   if (!cleanPoNumber) throwBadRequest("PO number is required for GRN.");
+  if (poLineId) {
+    const [lineRows] = await connection.execute(
+      `SELECT po.id, pol.id AS lineId, pol.quantity_ordered AS quantityOrdered, pol.quantity_received AS quantityReceived
+       FROM purchase_orders po
+       JOIN purchase_order_lines pol ON pol.purchase_order_id = po.id
+       WHERE po.po_number = ? AND pol.id = ? AND pol.item_id = ?
+       LIMIT 1`,
+      [cleanPoNumber, positive(poLineId, "PO item"), itemId]
+    );
+    if (!lineRows[0]) throwBadRequest(`Selected PO item does not match Item ID ${itemCode}.`);
+    return lineRows[0];
+  }
   const [rows] = await connection.execute(
     `SELECT po.id, pol.id AS lineId, pol.quantity_ordered AS quantityOrdered, pol.quantity_received AS quantityReceived
      FROM purchase_orders po
@@ -894,6 +1270,7 @@ async function listAudit() {
 async function postStockMovement(input, userId, type) {
   const connection = await pool.getConnection();
   try {
+    await connection.beginTransaction();
     const item = await getItemByCode(connection, input.itemCode);
     const locationId = await ensureNamed(connection, "locations", input.location);
     const movementNumber = await nextNumber(connection, "stock_movements", "movement_number", "MOV", 8);
@@ -903,7 +1280,23 @@ async function postStockMovement(input, userId, type) {
     );
     const [rows] = await connection.execute("SELECT id FROM stock_movements WHERE movement_number = ?", [movementNumber]);
     await audit("stock_movements", rows[0]?.id || 0, "POST", userId, { movementNumber, type, ...input }, connection);
+    if (type === "MANUAL_OUT") {
+      await createNotification(connection, {
+        key: `manual-stock-issued-${movementNumber}`,
+        title: `Stock issued ${movementNumber}`,
+        body: `${Number(input.quantity)} ${item.item_id} issued from ${input.location}.`,
+        entityType: "stock_movements",
+        entityId: rows[0]?.id || 0,
+        metadata: { type: "stock_issued", movementNumber, itemCode: item.item_id, audience: "system" },
+        createdBy: userId
+      });
+      await notifyLowStockIfNeeded(connection, item.id, locationId, userId);
+    }
+    await connection.commit();
     return { movementNumber };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
   } finally {
     connection.release();
   }
@@ -911,14 +1304,62 @@ async function postStockMovement(input, userId, type) {
 
 async function listInventory() {
   const [rows] = await pool.execute(
-    `SELECT item_pk AS id, item_id AS code, item_name AS name, item_type AS type, category,
-            location_name AS location, quantity_on_hand AS stock,
-            quantity_reserved AS reserved, quantity_available AS available,
-            stock_status AS status
+    `SELECT v.item_pk AS id, v.item_id AS code, v.item_name AS name, v.item_type AS type, v.category,
+            v.location_name AS location,
+            COALESCE(m.quantity_on_hand, v.quantity_on_hand, 0) AS stock,
+            COALESCE(m.quantity_reserved, v.quantity_reserved, 0) AS reserved,
+            GREATEST(COALESCE(m.quantity_on_hand, v.quantity_on_hand, 0) - COALESCE(m.quantity_reserved, v.quantity_reserved, 0), 0) AS available,
+            CASE WHEN COALESCE(m.quantity_on_hand, v.quantity_on_hand, 0) <= 0 THEN 'Out of stock' ELSE 'OK' END AS status
      FROM v_inventory_stock
-     ORDER BY item_name, item_type, location_name`
+     v
+     LEFT JOIN (
+       SELECT item_id, location_id,
+              SUM(CASE
+                    WHEN movement_type IN ('OPENING', 'GRN_IN', 'MANUAL_IN', 'TRANSFER_IN', 'ADJUSTMENT_IN') THEN quantity
+                    WHEN movement_type IN ('REQUEST_ISSUE', 'MANUAL_OUT', 'TRANSFER_OUT', 'ADJUSTMENT_OUT') THEN -quantity
+                    ELSE 0
+                  END) AS quantity_on_hand,
+              SUM(CASE
+                    WHEN movement_type = 'RESERVE' THEN quantity
+                    WHEN movement_type IN ('UNRESERVE', 'REQUEST_ISSUE') THEN -quantity
+                    ELSE 0
+                  END) AS quantity_reserved
+        FROM stock_movements
+       GROUP BY item_id, location_id
+     ) m ON m.item_id = v.item_pk AND m.location_id = v.location_id
+     ORDER BY v.item_name, v.item_type, v.location_name`
   );
   return rows;
+}
+
+async function reconcileInventoryBalance(connection, itemId, locationId) {
+  const [rows] = await connection.execute(
+    `SELECT
+       COALESCE(SUM(CASE
+         WHEN movement_type IN ('OPENING', 'GRN_IN', 'MANUAL_IN', 'TRANSFER_IN', 'ADJUSTMENT_IN') THEN quantity
+         WHEN movement_type IN ('REQUEST_ISSUE', 'MANUAL_OUT', 'TRANSFER_OUT', 'ADJUSTMENT_OUT') THEN -quantity
+         ELSE 0
+       END), 0) AS quantityOnHand,
+       COALESCE(SUM(CASE
+         WHEN movement_type = 'RESERVE' THEN quantity
+         WHEN movement_type IN ('UNRESERVE', 'REQUEST_ISSUE') THEN -quantity
+         ELSE 0
+       END), 0) AS quantityReserved
+     FROM stock_movements
+     WHERE item_id = ? AND location_id = ?`,
+    [itemId, locationId]
+  );
+  const onHand = Math.max(Number(rows[0]?.quantityOnHand || 0), 0);
+  const reserved = Math.min(Math.max(Number(rows[0]?.quantityReserved || 0), 0), onHand);
+  await connection.execute(
+    `INSERT INTO inventory_balances (item_id, location_id, quantity_on_hand, quantity_reserved, last_movement_at)
+     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON DUPLICATE KEY UPDATE
+       quantity_on_hand = VALUES(quantity_on_hand),
+       quantity_reserved = VALUES(quantity_reserved),
+       last_movement_at = VALUES(last_movement_at)`,
+    [itemId, locationId, onHand, reserved]
+  );
 }
 
 async function ensureNamed(connection, table, name) {
@@ -942,8 +1383,8 @@ async function getItemByCode(connection, code, fallback = {}) {
   const itemName = String(fallback.name).trim().slice(0, 255);
   const itemType = String(fallback.type || "NA").trim().slice(0, 255) || "NA";
   const [result] = await connection.execute(
-    `INSERT INTO items (item_id, item_name, item_type, category_id, unit, created_by, updated_by)
-     VALUES (?, ?, ?, ?, 'unit', ?, ?)`,
+    `INSERT INTO items (item_id, item_name, item_type, category_id, created_by, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?)`,
     [itemCode, itemName, itemType, categoryId, fallback.userId || null, fallback.userId || null]
   );
   return {
@@ -956,8 +1397,10 @@ async function getItemByCode(connection, code, fallback = {}) {
 
 async function getRequestLineForUpdate(connection, requestNumber, itemId) {
   const [rows] = await connection.execute(
-    `SELECT r.id AS requestId, r.request_number, ri.*
+    `SELECT r.id AS requestId, r.request_number, r.requester_user_id AS requesterUserId,
+            u.email AS requesterEmail, ri.*
      FROM requests r
+     LEFT JOIN users u ON u.id = r.requester_user_id
      JOIN request_items ri ON ri.request_id = r.id
      WHERE r.request_number = ? AND ri.id = ?
      FOR UPDATE`,
@@ -966,16 +1409,18 @@ async function getRequestLineForUpdate(connection, requestNumber, itemId) {
   const row = rows[0];
   if (!row) throwBadRequest("Request item not found.");
   return {
-    request: { id: row.requestId, request_number: row.request_number },
+    request: { id: row.requestId, request_number: row.request_number, requesterUserId: row.requesterUserId, requesterEmail: row.requesterEmail },
     item: row
   };
 }
 
 async function getTransportForUpdate(connection, id) {
   const [rows] = await connection.execute(
-    `SELECT id, request_number, approval_status, status
-     FROM transport_requests
-     WHERE id = ?
+    `SELECT tr.id, tr.request_number, tr.approval_status, tr.status,
+            tr.requester_user_id AS requesterUserId, u.email AS requesterEmail
+     FROM transport_requests tr
+     LEFT JOIN users u ON u.id = tr.requester_user_id
+     WHERE tr.id = ?
      FOR UPDATE`,
     [positive(id, "Transport request")]
   );
@@ -1021,8 +1466,8 @@ async function firstOrExistingItem(connection, code, description, userId) {
   const fallbackCode = code || `PO-SERVICE-${Date.now()}`;
   const categoryId = await ensureNamed(connection, "item_categories", "Procurement");
   const [result] = await connection.execute(
-    `INSERT INTO items (item_id, item_name, item_type, category_id, unit, created_by, updated_by)
-     VALUES (?, ?, 'Specification', ?, 'unit', ?, ?)`,
+    `INSERT INTO items (item_id, item_name, item_type, category_id, created_by, updated_by)
+     VALUES (?, ?, 'Specification', ?, ?, ?)`,
     [fallbackCode, String(description || "Procurement item").slice(0, 255), categoryId, userId, userId]
   );
   return { id: result.insertId, item_id: fallbackCode, item_name: description || fallbackCode };
@@ -1121,6 +1566,9 @@ function throwBadRequest(message) {
 }
 
 module.exports = {
+  listNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
   listInventory,
   postStockMovement,
   listItems,
@@ -1128,6 +1576,7 @@ module.exports = {
   createItems,
   listVendors,
   createVendor,
+  updateVendor,
   listRequests,
   createRequest,
   updateRequestApproval,

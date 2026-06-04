@@ -2,6 +2,7 @@ const path = require("path");
 const dotenv = require("dotenv");
 
 const env = process.env.NODE_ENV || "development";
+const databaseName = "ims_system";
 
 // Load environment-specific .env file from Portal/.env
 dotenv.config({ path: path.resolve(__dirname, `../../.env/.env.${env}`) });
@@ -12,7 +13,7 @@ const config = {
   database: {
     host: process.env.DB_HOST,
     port: Number(process.env.DB_PORT || 3306),
-    name: process.env.DB_NAME,
+    name: databaseName,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD
   },

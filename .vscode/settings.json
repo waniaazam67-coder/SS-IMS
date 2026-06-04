@@ -12,7 +12,7 @@
             "port": 3306,
             "driver": "MySQL",
             "name": "Mysql",
-            "database": "ims_dev",
+            "database": "ims_system",
             "username": "ims_admin"
         }
     ]
