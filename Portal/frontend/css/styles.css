@@ -881,6 +881,10 @@ body {
   background: var(--panel);
 }
 
+.app-shell[data-active-view="requisition"] .page-head {
+  display: none;
+}
+
 .page-title {
   display: flex;
   align-items: center;
@@ -7311,6 +7315,693 @@ th {
 
   .user-management-toolbar {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Jira-style approvals request board */
+#approvalsView {
+  display: none;
+}
+
+#approvalsView.active {
+  display: grid;
+  gap: 18px;
+}
+
+.approvals-board-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.transport-board-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.approvals-board,
+.transport-board {
+  display: grid;
+  grid-template-columns: repeat(var(--kanban-columns, 4), minmax(0, 1fr));
+  justify-content: stretch;
+  align-items: start;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px 0 2px;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.transport-board {
+  --kanban-columns: 5;
+}
+
+.approval-kanban-column {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, auto);
+  gap: 6px;
+  height: auto;
+  min-height: 0;
+  max-height: calc(100vh - 210px);
+  padding: 10px 7px 9px;
+  border: 1px solid #d9dde3;
+  border-radius: 10px;
+  background: #eceef2;
+  overflow: hidden;
+}
+
+.approval-kanban-column header {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 5px 3px;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.approval-kanban-column header span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.approval-kanban-column header svg {
+  width: 15px !important;
+  height: 15px !important;
+}
+
+.approval-kanban-column header strong {
+  min-width: 24px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: #d1d5db;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.approval-column-tools {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.approval-column-menu-btn {
+  width: 28px !important;
+  min-width: 28px !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  display: inline-grid !important;
+  place-items: center !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 7px !important;
+  background: transparent !important;
+  color: #64748b !important;
+  cursor: pointer;
+}
+
+.approval-column-menu-btn:hover,
+.approval-column-menu-btn[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.8) !important;
+  color: #334155 !important;
+}
+
+.approval-column-menu-btn svg {
+  width: 17px !important;
+  height: 17px !important;
+}
+
+.approval-column-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: 156px;
+  display: none;
+  padding: 6px;
+  border: 1px solid #d8dde5;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.14);
+}
+
+.approval-column-menu.show {
+  display: grid;
+  gap: 2px;
+}
+
+.approval-column-menu button {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 9px;
+  background: transparent;
+  color: #334155;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: left;
+}
+
+.approval-column-menu button:hover {
+  background: #f1f5f9;
+}
+
+.approval-column-menu button svg {
+  width: 15px !important;
+  height: 15px !important;
+}
+
+.approval-kanban-column.new header span { color: #111827; }
+.approval-kanban-column.pending header span { color: #2563eb; }
+.approval-kanban-column.approved header span { color: #15803d; }
+.approval-kanban-column.rejected header span { color: #dc2626; }
+.transport-column.cancelled header span { color: #dc2626; }
+.transport-column.completed header span { color: #15803d; }
+.transport-column.arranged header span { color: #0f766e; }
+
+.approval-kanban-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  max-height: calc(100vh - 285px);
+  overflow-y: auto;
+  padding: 0 3px 2px 0;
+  scrollbar-width: thin;
+  scrollbar-color: #858585 transparent;
+}
+
+.approval-kanban-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.approval-kanban-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #858585;
+}
+
+.approval-kanban-card {
+  width: 100%;
+  height: auto !important;
+  min-height: 76px !important;
+  max-height: none !important;
+  display: flex !important;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 8px 9px !important;
+  border: 1px solid #d8dde5;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #2f343b;
+  box-shadow: 0 1px 1px rgba(17, 24, 39, 0.12);
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden !important;
+  flex: 0 0 auto;
+}
+
+.approval-kanban-card:hover,
+.approval-kanban-card:focus-visible {
+  border-color: #b8cec0;
+  box-shadow: 0 8px 20px rgba(20, 35, 45, 0.10);
+  outline: 0;
+}
+
+.approval-kanban-card strong {
+  display: block;
+  color: #30343a;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-kanban-card em {
+  width: max-content;
+  max-width: 100%;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #2f5f9f;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-kanban-card span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #5b6670;
+  font-size: 10px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-kanban-card svg {
+  width: 13px !important;
+  height: 13px !important;
+  flex: 0 0 13px;
+  color: #6b7280;
+}
+
+.approval-kanban-empty {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  border: 1px dashed #c8ccd2;
+  border-radius: 8px;
+  color: #69707a;
+  background: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.approval-detail-card {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 36px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  padding: 0;
+}
+
+.approval-detail-card .modal-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 50px;
+  align-items: start;
+  gap: 14px;
+  padding: 22px 22px 14px;
+  border-bottom: 1px solid #e7ebe5;
+}
+
+#closeApprovalDetail.icon-btn {
+  width: 48px !important;
+  height: 48px !important;
+  min-width: 48px !important;
+  min-height: 48px !important;
+  display: inline-grid !important;
+  place-items: center !important;
+  padding: 0 !important;
+  border: 1px solid #dfe6dc !important;
+  border-radius: 14px !important;
+  background: #ffffff !important;
+  color: #53605a !important;
+  line-height: 0 !important;
+}
+
+#closeApprovalDetail svg {
+  width: 24px !important;
+  height: 24px !important;
+  display: block !important;
+}
+
+#approvalDetailContent {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px 22px;
+  scrollbar-width: thin;
+}
+
+.approval-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.approval-detail-grid div {
+  min-height: 62px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid #e5e9e1;
+  border-radius: 8px;
+  background: #fbfcf8;
+}
+
+.approval-detail-grid span {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.approval-detail-grid strong {
+  min-width: 0;
+  color: #172033;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.approval-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.approval-detail-actions .primary,
+.approval-detail-actions .danger-btn {
+  width: 104px !important;
+  min-width: 104px !important;
+  height: 38px !important;
+  min-height: 38px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  padding: 0 12px !important;
+  border-radius: 9px !important;
+  font-size: 14px !important;
+  font-weight: 800 !important;
+  line-height: 1 !important;
+}
+
+.approval-detail-actions .primary svg,
+.approval-detail-actions .danger-btn svg {
+  width: 16px !important;
+  height: 16px !important;
+  flex: 0 0 16px !important;
+}
+
+.approval-detail-status-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.approval-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.approval-history-item {
+  width: 100%;
+  min-height: 76px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 14px;
+  padding: 12px 14px;
+  border: 1px solid #e1e6df;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2937;
+  cursor: pointer;
+  text-align: left;
+}
+
+.approval-history-item:hover {
+  border-color: #b8cec0;
+  background: #f8faf7;
+}
+
+.approval-history-item strong {
+  grid-column: 1;
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.approval-history-item span:not(.approval-history-type) {
+  grid-column: 1;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.approval-history-item time {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  align-self: center;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.approval-history-type {
+  width: max-content;
+  max-width: 100%;
+  min-height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #2f5f9f;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+@media (max-width: 900px) {
+  .approvals-board,
+  .transport-board {
+    grid-template-columns: repeat(var(--kanban-columns, 4), minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .approval-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Keep sidebar menu labels visually consistent. */
+.sidebar .nav-item,
+.sidebar .nav-section-toggle,
+.sidebar .nav-section-items .nav-item {
+  font-weight: 500 !important;
+}
+
+.sidebar .nav-item.active {
+  font-weight: 500 !important;
+}
+
+/* Keep saved PO action column visually consistent with the rest of the table. */
+#poView #poTable td:last-child,
+#poView .table-wrap:has(#poTable) th:last-child,
+#poView .table-wrap:has(#poTable) td:last-child {
+  position: static !important;
+  right: auto !important;
+  z-index: auto !important;
+  min-width: 92px !important;
+  width: 92px !important;
+  max-width: 92px !important;
+  padding: 8px !important;
+  background: inherit !important;
+  box-shadow: none !important;
+  text-align: left !important;
+  vertical-align: middle !important;
+}
+
+#poView .table-wrap:has(#poTable) th:last-child {
+  background: var(--ref-surface-soft) !important;
+}
+
+#poView .table-wrap:has(#poTable) td:last-child {
+  background: var(--ref-surface) !important;
+}
+
+#poTable .button-cell {
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 6px !important;
+}
+
+#poTable .tiny {
+  width: auto !important;
+  min-width: 58px !important;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 10px !important;
+  border-radius: 8px !important;
+  background: var(--ref-surface-soft) !important;
+  color: var(--ref-text) !important;
+  box-shadow: none !important;
+  font-size: 12px !important;
+}
+
+/* Final compact fit for User Management. */
+#settingsView:has(.user-management-list) {
+  max-width: none !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 18px 20px !important;
+  overflow-x: hidden !important;
+}
+
+#settingsView:has(.user-management-list) .settings-panel,
+#settingsView:has(.user-management-list) .settings-form {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow-x: hidden !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-page-head {
+  grid-template-columns: 38px minmax(0, 1fr) auto !important;
+  margin-bottom: 18px !important;
+}
+
+#settingsView:has(.user-management-list) .add-user-panel {
+  grid-template-columns: minmax(150px, 190px) minmax(260px, 1fr) minmax(300px, 1.1fr) 110px !important;
+  gap: 12px !important;
+  padding: 18px !important;
+  margin-bottom: 18px !important;
+  overflow: hidden !important;
+}
+
+#settingsView:has(.user-management-list) .add-user-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+  min-width: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .add-user-roles,
+#settingsView:has(.user-management-list) .role-checkbox-grid.add-user-roles {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(88px, 1fr)) !important;
+  gap: 7px !important;
+  min-width: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-list {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-toolbar {
+  grid-template-columns: minmax(180px, auto) minmax(260px, 360px) !important;
+  padding: 14px 18px !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-search input {
+  min-width: 0 !important;
+  width: 100% !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-header,
+#settingsView:has(.user-management-list) .user-management-card {
+  grid-template-columns: minmax(230px, 1.15fr) 92px minmax(300px, 1.45fr) 116px !important;
+  gap: 12px !important;
+  padding-left: 18px !important;
+  padding-right: 18px !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-card {
+  min-height: 120px !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-person {
+  min-width: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-identity,
+#settingsView:has(.user-management-list) .user-management-identity strong,
+#settingsView:has(.user-management-list) .user-management-identity span {
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+#settingsView:has(.user-management-list) .role-checkbox-grid {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(86px, 1fr)) !important;
+  gap: 7px !important;
+  min-width: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .role-pill {
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 0 8px !important;
+  font-size: 10px !important;
+  overflow: hidden !important;
+}
+
+#settingsView:has(.user-management-list) .role-pill span {
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-actions {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  align-content: center !important;
+  gap: 7px !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-actions button {
+  width: 100% !important;
+  min-width: 0 !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 8px !important;
+  font-size: 11px !important;
+}
+
+#settingsView:has(.user-management-list) .user-delete-btn {
+  justify-self: stretch !important;
+}
+
+@media (max-width: 1180px) {
+  #settingsView:has(.user-management-list) .add-user-panel,
+  #settingsView:has(.user-management-list) .user-management-header,
+  #settingsView:has(.user-management-list) .user-management-card {
+    grid-template-columns: 1fr !important;
+  }
+
+  #settingsView:has(.user-management-list) .user-management-header {
+    display: none !important;
   }
 }
 

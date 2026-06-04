@@ -6,9 +6,7 @@ const ROLE_DEFINITIONS = Object.freeze([
   { key: "admin", dbName: "Admin", label: "Admin" },
   { key: "requestor", dbName: "Requester", label: "Requestor" },
   { key: "approver", dbName: "Approver", label: "Approver" },
-  { key: "inventory_manager", dbName: "Inventory Manager", label: "Inventory Manager" },
-  { key: "procurement", dbName: "Procurement Officer", label: "Procurement" },
-  { key: "viewer", dbName: "Viewer", label: "Viewer" }
+  { key: "inventory_manager", dbName: "Inventory Manager", label: "Inventory Manager" }
 ]);
 const ROLE_BY_KEY = new Map(ROLE_DEFINITIONS.map((role) => [role.key, role]));
 const ROLE_KEY_BY_DB_NAME = new Map(ROLE_DEFINITIONS.map((role) => [role.dbName.toLowerCase(), role.key]));

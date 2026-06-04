@@ -69,7 +69,7 @@ router.post("/requests", requirePermission(PERMISSIONS.CREATE_REQUESTS), async (
 });
 
 router.put("/requests/:requestId/items/:itemId/approval", requirePermission(PERMISSIONS.APPROVE_REQUESTS), async (req, res, next) => {
-  try { ok(res, await imsService.updateRequestApproval(req.params.requestId, req.params.itemId, req.body, req.auth.user.id)); } catch (error) { next(error); }
+  try { ok(res, await imsService.updateRequestApproval(req.params.requestId, req.params.itemId, req.body, req.auth)); } catch (error) { next(error); }
 });
 
 router.post("/requests/:requestId/items/:itemId/issue", requirePermission(PERMISSIONS.ISSUE_STOCK), async (req, res, next) => {
@@ -85,7 +85,7 @@ router.post("/transport-requests", requirePermission(PERMISSIONS.CREATE_REQUESTS
 });
 
 router.put("/transport-requests/:id/approval", requirePermission(PERMISSIONS.APPROVE_REQUESTS), async (req, res, next) => {
-  try { ok(res, await imsService.updateTransportApproval(req.params.id, req.body, req.auth.user.id)); } catch (error) { next(error); }
+  try { ok(res, await imsService.updateTransportApproval(req.params.id, req.body, req.auth)); } catch (error) { next(error); }
 });
 
 router.put("/transport-requests/:id/arrangement", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {

@@ -360,13 +360,15 @@ async function listRequests() {
   return groupLines(rows, "requestId", "items");
 }
 
-async function updateRequestApproval(requestNumber, itemId, input, userId) {
+async function updateRequestApproval(requestNumber, itemId, input, authContext) {
+  const userId = authContext?.user?.id;
   const status = String(input.status || "").trim();
   if (!["Approved", "Rejected"].includes(status)) throwBadRequest("Approval status must be Approved or Rejected.");
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
     const { request, item } = await getRequestLineForUpdate(connection, requestNumber, itemId);
+    assertLineManagerApprovalAccess(request, authContext);
     if (["Issued", "Partially Issued"].includes(item.line_status)) {
       throwBadRequest("Issued request lines cannot be changed by approval.");
     }
@@ -708,7 +710,8 @@ async function createTransportRequest(input, userId) {
   }
 }
 
-async function updateTransportApproval(id, input, userId) {
+async function updateTransportApproval(id, input, authContext) {
+  const userId = authContext?.user?.id;
   const status = String(input.status || "").trim();
   if (!["Approved", "Rejected"].includes(status)) throwBadRequest("Transport approval status must be Approved or Rejected.");
   const arrangementStatus = status === "Rejected" ? "Cancelled" : undefined;
@@ -716,6 +719,7 @@ async function updateTransportApproval(id, input, userId) {
   try {
     await connection.beginTransaction();
     const transport = await getTransportForUpdate(connection, id);
+    assertLineManagerApprovalAccess(transport, authContext);
     if (arrangementStatus) {
       await connection.execute(
         `UPDATE transport_requests
@@ -1398,7 +1402,7 @@ async function getItemByCode(connection, code, fallback = {}) {
 async function getRequestLineForUpdate(connection, requestNumber, itemId) {
   const [rows] = await connection.execute(
     `SELECT r.id AS requestId, r.request_number, r.requester_user_id AS requesterUserId,
-            u.email AS requesterEmail, ri.*
+            u.email AS requesterEmail, r.line_manager_email AS managerEmail, ri.*
      FROM requests r
      LEFT JOIN users u ON u.id = r.requester_user_id
      JOIN request_items ri ON ri.request_id = r.id
@@ -1409,7 +1413,7 @@ async function getRequestLineForUpdate(connection, requestNumber, itemId) {
   const row = rows[0];
   if (!row) throwBadRequest("Request item not found.");
   return {
-    request: { id: row.requestId, request_number: row.request_number, requesterUserId: row.requesterUserId, requesterEmail: row.requesterEmail },
+    request: { id: row.requestId, request_number: row.request_number, requesterUserId: row.requesterUserId, requesterEmail: row.requesterEmail, managerEmail: row.managerEmail },
     item: row
   };
 }
@@ -1417,7 +1421,8 @@ async function getRequestLineForUpdate(connection, requestNumber, itemId) {
 async function getTransportForUpdate(connection, id) {
   const [rows] = await connection.execute(
     `SELECT tr.id, tr.request_number, tr.approval_status, tr.status,
-            tr.requester_user_id AS requesterUserId, u.email AS requesterEmail
+            tr.requester_user_id AS requesterUserId, u.email AS requesterEmail,
+            tr.line_manager_email AS managerEmail
      FROM transport_requests tr
      LEFT JOIN users u ON u.id = tr.requester_user_id
      WHERE tr.id = ?
@@ -1426,6 +1431,19 @@ async function getTransportForUpdate(connection, id) {
   );
   if (!rows[0]) throwBadRequest("Transport request not found.");
   return rows[0];
+}
+
+function assertLineManagerApprovalAccess(record = {}, authContext = {}) {
+  const roles = (authContext.roles || []).map((role) => String(role || "").toLowerCase());
+  if (roles.includes("admin")) return;
+
+  const userEmail = cleanEmail(authContext.user?.email);
+  const managerEmail = cleanEmail(record.managerEmail || record.line_manager_email);
+  if (userEmail && managerEmail && userEmail === managerEmail) return;
+
+  const error = new Error("This request is assigned to another line manager.");
+  error.statusCode = 403;
+  throw error;
 }
 
 async function recomputeRequestStatuses(connection, requestId, userId) {

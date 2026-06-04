@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=approvals-buttons-1">
+  <link rel="stylesheet" href="css/styles.css?v=auth-roles-1">
 </head>
 <body>
   <div class="app-shell">
@@ -333,28 +333,14 @@
       </section>
 
       <section class="view" id="transportView">
-        <div class="card table-card">
-          <div class="section-title"><h2>Goods Transport</h2><p>Goods, equipment, stock, furniture, or other physical item movements.</p><button class="secondary" type="button" data-history-page="transport">History</button></div>
-          <div class="table-wrap"><table><thead><tr><th>ID</th><th>Requester</th><th>Line Manager Email</th><th>Required Date</th><th>Pickup Time</th><th>Pickup</th><th>Drop-off</th><th>Goods / Items</th><th>Quantity / Weight / Size</th><th>Vehicle</th><th>Purpose / Notes</th><th>Approval</th><th>Arrangement</th><th>Action</th></tr></thead><tbody id="goodsTransportTable"></tbody></table></div>
-        </div>
-        <div class="card table-card">
-          <div class="section-title"><h2>Travel Requests</h2><p>Official staff travel outside the city or longer planned duty travel.</p><button class="secondary" type="button" data-history-page="transport">History</button></div>
-          <div class="table-wrap"><table><thead><tr><th>ID</th><th>Requester</th><th>Line Manager Email</th><th>Travel Date</th><th>Departure Time</th><th>Return Date</th><th>Pickup</th><th>Destination City / Area</th><th>Trip Duration</th><th>Advance Required</th><th>Travelers</th><th>Vehicle</th><th>Purpose / Notes</th><th>Approval</th><th>Arrangement</th><th>Action</th></tr></thead><tbody id="travelTransportTable"></tbody></table></div>
-        </div>
-        <div class="card table-card">
-          <div class="section-title"><h2>Local Visit / Meeting Transport</h2><p>In-city meetings, field visits, errands, and same-day official movements.</p><button class="secondary" type="button" data-history-page="transport">History</button></div>
-          <div class="table-wrap"><table><thead><tr><th>ID</th><th>Requester</th><th>Line Manager Email</th><th>Visit Date</th><th>Departure</th><th>Return</th><th>Pickup</th><th>Meeting / Visit Location</th><th>Expected Duration</th><th>Passengers</th><th>Vehicle</th><th>Purpose / Notes</th><th>Approval</th><th>Arrangement</th><th>Action</th></tr></thead><tbody id="localTransportTable"></tbody></table></div>
+        <div class="transport-board-card">
+          <div class="transport-board" id="transportBoard" aria-label="Transport request board"></div>
         </div>
       </section>
 
       <section class="view" id="approvalsView">
-        <div class="card table-card">
-          <div class="section-title"><h2>Inventory Request Approvals</h2><p>Pending item requests assigned to line managers for approval.</p><button class="secondary" type="button" data-history-page="approvals">History</button></div>
-          <div class="table-wrap"><table><thead><tr><th>Request ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Date</th><th>Status</th><th>Action</th></tr></thead><tbody id="inventoryApprovalsTable"></tbody></table></div>
-        </div>
-        <div class="card table-card">
-          <div class="section-title"><h2>Transport Request Approvals</h2><p>Pending transport requests awaiting line manager approval.</p></div>
-          <div class="table-wrap"><table><thead><tr><th>ID</th><th>Type</th><th>Requester</th><th>Line Manager Email</th><th>Date</th><th>Pickup</th><th>Destination</th><th>Purpose / Notes</th><th>Status</th><th>Action</th></tr></thead><tbody id="transportApprovalsTable"></tbody></table></div>
+        <div class="approvals-board-card">
+          <div class="approvals-board" id="approvalsBoard" aria-label="Request approval board"></div>
         </div>
       </section>
 
@@ -485,11 +471,21 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="approvalDetailModal" aria-hidden="true">
+    <div class="card modal-card approval-detail-card">
+      <div class="modal-head">
+        <div class="section-title"><h2 id="approvalDetailTitle">Request details</h2><p id="approvalDetailSubtitle">Review the full request before approving or rejecting.</p></div>
+        <button class="icon-btn" id="closeApprovalDetail" type="button" aria-label="Close request details"><i data-lucide="x"></i></button>
+      </div>
+      <div id="approvalDetailContent"></div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="js/firebase-config.js?v=firebase-1"></script>
   <script src="js/inventory data/progressive.js?v=inventory-split-1"></script>
   <script src="js/inventory data/rwhu.js?v=inventory-split-1"></script>
   <script src="js/inventory data/stationary.js?v=inventory-split-1"></script>
-  <script src="js/script.js?v=type-options-clean-3"></script>
+  <script src="js/script.js?v=auth-roles-1"></script>
 </body>
 </html>

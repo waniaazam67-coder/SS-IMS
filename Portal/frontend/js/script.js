@@ -8,25 +8,23 @@ const AVAILABLE_USER_ROLES = [
   { key: "admin", label: "admin" },
   { key: "requestor", label: "requestor" },
   { key: "approver", label: "approver" },
-  { key: "inventory_manager", label: "inventory_manager" },
-  { key: "procurement", label: "procurement" },
-  { key: "viewer", label: "viewer" }
+  { key: "inventory_manager", label: "inventory_manager" }
 ];
 const VIEW_ROLE_ACCESS = {
-  dashboard: ["admin", "viewer", "requestor", "approver", "inventory_manager", "procurement"],
-  requisition: ["admin", "requestor"],
-  requests: ["admin", "requestor", "approver", "inventory_manager"],
+  dashboard: ["admin", "inventory_manager"],
+  requisition: ["admin", "requestor", "approver", "inventory_manager"],
+  requests: ["admin"],
   approvals: ["admin", "approver"],
-  inventory: ["admin", "inventory_manager", "viewer"],
+  inventory: ["admin", "inventory_manager"],
   stockIn: ["admin", "inventory_manager"],
   issue: ["admin", "inventory_manager"],
   grn: ["admin", "inventory_manager"],
-  po: ["admin", "procurement"],
-  vendors: ["admin", "procurement"],
-  transport: ["admin", "requestor", "approver", "inventory_manager"],
-  reports: ["admin", "viewer"],
+  po: ["admin", "inventory_manager"],
+  vendors: ["admin", "inventory_manager"],
+  transport: ["admin", "inventory_manager"],
+  reports: ["admin"],
   settings: ["admin"],
-  history: ["admin", "viewer", "requestor", "approver", "inventory_manager", "procurement"]
+  history: ["admin"]
 };
 let seedTxCounter = 0;
 let currentUser = {
@@ -100,7 +98,6 @@ function normalizeRoleKey(role) {
   const value = String(role || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   if (value === "requester") return "requestor";
   if (value === "inventory_manager") return "inventory_manager";
-  if (value === "procurement_officer") return "procurement";
   return value;
 }
 
@@ -116,6 +113,10 @@ function hasRole(role) {
 function canAccessView(view) {
   const allowedRoles = VIEW_ROLE_ACCESS[view] || [];
   return allowedRoles.some((role) => hasRole(role));
+}
+
+function firstAccessibleView() {
+  return Object.keys(VIEW_ROLE_ACCESS).find((view) => canAccessView(view)) || "requisition";
 }
 
 async function ensureFirebaseReady() {
@@ -1029,6 +1030,11 @@ function applyAdminVisibility() {
   document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
     item.hidden = !canAccessView(item.dataset.view);
   });
+  document.querySelectorAll(".nav-section").forEach((section) => {
+    const items = Array.from(section.querySelectorAll(".nav-item[data-view]"));
+    if (!items.length) return;
+    section.hidden = items.every((item) => item.hidden);
+  });
 }
 
 function applyTheme(theme) {
@@ -1243,6 +1249,12 @@ function money(value) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function quantityValue(value) {
+  if (value === null || value === undefined || value === "") return "0";
+  const number = Number(value || 0);
+  return Number.isNaN(number) ? String(value) : String(Math.round(number));
+}
+
 function formatDate(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -1381,7 +1393,7 @@ function syncSelectOptions(scope = document) {
   const poSelect = document.getElementById("poSelect");
   const selectedPo = poSelect.value;
   const receivablePos = state.purchaseOrders.filter(canReceivePo);
-  setChoiceOptions(poSelect, "Select PO number", receivablePos, (po) => po.poNumber, (po) => `${po.poNumber} - ${poItemSummary(po)} (${money(remainingPoQuantity(po))} remaining)`);
+  setChoiceOptions(poSelect, "Select PO number", receivablePos, (po) => po.poNumber, (po) => `${po.poNumber} - ${poItemSummary(po)} (${quantityValue(remainingPoQuantity(po))} remaining)`);
   if (selectedPo && receivablePos.some((po) => po.poNumber === selectedPo)) poSelect.value = selectedPo;
 }
 
@@ -1477,8 +1489,9 @@ function updateTopbarBreadcrumb(view) {
 function setView(view) {
   if (!canAccessView(view)) {
     showToast("You do not have access to this section.", "error");
-    return;
+    view = firstAccessibleView();
   }
+  document.querySelector(".app-shell")?.setAttribute("data-active-view", view);
   document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
   document.getElementById(`${view}View`).classList.add("active");
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
@@ -1799,7 +1812,7 @@ function renderDashboard() {
   setText("kpiTotalGRNs", state.grns.length);
   setText("kpiInventoryItems", state.items.length);
   setText("kpiItemCategories", categories().length);
-  setText("kpiAcceptedQty", money(state.grns.reduce((sum, grn) => sum + Number(grn.qtyAccepted || 0), 0)));
+  setText("kpiAcceptedQty", quantityValue(state.grns.reduce((sum, grn) => sum + Number(grn.qtyAccepted || 0), 0)));
   setText("kpiGRNLinkedPOs", linkedGrnPOs.size);
   setText("kpiManualGRNs", state.grns.filter((grn) => !grn.poNumber).length);
   setText("pendingApprovalCount", pendingRequests.length);
@@ -1893,7 +1906,7 @@ function renderRequests() {
         <td>${escapeHtml(item.itemCode)}</td>
         <td>${escapeHtml(item.itemName)}</td>
         <td>${escapeHtml(item.type || "")}</td>
-        <td>${escapeHtml(item.quantity)}</td>
+        <td>${quantityValue(item.quantity)}</td>
         <td>${statusBadge(item.approvalStatus)}</td>
         <td>${statusBadge(item.issuanceStatus)}</td>
         <td>${formatDate(request.date)}</td>
@@ -1932,7 +1945,7 @@ function requestTrackingRow({ request, item }) {
       <td>${escapeHtml(item.itemCode)}</td>
       <td>${escapeHtml(item.itemName)}</td>
       <td>${escapeHtml(item.type || "")}</td>
-      <td>${escapeHtml(item.quantity)}</td>
+      <td>${quantityValue(item.quantity)}</td>
       <td>${statusBadge(item.approvalStatus)}</td>
       <td>${statusBadge(item.issuanceStatus)}</td>
       <td>${formatDate(request.date)}</td>
@@ -1961,7 +1974,7 @@ function renderInventory() {
   const start = (inventoryPage - 1) * INVENTORY_PAGE_SIZE;
   const pageRows = rows.slice(start, start + INVENTORY_PAGE_SIZE);
   document.getElementById("inventoryTable").innerHTML = pageRows.map((row) => `
-    <tr><td>${row.code}</td><td>${row.name}</td><td>${row.type}</td><td>${row.category}</td><td>${row.location}</td><td>${row.stock}</td><td>${statusBadge(row.status)}</td></tr>
+    <tr><td>${row.code}</td><td>${row.name}</td><td>${row.type}</td><td>${row.category}</td><td>${row.location}</td><td>${quantityValue(row.stock)}</td><td>${statusBadge(row.status)}</td></tr>
   `).join("") || emptyRow(7);
   document.getElementById("inventoryPageInfo").textContent = `Page ${inventoryPage} of ${pageCount} - ${rows.length} item${rows.length === 1 ? "" : "s"}`;
   document.getElementById("inventoryPrev").disabled = inventoryPage === 1;
@@ -1976,9 +1989,10 @@ function renderIssue() {
       const approvedQty = Number(item.quantityApproved || item.quantity || 0);
       const issuedQty = Number(item.quantityIssued || 0);
       const remainingQty = Math.max(approvedQty - issuedQty, 0) || Number(item.quantity || 0);
+      const remainingQtyDisplay = quantityValue(remainingQty);
       return `<tr>
-        <td>${request.requestId}</td><td>${item.itemCode} - ${item.itemName}</td><td>${request.location}</td><td>${remainingQty}</td><td>${available}</td>
-        <td><input class="table-input" type="number" min="1" max="${remainingQty}" value="${remainingQty}" id="qty-${item.id}"></td>
+        <td>${request.requestId}</td><td>${item.itemCode} - ${item.itemName}</td><td>${request.location}</td><td>${remainingQtyDisplay}</td><td>${quantityValue(available)}</td>
+        <td><input class="table-input" type="number" min="1" max="${remainingQtyDisplay}" value="${remainingQtyDisplay}" id="qty-${item.id}"></td>
         <td><input class="table-input" placeholder="Issued by" id="by-${item.id}"></td>
         <td><button class="tiny success" onclick="issueItem('${request.requestId}','${item.id}')">Issue</button></td>
       </tr>`;
@@ -1993,13 +2007,13 @@ function renderPO() {
       <td>${formatDate(po.issueDate || po.date)}</td>
       <td>${po.vendorName}</td>
       <td>${escapeHtml(poItemSummary(po))}</td>
-      <td>${money(po.quantityOrdered ?? po.quantity)}</td>
+      <td>${quantityValue(po.quantityOrdered ?? po.quantity)}</td>
       <td>${money(po.unitPrice)}</td>
       <td>${money(po.poAmount ?? po.total)}</td>
       <td>${statusBadge(po.status)}</td>
       <td>${formatDate(po.arrivedBy)}</td>
       <td>${po.location || ""}</td>
-      <td>${money(po.quantityReceived)}</td>
+      <td>${quantityValue(po.quantityReceived)}</td>
       <td class="po-cancel-reason">${escapeHtml(cancellationReason(po.notesRemarks) || "")}</td>
       <td class="button-cell">
         <button class="tiny" onclick="printPO('${po.poNumber}')">Print</button>
@@ -2171,7 +2185,7 @@ function renderPurchaseOrderSheet(po) {
                   <strong>${escapeHtml(itemDescription || item.itemCode || "Item / service")}</strong>
                   ${item.itemCode ? `<span>Item ID: ${escapeHtml(item.itemCode)}</span>` : ""}
                 </td>
-                <td>${money(item.quantityOrdered ?? item.quantity)}</td>
+                <td>${quantityValue(item.quantityOrdered ?? item.quantity)}</td>
                 <td>Rs. ${money(item.unitPrice)}</td>
                 <td>Rs. ${money(lineTotal)}</td>
               </tr>`;
@@ -2292,7 +2306,7 @@ async function savePendingPO() {
 
 function renderGRN() {
   document.getElementById("grnTable").innerHTML = state.grns.map((grn) => `
-    <tr><td>${grn.grnNumber}</td><td>${grn.poNumber || "Manual"}</td><td>${grn.itemCode || ""}</td><td>${grn.itemName || grn.description || grn.itemType || "Specification only"}</td><td>${grn.location}</td><td>${money(grn.qtyReceived)}</td><td>${money(grn.qtyAccepted)}</td><td>${grn.receivedBy}</td><td>${formatDate(grn.date)}</td><td class="button-cell"><button class="tiny" onclick="printGRN('${escapeHtml(grn.grnNumber)}')">Print</button></td></tr>
+    <tr><td>${grn.grnNumber}</td><td>${grn.poNumber || "Manual"}</td><td>${grn.itemCode || ""}</td><td>${grn.itemName || grn.description || grn.itemType || "Specification only"}</td><td>${grn.location}</td><td>${quantityValue(grn.qtyReceived)}</td><td>${quantityValue(grn.qtyAccepted)}</td><td>${grn.receivedBy}</td><td>${formatDate(grn.date)}</td><td class="button-cell"><button class="tiny" onclick="printGRN('${escapeHtml(grn.grnNumber)}')">Print</button></td></tr>
   `).join("") || emptyRow(10);
 }
 
@@ -2349,9 +2363,9 @@ function renderGrnSheet(grn) {
             <tr>
               <td><strong>${escapeHtml(description)}</strong>${grn.notes ? `<span>${escapeHtml(grn.notes)}</span>` : ""}</td>
               <td>${escapeHtml(grn.itemCode || po.itemCode || "")}</td>
-              <td>${money(received)}</td>
-              <td>${money(accepted)}</td>
-              <td>${money(rejected)}</td>
+              <td>${quantityValue(received)}</td>
+              <td>${quantityValue(accepted)}</td>
+              <td>${quantityValue(rejected)}</td>
             </tr>
           </tbody>
         </table>
@@ -2386,7 +2400,7 @@ function applySelectedPoToGrn() {
   const lines = poLineItems(po).filter((item) => remainingPoLineQuantity(item) > 0);
   lineSelect.innerHTML = `<option value="">Select PO item</option>${lines.map((item, index) => `
     <option value="${escapeHtml(item.lineId || "")}" ${index === 0 ? "selected" : ""}>
-      ${escapeHtml(item.itemCode || "Item")} - ${escapeHtml(item.itemName || item.specifications || "")} (${money(remainingPoLineQuantity(item))} remaining)
+      ${escapeHtml(item.itemCode || "Item")} - ${escapeHtml(item.itemName || item.specifications || "")} (${quantityValue(remainingPoLineQuantity(item))} remaining)
     </option>
   `).join("")}`;
   applySelectedPoLineToGrn();
@@ -2412,8 +2426,8 @@ function applySelectedPoLineToGrn() {
   const remaining = remainingPoLineQuantity(selectedLine);
   receivedInput.max = remaining || "";
   acceptedInput.max = remaining || "";
-  receivedInput.placeholder = remaining ? `Remaining: ${money(remaining)}` : "No quantity remaining";
-  acceptedInput.placeholder = remaining ? `Remaining: ${money(remaining)}` : "No quantity remaining";
+  receivedInput.placeholder = remaining ? `Remaining: ${quantityValue(remaining)}` : "No quantity remaining";
+  acceptedInput.placeholder = remaining ? `Remaining: ${quantityValue(remaining)}` : "No quantity remaining";
   receivedInput.value = remaining > 0 ? remaining : "";
   acceptedInput.value = remaining > 0 ? remaining : "";
 }
@@ -2429,29 +2443,6 @@ function applySelectedVendorToPo() {
   form.elements.accountNo.value = vendor?.accountNo || vendor?.account_no || "";
 }
 
-function renderTransport() {
-  const actionCell = (row) => {
-    if (row.approvalStatus !== "Approved") return `<td></td>`;
-    return `<td class="button-cell"><button class="tiny success" onclick="setTransport('${row.id}','Arranged')">Arrange</button><button class="tiny danger" onclick="setTransport('${row.id}','Cancelled')">Cancel</button></td>`;
-  };
-  const activeTransportRows = state.transportRequests.filter((row) => !isTransportHistory(row));
-  const goodsRows = activeTransportRows.filter((row) => row.transportType === "Goods Transport");
-  const travelRows = activeTransportRows.filter((row) => row.transportType === "Travel Request");
-  const localRows = activeTransportRows.filter((row) => row.transportType === "Local Visit / Meeting Transport");
-
-  document.getElementById("goodsTransportTable").innerHTML = goodsRows.map((row) => `
-    <tr><td>${row.id}</td><td>${row.requester}</td><td>${row.managerEmail || ""}</td><td>${formatDate(row.travelDate)}</td><td>${row.pickupTime || row.departureTime || ""}</td><td>${row.pickupLocation || ""}</td><td>${row.dropoffLocation || row.destination || ""}</td><td>${row.goodsDescription || ""}</td><td>${row.goodsQuantity || ""}</td><td>${row.vehicleType || ""}</td><td>${row.purpose || ""}</td><td>${statusBadge(row.approvalStatus)}</td><td>${statusBadge(row.arrangementStatus)}</td>${actionCell(row)}</tr>
-  `).join("") || emptyRow(14);
-
-  document.getElementById("travelTransportTable").innerHTML = travelRows.map((row) => `
-    <tr><td>${row.id}</td><td>${row.requester}</td><td>${row.managerEmail || ""}</td><td>${formatDate(row.travelDate)}</td><td>${row.departureTime || ""}</td><td>${formatDate(row.returnDate)}</td><td>${row.pickupLocation || ""}</td><td>${row.destinationCityArea || row.destination || ""}</td><td>${row.tripDuration || ""}</td><td>${row.advanceRequired || ""}</td><td>${row.travelers || row.passengers || ""}</td><td>${row.vehicleType || ""}</td><td>${row.purpose || ""}</td><td>${statusBadge(row.approvalStatus)}</td><td>${statusBadge(row.arrangementStatus)}</td>${actionCell(row)}</tr>
-  `).join("") || emptyRow(16);
-
-  document.getElementById("localTransportTable").innerHTML = localRows.map((row) => `
-    <tr><td>${row.id}</td><td>${row.requester}</td><td>${row.managerEmail || ""}</td><td>${formatDate(row.travelDate)}</td><td>${row.localDepartureTime || row.departureTime || ""}</td><td>${row.returnTime || ""}</td><td>${row.pickupLocation || ""}</td><td>${row.meetingVisitLocation || row.destination || ""}</td><td>${row.expectedDuration || ""}</td><td>${row.localPassengers || row.passengers || ""}</td><td>${row.vehicleType || ""}</td><td>${row.purpose || ""}</td><td>${statusBadge(row.approvalStatus)}</td><td>${statusBadge(row.arrangementStatus)}</td>${actionCell(row)}</tr>
-  `).join("") || emptyRow(15);
-}
-
 function isTransportHistory(row = {}) {
   return ["Arranged", "Completed", "Cancelled"].includes(row.arrangementStatus)
     || row.approvalStatus === "Rejected";
@@ -2461,46 +2452,261 @@ function transportDestination(row) {
   return row.dropoffLocation || row.destinationCityArea || row.meetingVisitLocation || row.destination || "";
 }
 
+function transportBoardRows() {
+  return state.transportRequests.map((request) => ({
+    kind: "transport",
+    request,
+    requestId: request.id,
+    requester: request.requester,
+    department: request.department || request.transportType || "Transport",
+    date: request.travelDate || request.date,
+    approvalStatus: request.approvalStatus,
+    arrangementStatus: request.arrangementStatus,
+    label: request.transportType || "Transport Request"
+  }));
+}
+
+function transportColumnFor(row) {
+  if (row.approvalStatus === "Rejected" || row.arrangementStatus === "Cancelled") return "cancelled";
+  if (row.arrangementStatus === "Completed") return "completed";
+  if (row.arrangementStatus === "Arranged") return "arranged";
+  if (row.approvalStatus === "Approved") return "approved";
+  return "pending";
+}
+
+function renderTransportCard(row) {
+  return `<button class="approval-kanban-card transport-kanban-card" type="button" data-transport-id="${escapeHtml(row.requestId)}">
+    <em>${escapeHtml(row.label)}</em>
+    <strong>${escapeHtml(row.requester || "Requester")}</strong>
+    <span><i data-lucide="map-pin"></i>${escapeHtml(transportDestination(row.request) || "Destination")}</span>
+    <span><i data-lucide="clock"></i>${escapeHtml(requestDateTime(row.date))}</span>
+  </button>`;
+}
+
+function renderTransport() {
+  const board = document.getElementById("transportBoard");
+  if (!board) return;
+  const columns = [
+    { key: "pending", title: "Pending", icon: "timer" },
+    { key: "approved", title: "Approved", icon: "check-circle-2" },
+    { key: "arranged", title: "Arranged", icon: "route" },
+    { key: "completed", title: "Completed", icon: "flag-checkered" },
+    { key: "cancelled", title: "Cancelled", icon: "x-circle" }
+  ];
+  const grouped = columns.reduce((acc, column) => ({ ...acc, [column.key]: [] }), {});
+  transportBoardRows().forEach((row) => grouped[transportColumnFor(row)].push(row));
+  board.innerHTML = columns.map((column) => `
+    <section class="approval-kanban-column transport-column ${column.key}">
+      <header>
+        <span><i data-lucide="${column.icon}"></i>${column.title}</span>
+        <div class="approval-column-tools">
+          <strong>${grouped[column.key].length}</strong>
+          <button class="approval-column-menu-btn" type="button" data-transport-menu="${column.key}" aria-label="${column.title} options" aria-expanded="false"><i data-lucide="ellipsis"></i></button>
+          <div class="approval-column-menu" data-transport-menu-panel="${column.key}" aria-hidden="true">
+            <button type="button" data-transport-refresh="${column.key}"><i data-lucide="refresh-cw"></i>Refresh</button>
+            <button type="button" data-transport-history="${column.key}"><i data-lucide="history"></i>Show history</button>
+          </div>
+        </div>
+      </header>
+      <div class="approval-kanban-list">
+        ${grouped[column.key].map(renderTransportCard).join("") || `<div class="approval-kanban-empty">No requests</div>`}
+      </div>
+    </section>
+  `).join("");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function closeTransportColumnMenus() {
+  document.querySelectorAll("[data-transport-menu-panel].show").forEach((menu) => {
+    menu.classList.remove("show");
+    menu.setAttribute("aria-hidden", "true");
+  });
+  document.querySelectorAll(".approval-column-menu-btn[aria-expanded='true'][data-transport-menu]").forEach((button) => {
+    button.setAttribute("aria-expanded", "false");
+  });
+}
+
+function transportColumnTitle(key) {
+  return {
+    pending: "Pending",
+    approved: "Approved",
+    arranged: "Arranged",
+    completed: "Completed",
+    cancelled: "Cancelled"
+  }[key] || "Transport";
+}
+
+function openTransportColumnHistory(columnKey) {
+  const rows = transportBoardRows().filter((row) => transportColumnFor(row) === columnKey);
+  const modal = document.getElementById("approvalDetailModal");
+  const content = document.getElementById("approvalDetailContent");
+  document.getElementById("approvalDetailTitle").textContent = `${transportColumnTitle(columnKey)} transport history`;
+  document.getElementById("approvalDetailSubtitle").textContent = `${rows.length} request${rows.length === 1 ? "" : "s"} in this section`;
+  content.innerHTML = `
+    <div class="approval-history-list">
+      ${rows.map((row) => `
+        <button class="approval-history-item" type="button" data-transport-history-item="${escapeHtml(row.requestId)}">
+          <span class="approval-history-type">${escapeHtml(row.label)}</span>
+          <strong>${escapeHtml(row.requester || "Requester")}</strong>
+          <span>${escapeHtml(transportDestination(row.request) || row.department || "Destination")}</span>
+          <time>${escapeHtml(requestDateTime(row.date))}</time>
+        </button>
+      `).join("") || `<div class="approval-kanban-empty">No requests</div>`}
+    </div>
+  `;
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+}
+
 function isPendingApproval(status) {
   return String(status || "").toLowerCase() === "pending";
 }
 
-function renderApprovals() {
-  const inventoryRows = state.requests.flatMap((request) => request.items
-    .filter((item) => isPendingApproval(item.approvalStatus))
-    .map((item) => ({ request, item })));
-  document.getElementById("inventoryApprovalsTable").innerHTML = inventoryRows.map(({ request, item }) => `
-    <tr>
-      <td>${escapeHtml(request.requestId)}</td>
-      <td>${escapeHtml(request.requester)}</td>
-      <td>${escapeHtml(request.department)}</td>
-      <td>${escapeHtml(request.managerEmail || "")}</td>
-      <td>${escapeHtml(request.location)}</td>
-      <td>${escapeHtml(item.itemCode)}</td>
-      <td>${escapeHtml(item.itemName)}</td>
-      <td>${escapeHtml(item.type || "")}</td>
-      <td>${escapeHtml(item.quantity)}</td>
-      <td>${formatDate(request.date)}</td>
-      <td>${statusBadge(item.approvalStatus)}</td>
-      <td class="button-cell">${isPendingApproval(item.approvalStatus) ? `<button class="tiny success" onclick="setRequestApproval('${request.requestId}','${item.id}','Approved')">Approve</button><button class="tiny danger" onclick="setRequestApproval('${request.requestId}','${item.id}','Rejected')">Reject</button>` : ""}</td>
-    </tr>
-  `).join("") || emptyRow(12);
+function isSameLocalDay(left, right = new Date()) {
+  const date = new Date(left);
+  if (Number.isNaN(date.getTime())) return false;
+  return date.getFullYear() === right.getFullYear()
+    && date.getMonth() === right.getMonth()
+    && date.getDate() === right.getDate();
+}
 
-  const transportRows = state.transportRequests.filter((row) => isPendingApproval(row.approvalStatus));
-  document.getElementById("transportApprovalsTable").innerHTML = transportRows.map((row) => `
-    <tr>
-      <td>${escapeHtml(row.id)}</td>
-      <td>${escapeHtml(row.transportType || "")}</td>
-      <td>${escapeHtml(row.requester || "")}</td>
-      <td>${escapeHtml(row.managerEmail || "")}</td>
-      <td>${formatDate(row.travelDate || row.date)}</td>
-      <td>${escapeHtml(row.pickupLocation || "")}</td>
-      <td>${escapeHtml(transportDestination(row))}</td>
-      <td>${escapeHtml(row.purpose || row.goodsDescription || "")}</td>
-      <td>${statusBadge(row.approvalStatus)}</td>
-      <td class="button-cell">${isPendingApproval(row.approvalStatus) ? `<button class="tiny success" onclick="setTransportApproval('${row.id}','Approved')">Approve</button><button class="tiny danger" onclick="setTransportApproval('${row.id}','Rejected')">Reject</button>` : ""}</td>
-    </tr>
-  `).join("") || emptyRow(10);
+function requestDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function lineManagerMatchesCurrentUser(request = {}) {
+  if (isAdmin) return true;
+  const userEmail = String(currentUser.email || "").trim().toLowerCase();
+  if (!userEmail) return false;
+  return String(request.managerEmail || "").trim().toLowerCase() === userEmail;
+}
+
+function approvalBoardRows() {
+  const inventoryRows = state.requests.filter(lineManagerMatchesCurrentUser).flatMap((request) => request.items.map((item) => ({
+    kind: "inventory",
+    request,
+    item,
+    id: `${request.requestId}-${item.id}`,
+    requestId: request.requestId,
+    itemId: item.id,
+    requester: request.requester,
+    department: request.department,
+    date: request.date,
+    status: item.approvalStatus,
+    managerEmail: request.managerEmail,
+    label: "Item Request"
+  })));
+  const transportRows = state.transportRequests.filter(lineManagerMatchesCurrentUser).map((request) => ({
+    kind: "transport",
+    request,
+    id: `transport-${request.id}`,
+    requestId: request.id,
+    requester: request.requester,
+    department: request.department || request.transportType || "Transport",
+    date: request.travelDate || request.date,
+    status: request.approvalStatus,
+    managerEmail: request.managerEmail,
+    label: request.transportType || "Transport Request"
+  }));
+  return [...inventoryRows, ...transportRows];
+}
+
+function approvalColumnFor(row) {
+  const status = String(row.status || "").toLowerCase();
+  if (status === "approved") return "approved";
+  if (status === "rejected") return "rejected";
+  if (isSameLocalDay(row.date)) return "new";
+  return "pending";
+}
+
+function renderApprovalCard(row) {
+  return `<button class="approval-kanban-card" type="button" data-approval-kind="${escapeHtml(row.kind)}" data-request-id="${escapeHtml(row.requestId)}" data-item-id="${escapeHtml(row.itemId || "")}">
+    <em>${escapeHtml(row.label)}</em>
+    <strong>${escapeHtml(row.requester || "Requester")}</strong>
+    <span><i data-lucide="building-2"></i>${escapeHtml(row.department || "Department")}</span>
+    <span><i data-lucide="clock"></i>${escapeHtml(requestDateTime(row.date))}</span>
+  </button>`;
+}
+
+function renderApprovals() {
+  const board = document.getElementById("approvalsBoard");
+  const columns = [
+    { key: "new", title: "New", icon: "sparkles" },
+    { key: "pending", title: "Pending", icon: "timer" },
+    { key: "approved", title: "Approved", icon: "check-circle-2" },
+    { key: "rejected", title: "Rejected", icon: "x-circle" }
+  ];
+  const grouped = columns.reduce((acc, column) => ({ ...acc, [column.key]: [] }), {});
+  approvalBoardRows().forEach((row) => grouped[approvalColumnFor(row)].push(row));
+  board.innerHTML = columns.map((column) => `
+    <section class="approval-kanban-column ${column.key}">
+      <header>
+        <span><i data-lucide="${column.icon}"></i>${column.title}</span>
+        <div class="approval-column-tools">
+          <strong>${grouped[column.key].length}</strong>
+          <button class="approval-column-menu-btn" type="button" data-approval-menu="${column.key}" aria-label="${column.title} options" aria-expanded="false"><i data-lucide="ellipsis"></i></button>
+          <div class="approval-column-menu" data-approval-menu-panel="${column.key}" aria-hidden="true">
+            <button type="button" data-approval-refresh="${column.key}"><i data-lucide="refresh-cw"></i>Refresh</button>
+            <button type="button" data-approval-history="${column.key}"><i data-lucide="history"></i>Show history</button>
+          </div>
+        </div>
+      </header>
+      <div class="approval-kanban-list">
+        ${grouped[column.key].map(renderApprovalCard).join("") || `<div class="approval-kanban-empty">No requests</div>`}
+      </div>
+    </section>
+  `).join("");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function closeApprovalColumnMenus() {
+  document.querySelectorAll(".approval-column-menu.show").forEach((menu) => {
+    menu.classList.remove("show");
+    menu.setAttribute("aria-hidden", "true");
+  });
+  document.querySelectorAll(".approval-column-menu-btn[aria-expanded='true']").forEach((button) => {
+    button.setAttribute("aria-expanded", "false");
+  });
+}
+
+function approvalColumnTitle(key) {
+  return {
+    new: "New",
+    pending: "Pending",
+    approved: "Approved",
+    rejected: "Rejected"
+  }[key] || "Requests";
+}
+
+function openApprovalColumnHistory(columnKey) {
+  const rows = approvalBoardRows().filter((row) => approvalColumnFor(row) === columnKey);
+  const modal = document.getElementById("approvalDetailModal");
+  const content = document.getElementById("approvalDetailContent");
+  const title = `${approvalColumnTitle(columnKey)} history`;
+  document.getElementById("approvalDetailTitle").textContent = title;
+  document.getElementById("approvalDetailSubtitle").textContent = `${rows.length} request${rows.length === 1 ? "" : "s"} in this section`;
+  content.innerHTML = `
+    <div class="approval-history-list">
+      ${rows.map((row) => `
+        <button class="approval-history-item" type="button" data-approval-kind="${escapeHtml(row.kind)}" data-request-id="${escapeHtml(row.requestId)}" data-item-id="${escapeHtml(row.itemId || "")}">
+          <span class="approval-history-type">${escapeHtml(row.label)}</span>
+          <strong>${escapeHtml(row.requester || "Requester")}</strong>
+          <span>${escapeHtml(row.department || "Department")}</span>
+          <time>${escapeHtml(requestDateTime(row.date))}</time>
+        </button>
+      `).join("") || `<div class="approval-kanban-empty">No requests</div>`}
+    </div>
+  `;
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
 }
 
 function renderVendors() {
@@ -2797,9 +3003,7 @@ function historyDetailGrid(entry) {
     ["Item name", item?.itemName || d.itemName],
     ["Item ID", item?.itemCode || d.itemCode || d.itemId],
     ["Type", item?.type || d.type],
-    ["Requested quantity", item?.quantity ?? d.quantity],
-    ["Approved quantity", item?.quantityApproved ?? d.quantityApproved],
-    ["Issued quantity", item?.quantityIssued ?? d.quantityIssued],
+    ["Requested quantity", quantityValue(item?.quantity ?? d.quantity)],
     ["Movement", d.movementNumber],
     ["Notes", d.notes || d.details]
   ];
@@ -2877,7 +3081,7 @@ window.issueItem = async function (requestId, itemId) {
   const remainingQty = Math.max(approvedQty - issuedQty, 0) || Number(item.quantity || 0);
   if (item.approvalStatus !== "Approved") return showToast("Approval is required before issuance.", "error");
   if (!qty || qty < 1) return showToast("Issue quantity must be greater than zero.", "error");
-  if (qty > remainingQty) return showToast(`Issue quantity cannot exceed remaining approved quantity (${remainingQty}).`, "error");
+  if (qty > remainingQty) return showToast(`Issue quantity cannot exceed remaining approved quantity (${quantityValue(remainingQty)}).`, "error");
   if (available < qty) return showToast("Stock unavailable. Mark this request for procurement.", "error");
   try {
     await apiRequest(`/requests/${encodeURIComponent(requestId)}/items/${encodeURIComponent(itemId)}/issue`, {
@@ -2902,16 +3106,117 @@ window.setTransport = async function (id, status) {
     });
     await loadBusinessData({ silent: true });
     render();
+    closeApprovalDetailModal();
     showToast(`Transport ${status.toLowerCase()}.`);
   } catch (error) {
     showToast(error.message, "error");
   }
 };
 
+function findInventoryApprovalLine(requestId, itemId) {
+  const request = state.requests.find((row) => String(row.requestId) === String(requestId));
+  const item = request?.items.find((row) => String(row.id) === String(itemId));
+  return { request, item };
+}
+
+function findTransportApprovalLine(requestId) {
+  return state.transportRequests.find((row) => String(row.id) === String(requestId));
+}
+
+function closeApprovalDetailModal() {
+  const modal = document.getElementById("approvalDetailModal");
+  if (!modal) return;
+  modal.classList.remove("show");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+function approvalDetailMarkup(details, actionMarkup) {
+  return `
+    <div class="approval-detail-grid">
+      ${details.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? "")}</strong></div>`).join("")}
+    </div>
+    <div class="approval-detail-actions">${actionMarkup}</div>
+  `;
+}
+
+window.openApprovalDetail = function (kind, requestId, itemId = "") {
+  if (kind === "transport") return openTransportApprovalDetail(requestId);
+  const { request, item } = findInventoryApprovalLine(requestId, itemId);
+  if (!request || !item) return showToast("Request item not found.", "error");
+  if (!lineManagerMatchesCurrentUser(request)) return showToast("This request is assigned to another line manager.", "error");
+  const modal = document.getElementById("approvalDetailModal");
+  const content = document.getElementById("approvalDetailContent");
+  document.getElementById("approvalDetailTitle").textContent = request.requestId || "Request details";
+  document.getElementById("approvalDetailSubtitle").textContent = `${request.requester || "Requester"} - ${request.department || "Department"} - ${requestDateTime(request.date)}`;
+  const details = [
+    ["Requester name", request.requester],
+    ["Department", request.department],
+    ["Request date and time", requestDateTime(request.date)],
+    ["Line manager email", request.managerEmail],
+    ["Requester email", request.requesterEmail],
+    ["Location", request.location],
+    ["Request ID", request.requestId],
+    ["Item ID", item.itemCode],
+    ["Item name", item.itemName],
+    ["Type", item.type],
+    ["Requested quantity", quantityValue(item.quantity)]
+  ];
+  content.innerHTML = approvalDetailMarkup(details, isPendingApproval(item.approvalStatus) ? `
+        <button class="primary" type="button" onclick="setRequestApproval('${escapeHtml(request.requestId)}','${escapeHtml(item.id)}','Approved')"><i data-lucide="check"></i>Approve</button>
+        <button class="danger-btn" type="button" onclick="setRequestApproval('${escapeHtml(request.requestId)}','${escapeHtml(item.id)}','Rejected')"><i data-lucide="x"></i>Reject</button>
+      ` : statusBadge(item.approvalStatus));
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+  if (window.lucide) window.lucide.createIcons();
+};
+
+function openTransportApprovalDetail(requestId) {
+  const request = findTransportApprovalLine(requestId);
+  if (!request) return showToast("Transport request not found.", "error");
+  if (!lineManagerMatchesCurrentUser(request)) return showToast("This request is assigned to another line manager.", "error");
+  const modal = document.getElementById("approvalDetailModal");
+  const content = document.getElementById("approvalDetailContent");
+  document.getElementById("approvalDetailTitle").textContent = request.id || "Transport request";
+  document.getElementById("approvalDetailSubtitle").textContent = `${request.requester || "Requester"} - ${request.transportType || "Transport"} - ${requestDateTime(request.travelDate || request.date)}`;
+  const details = [
+    ["Requester name", request.requester],
+    ["Request type", request.transportType],
+    ["Request date and time", requestDateTime(request.travelDate || request.date)],
+    ["Line manager email", request.managerEmail],
+    ["Pickup location", request.pickupLocation],
+    ["Destination", transportDestination(request)],
+    ["Pickup / departure time", request.pickupTime || request.departureTime || request.localDepartureTime],
+    ["Return date / time", request.returnDate || request.returnTime],
+    ["Vehicle", request.vehicleType],
+    ["Goods / items", request.goodsDescription],
+    ["Quantity / passengers", request.goodsQuantity || request.travelers || request.passengers || request.localPassengers],
+    ["Purpose / notes", request.purpose],
+    ["Arrangement status", request.arrangementStatus]
+  ];
+  content.innerHTML = approvalDetailMarkup(details, isPendingApproval(request.approvalStatus) ? `
+      <button class="primary" type="button" onclick="setTransportApproval('${escapeHtml(request.id)}','Approved')"><i data-lucide="check"></i>Approve</button>
+      <button class="danger-btn" type="button" onclick="setTransportApproval('${escapeHtml(request.id)}','Rejected')"><i data-lucide="x"></i>Reject</button>
+    ` : transportDetailActions(request));
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function transportDetailActions(request) {
+  if (request.approvalStatus === "Approved" && request.arrangementStatus === "Pending") {
+    return `
+      <button class="primary" type="button" onclick="setTransport('${escapeHtml(request.id)}','Arranged')"><i data-lucide="route"></i>Arrange</button>
+      <button class="danger-btn" type="button" onclick="setTransport('${escapeHtml(request.id)}','Cancelled')"><i data-lucide="x"></i>Cancel</button>
+    `;
+  }
+  return `<div class="approval-detail-status-row">${statusBadge(request.approvalStatus)} ${statusBadge(request.arrangementStatus)}</div>`;
+}
+
 window.setRequestApproval = async function (requestId, itemId, status) {
   const request = state.requests.find((row) => row.requestId === requestId);
   const item = request?.items.find((row) => String(row.id) === String(itemId));
   if (!request || !item) return showToast("Request item not found.", "error");
+  if (!lineManagerMatchesCurrentUser(request)) return showToast("This request is assigned to another line manager.", "error");
   try {
     await apiRequest(`/requests/${encodeURIComponent(requestId)}/items/${encodeURIComponent(itemId)}/approval`, {
       method: "PUT",
@@ -2919,6 +3224,7 @@ window.setRequestApproval = async function (requestId, itemId, status) {
     });
     await loadBusinessData({ silent: true });
     render();
+    closeApprovalDetailModal();
     showToast(`Request ${status.toLowerCase()}.`);
   } catch (error) {
     showToast(error.message, "error");
@@ -2928,6 +3234,7 @@ window.setRequestApproval = async function (requestId, itemId, status) {
 window.setTransportApproval = async function (id, status) {
   const row = state.transportRequests.find((item) => String(item.id) === String(id));
   if (!row) return showToast("Transport request not found.", "error");
+  if (!lineManagerMatchesCurrentUser(row)) return showToast("This request is assigned to another line manager.", "error");
   try {
     await apiRequest(`/transport-requests/${encodeURIComponent(id)}/approval`, {
       method: "PUT",
@@ -3151,6 +3458,8 @@ document.getElementById("markNotificationsRead").addEventListener("click", async
 
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".kebab-wrap")) closeDashboardMenus();
+  if (!event.target.closest(".approval-column-tools")) closeApprovalColumnMenus();
+  if (!event.target.closest(".approval-column-tools")) closeTransportColumnMenus();
   if (!event.target.closest("#notificationCenter") && !event.target.closest("#notificationBtn")) closeNotificationCenter();
   if (!event.target.closest("#profileMenu") && !event.target.closest("#profileBtn")) {
     const pm = document.getElementById("profileMenu");
@@ -3166,9 +3475,12 @@ document.addEventListener("pointerdown", unlockNotificationSound, { once: true }
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeDashboardMenus();
+    closeApprovalColumnMenus();
+    closeTransportColumnMenus();
     closeNotificationCenter();
     closePoCancelModal();
     closeDeleteUserModal();
+    closeApprovalDetailModal();
   }
 });
 
@@ -3308,6 +3620,84 @@ document.getElementById("cancelDeleteUser")?.addEventListener("click", closeDele
 document.getElementById("confirmDeleteUser")?.addEventListener("click", confirmDeleteUser);
 document.getElementById("deleteUserModal")?.addEventListener("click", (event) => {
   if (event.target.id === "deleteUserModal") closeDeleteUserModal();
+});
+document.getElementById("approvalsBoard")?.addEventListener("click", (event) => {
+  const menuButton = event.target.closest("[data-approval-menu]");
+  if (menuButton) {
+    const key = menuButton.dataset.approvalMenu;
+    const menu = document.querySelector(`[data-approval-menu-panel="${escapeCssIdentifier(key)}"]`);
+    const willOpen = !menu?.classList.contains("show");
+    closeApprovalColumnMenus();
+    if (menu && willOpen) {
+      menu.classList.add("show");
+      menu.setAttribute("aria-hidden", "false");
+      menuButton.setAttribute("aria-expanded", "true");
+    }
+    return;
+  }
+  const refreshButton = event.target.closest("[data-approval-refresh]");
+  if (refreshButton) {
+    closeApprovalColumnMenus();
+    loadBusinessData({ silent: true }).then(() => {
+      render();
+      showToast(`${approvalColumnTitle(refreshButton.dataset.approvalRefresh)} refreshed.`);
+    }).catch((error) => showToast(error.message || "Unable to refresh requests.", "error"));
+    return;
+  }
+  const historyButton = event.target.closest("[data-approval-history]");
+  if (historyButton) {
+    closeApprovalColumnMenus();
+    openApprovalColumnHistory(historyButton.dataset.approvalHistory);
+    return;
+  }
+  const card = event.target.closest(".approval-kanban-card");
+  if (!card) return;
+  window.openApprovalDetail(card.dataset.approvalKind, card.dataset.requestId, card.dataset.itemId);
+});
+document.getElementById("transportBoard")?.addEventListener("click", (event) => {
+  const menuButton = event.target.closest("[data-transport-menu]");
+  if (menuButton) {
+    const key = menuButton.dataset.transportMenu;
+    const menu = document.querySelector(`[data-transport-menu-panel="${escapeCssIdentifier(key)}"]`);
+    const willOpen = !menu?.classList.contains("show");
+    closeTransportColumnMenus();
+    if (menu && willOpen) {
+      menu.classList.add("show");
+      menu.setAttribute("aria-hidden", "false");
+      menuButton.setAttribute("aria-expanded", "true");
+    }
+    return;
+  }
+  const refreshButton = event.target.closest("[data-transport-refresh]");
+  if (refreshButton) {
+    closeTransportColumnMenus();
+    loadBusinessData({ silent: true }).then(() => {
+      render();
+      showToast(`${transportColumnTitle(refreshButton.dataset.transportRefresh)} refreshed.`);
+    }).catch((error) => showToast(error.message || "Unable to refresh transport requests.", "error"));
+    return;
+  }
+  const historyButton = event.target.closest("[data-transport-history]");
+  if (historyButton) {
+    closeTransportColumnMenus();
+    openTransportColumnHistory(historyButton.dataset.transportHistory);
+    return;
+  }
+  const card = event.target.closest(".transport-kanban-card");
+  if (!card) return;
+  openTransportApprovalDetail(card.dataset.transportId);
+});
+document.getElementById("closeApprovalDetail")?.addEventListener("click", closeApprovalDetailModal);
+document.getElementById("approvalDetailModal")?.addEventListener("click", (event) => {
+  if (event.target.id === "approvalDetailModal") closeApprovalDetailModal();
+  const historyItem = event.target.closest(".approval-history-item");
+  if (historyItem) {
+    if (historyItem.dataset.transportHistoryItem) {
+      openTransportApprovalDetail(historyItem.dataset.transportHistoryItem);
+      return;
+    }
+    window.openApprovalDetail(historyItem.dataset.approvalKind, historyItem.dataset.requestId, historyItem.dataset.itemId);
+  }
 });
 
 document.getElementById("stockInCategory").addEventListener("change", () => {
@@ -3493,7 +3883,7 @@ document.getElementById("grnForm").addEventListener("submit", async (event) => {
   if (!canReceivePo(po)) return showToast("Select an open PO with remaining quantity.", "error");
   if (!poLine) return showToast("Select a PO item to receive.", "error");
   if (accepted > received) return showToast("Accepted quantity cannot exceed received quantity.", "error");
-  if (accepted > remaining) return showToast(`Accepted quantity cannot exceed remaining PO quantity (${money(remaining)}).`, "error");
+  if (accepted > remaining) return showToast(`Accepted quantity cannot exceed remaining PO quantity (${quantityValue(remaining)}).`, "error");
   try {
     const result = await apiRequest("/grn", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     await loadBusinessData({ silent: true });

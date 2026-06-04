@@ -38,9 +38,7 @@ VALUES
   ('Admin', 'Full system administration access.', 1),
   ('Requester', 'Can create and track own inventory and transport requests.', 1),
   ('Approver', 'Can approve or reject assigned requests.', 1),
-  ('Inventory Manager', 'Can manage inventory, stock movement, issue stock, and GRNs.', 1),
-  ('Procurement Officer', 'Can manage vendors and purchase orders.', 1),
-  ('Viewer', 'Read-only dashboard and reports access.', 1)
+  ('Inventory Manager', 'Can manage inventory, stock movement, issue stock, GRNs, and procurement.', 1)
 ON DUPLICATE KEY UPDATE
   description = VALUES(description),
   is_system = VALUES(is_system);
@@ -84,20 +82,8 @@ WHERE r.name = 'Approver';
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
-JOIN permissions p ON p.permission_key IN ('inventory.view', 'inventory.manage', 'inventory.issue', 'grn.manage', 'audit.view')
+JOIN permissions p ON p.permission_key IN ('request.create', 'inventory.view', 'inventory.manage', 'inventory.issue', 'grn.manage', 'purchase_order.manage', 'purchase_order.approve', 'audit.view')
 WHERE r.name = 'Inventory Manager';
-
-INSERT IGNORE INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM roles r
-JOIN permissions p ON p.permission_key IN ('inventory.view', 'purchase_order.manage', 'grn.manage')
-WHERE r.name = 'Procurement Officer';
-
-INSERT IGNORE INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id
-FROM roles r
-JOIN permissions p ON p.permission_key IN ('inventory.view', 'audit.view')
-WHERE r.name = 'Viewer';
 
 INSERT INTO users (full_name, email, department_id, location_id, is_line_manager, is_active)
 VALUES ('IMS Admin Placeholder', 'admin@example.com', 5, 1, 1, 1)

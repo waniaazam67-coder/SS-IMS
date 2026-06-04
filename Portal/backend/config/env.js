@@ -4,8 +4,10 @@ const dotenv = require("dotenv");
 const env = process.env.NODE_ENV || "development";
 const databaseName = "ims_system";
 
-// Load environment-specific .env file from Portal/.env
-dotenv.config({ path: path.resolve(__dirname, `../../.env/.env.${env}`) });
+// Load environment-specific .env file from Portal/.env, then fall back to .env.
+const envDir = path.resolve(__dirname, "../../.env");
+dotenv.config({ path: path.join(envDir, `./.env.${env}`) });
+dotenv.config({ path: path.join(envDir, ".env") });
 
 const config = {
   env,
