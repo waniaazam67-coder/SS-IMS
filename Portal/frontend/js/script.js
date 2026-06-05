@@ -25,7 +25,6 @@ const VIEW_ROLE_ACCESS = {
   po: ["admin", "inventory_manager"],
   vendors: ["admin", "inventory_manager"],
   transport: ["admin", "inventory_manager"],
-  reports: ["admin"],
   settings: ["admin"],
   history: ["admin"]
 };
@@ -358,17 +357,6 @@ function nextId(prefix, rows) {
     return Math.max(highest, value || 0);
   }, 0);
   return `${prefix}-${String(max + 1).padStart(3, "0")}`;
-}
-
-function audit(action, entityType, entityId, details) {
-  state.auditLogs.unshift({
-    id: nextId("AUD", state.auditLogs),
-    date: new Date().toISOString(),
-    action,
-    entityType,
-    entityId,
-    details
-  });
 }
 
 function findItem(code) {
@@ -991,7 +979,6 @@ async function loadBusinessData({ silent = false } = {}) {
     ["transportRequests", "/transport-requests"],
     ["purchaseOrders", "/purchase-orders"],
     ["grns", "/grn"],
-    ["auditLogs", "/audit"],
     ["inventory", "/inventory"]
   ];
   const results = await Promise.allSettled(endpoints.map(([, path]) => apiRequest(path)));
@@ -1037,7 +1024,6 @@ function businessDataSignature() {
     purchaseOrders: [state.purchaseOrders.length, latest(state.purchaseOrders, "issueDate"), state.purchaseOrders[0]?.poNumber || ""],
     grns: [state.grns.length, latest(state.grns), state.grns[0]?.grnNumber || ""],
     inventory: [state.inventoryRows?.length || 0, latest(state.inventoryRows || [], "code")],
-    auditLogs: [state.auditLogs.length, latest(state.auditLogs)]
   });
 }
 
@@ -1077,14 +1063,16 @@ function startAutoRefresh() {
 
 function applyAdminVisibility() {
   document.querySelectorAll(".admin-only").forEach((element) => {
-    element.hidden = false;
+    element.hidden = !isAdmin;
   });
   document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
-    item.hidden = false;
-    item.classList.toggle("unauthorized-nav", !canAccessView(item.dataset.view));
+    item.hidden = !canAccessView(item.dataset.view);
+    item.classList.remove("unauthorized-nav");
   });
   document.querySelectorAll(".nav-section").forEach((section) => {
-    section.hidden = false;
+    const items = Array.from(section.querySelectorAll(".nav-item[data-view]"));
+    if (!items.length) return;
+    section.hidden = items.every((item) => item.hidden);
   });
 }
 
@@ -1094,57 +1082,6 @@ function applyTheme(theme) {
   localStorage.setItem(THEME_STORAGE_KEY, normalized);
   if (!settingsState.theme) settingsState.theme = {};
   settingsState.theme.portal_theme = normalized === "dark" ? "Dark" : "Light";
-}
-
-function notificationSeed() {
-  const pendingRequests = state.requests.filter((request) => request.items.some((item) => item.approvalStatus === "Pending")).slice(0, 2);
-  const lowStockRows = stockRows().filter((row) => row.status !== "OK").slice(0, 2);
-  const items = [
-    {
-      id: "approval-required",
-      tab: "direct",
-      unread: true,
-      avatar: "IM",
-      title: "Approval required for an inventory request",
-      body: pendingRequests[0] ? `${pendingRequests[0].requestId} from ${pendingRequests[0].requester || "Requester"}` : "A new request is waiting for manager approval",
-      meta: "Requests • Pending approval",
-      age: "now",
-      reply: pendingRequests[0] ? `Review ${pendingRequests[0].requestId} and approve or reject the requested items.` : ""
-    },
-    {
-      id: "stock-ready",
-      tab: "direct",
-      unread: true,
-      avatar: "ST",
-      avatarClass: "green",
-      title: "Inventory team has a stock update",
-      body: lowStockRows[0] ? `${lowStockRows[0].name || lowStockRows[0].code} is ${lowStockRows[0].status.toLowerCase()}` : "Stock validation is ready for review",
-      meta: "Inventory • Stock availability",
-      age: "today"
-    },
-    {
-      id: "po-approval",
-      tab: "watching",
-      unread: true,
-      avatar: "PO",
-      title: "Purchase order notification",
-      body: state.purchaseOrders[0] ? `${state.purchaseOrders[0].poNumber} is ${state.purchaseOrders[0].status}` : "A PO will appear here when procurement starts",
-      meta: "Procurement - PO approval",
-      age: "1 day ago"
-    },
-    {
-      id: "grn-complete",
-      tab: "watching",
-      unread: false,
-      avatar: "GR",
-      avatarClass: "teal",
-      title: "GRN completion update",
-      body: state.grns[0] ? `${state.grns[0].grnNumber} was received by ${state.grns[0].receivedBy || "Inventory"}` : "Completed receiving updates will appear here",
-      meta: "GRN • Goods receiving",
-      age: "2 days ago"
-    }
-  ];
-  return items;
 }
 
 function notificationAudience(item = {}) {
@@ -1167,6 +1104,54 @@ function notificationTone(item = {}) {
   if (type.includes("approved") || type.includes("grn")) return "green";
   if (type.includes("stock") || type.includes("transport")) return "teal";
   return "";
+}
+
+function notificationType(item = {}) {
+  return String(item.type || item.metadata?.type || "").toLowerCase();
+}
+
+function notificationReference(item = {}) {
+  const metadata = item.metadata || {};
+  return metadata.requestNumber
+    || metadata.requestId
+    || metadata.poNumber
+    || metadata.grnNumber
+    || metadata.movementNumber
+    || item.reference
+    || "";
+}
+
+function viewForNotification(item = {}) {
+  const type = notificationType(item);
+  const entity = String(item.entityType || "").toLowerCase();
+  if (type.includes("approval_required")) return canAccessView("approvals") ? "approvals" : "requisition";
+  if (entity.includes("transport") || type.includes("transport")) return "transport";
+  if (entity.includes("purchase_order") || type.includes("po_")) return "po";
+  if (entity.includes("grn") || type.includes("grn")) return "grn";
+  if (entity.includes("inventory") || type.includes("stock_low")) return "inventory";
+  if (entity.includes("stock_movement") || type.includes("stock_issued")) return canAccessView("issue") ? "issue" : "requisition";
+  if (entity.includes("request") || type.includes("request")) return canAccessView("requisition") ? "requisition" : "requests";
+  return firstAccessibleView();
+}
+
+function scrollToNotificationTarget(item = {}) {
+  const reference = String(notificationReference(item) || "").trim();
+  if (!reference) return;
+  requestAnimationFrame(() => {
+    const escapedReference = window.CSS?.escape ? CSS.escape(reference) : reference.replace(/["\\]/g, "\\$&");
+    const target = document.querySelector(`[data-request-id="${escapedReference}"], [data-reference-id="${escapedReference}"]`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.classList.add("notification-target-highlight");
+    setTimeout(() => target.classList.remove("notification-target-highlight"), 2200);
+  });
+}
+
+function openNotificationTarget(item = {}) {
+  const view = viewForNotification(item);
+  closeNotificationCenter();
+  setView(view);
+  scrollToNotificationTarget(item);
 }
 
 function unlockNotificationSound() {
@@ -1742,7 +1727,6 @@ const breadcrumbByView = {
   vendors: ["Procurement", "Vendors"],
   transport: ["Requests", "Transport Requests"],
   approvals: ["Approvals"],
-  reports: ["Reports"],
   settings: ["Settings"],
   history: ["History"]
 };
@@ -1759,6 +1743,9 @@ function updateTopbarBreadcrumb(view) {
 }
 
 function setView(view) {
+  if (!canAccessView(view)) {
+    view = firstAccessibleView();
+  }
   if (!document.getElementById(`${view}View`)) view = firstAccessibleView();
   document.querySelector(".app-shell")?.setAttribute("data-active-view", view);
   document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
@@ -2023,7 +2010,6 @@ function handleDashboardAction(action) {
     "open-po": () => setView("po"),
     "pending-grns": () => setView("grn"),
     "transport-requests": () => setView("transport"),
-    "audit-logs": () => setView("reports"),
     "procurement-export": exportProcurementCsv,
     "refresh": () => {
       render();
@@ -2078,7 +2064,6 @@ function renderDashboard() {
   setText("kpiClosedDeliveredPO", closedDeliveredPOs.length);
   setText("kpiPartialDeliveredPO", partialDeliveredPOs.length);
   setText("kpiCancelledPO", cancelledPOs.length);
-  setText("kpiAudit", state.auditLogs.length);
   setText("kpiStockLines", currentStockRows.length);
   setText("kpiInStock", currentStockRows.filter((row) => row.stock > 0).length);
   setText("kpiStockLow", currentStockRows.filter((row) => row.status === "Restock needed").length);
@@ -2184,7 +2169,7 @@ function renderRequests() {
   const pageRows = rows.slice(start, start + REQUESTS_PAGE_SIZE);
   setTableContent("requestsTable", pageRows.map(({ request, item }) => {
     return `
-      <tr>
+      <tr data-request-id="${escapeHtml(request.requestId)}">
         <td>${escapeHtml(request.requestId)}</td>
         <td>${escapeHtml(request.requester)}</td>
         <td>${escapeHtml(request.department)}</td>
@@ -2223,7 +2208,7 @@ function requestLineRows(requests) {
 
 function requestTrackingRow({ request, item }) {
   return `
-    <tr>
+    <tr data-request-id="${escapeHtml(request.requestId)}">
       <td>${escapeHtml(request.requestId)}</td>
       <td>${escapeHtml(request.requester)}</td>
       <td>${escapeHtml(request.department)}</td>
@@ -2323,7 +2308,7 @@ function renderPO() {
     return;
   }
   setTableContent("poTable", state.purchaseOrders.map((po) => `
-    <tr>
+    <tr data-reference-id="${escapeHtml(po.poNumber)}">
       <td>${po.poNumber}</td>
       <td>${formatDate(po.issueDate || po.date)}</td>
       <td>${po.vendorName}</td>
@@ -2636,7 +2621,7 @@ function renderGRN() {
     return;
   }
   setTableContent("grnTable", state.grns.map((grn) => `
-    <tr><td>${grn.grnNumber}</td><td>${grn.poNumber || "Manual"}</td><td>${grn.itemCode || ""}</td><td>${grn.itemName || grn.description || grn.itemType || "Specification only"}</td><td>${grn.location}</td><td>${quantityValue(grn.qtyReceived)}</td><td>${quantityValue(grn.qtyAccepted)}</td><td>${grn.receivedBy}</td><td>${formatDate(grn.date)}</td><td class="button-cell"><button class="tiny" onclick="printGRN('${escapeHtml(grn.grnNumber)}')">Print</button></td></tr>
+    <tr data-reference-id="${escapeHtml(grn.grnNumber)}"><td>${grn.grnNumber}</td><td>${grn.poNumber || "Manual"}</td><td>${grn.itemCode || ""}</td><td>${grn.itemName || grn.description || grn.itemType || "Specification only"}</td><td>${grn.location}</td><td>${quantityValue(grn.qtyReceived)}</td><td>${quantityValue(grn.qtyAccepted)}</td><td>${grn.receivedBy}</td><td>${formatDate(grn.date)}</td><td class="button-cell"><button class="tiny" onclick="printGRN('${escapeHtml(grn.grnNumber)}')">Print</button></td></tr>
   `).join("") || emptyStateRow(10, "No GRN records yet", "Goods received notes will appear here after receiving stock."));
 }
 
@@ -3133,21 +3118,6 @@ window.editVendor = function (vendorId) {
   if (window.lucide) window.lucide.createIcons();
 };
 
-function renderAudit() {
-  if (businessDataLoading) {
-    showTableSkeleton("auditTable", 4, 8);
-    return;
-  }
-  const auditError = sourceError("auditLogs");
-  if (auditError) {
-    setTableContent("auditTable", errorStateRow(4, auditError));
-    return;
-  }
-  setTableContent("auditTable", state.auditLogs.map((log) => `
-    <tr><td>${new Date(log.date).toLocaleString()}</td><td>${log.action}</td><td>${log.entityType} ${log.entityId}</td><td>${log.details}</td></tr>
-  `).join("") || emptyStateRow(4, "No audit activity yet", "System changes and stock movements will appear here."));
-}
-
 function detailsText(details) {
   if (!details) return "";
   if (typeof details === "string") {
@@ -3532,32 +3502,6 @@ function sourceError(...keys) {
   return keys.map((key) => businessDataErrors[key]).find(Boolean) || "";
 }
 
-function viewLabel(view) {
-  const active = document.querySelector(`.nav-item[data-view="${view}"] span:last-child`);
-  return active ? active.textContent : (breadcrumbByView[view]?.at(-1) || "Section");
-}
-
-function renderAuthorizationState() {
-  document.querySelectorAll(".view.authorization-blocked").forEach((panel) => {
-    panel.classList.remove("authorization-blocked");
-    panel.querySelector(".authorization-state")?.remove();
-  });
-  const activePanel = document.querySelector(".view.active");
-  if (!activePanel) return;
-  const view = activePanel.id.replace(/View$/, "");
-  if (canAccessView(view)) return;
-  activePanel.classList.add("authorization-blocked");
-  activePanel.querySelector(".authorization-state")?.remove();
-  const stateNode = document.createElement("div");
-  stateNode.className = "authorization-state";
-  stateNode.innerHTML = `
-    <span class="authorization-state-icon"><i data-lucide="lock-keyhole"></i></span>
-    <strong>You are not authorized for this Section</strong>
-    <p>You do not have permission to view ${escapeHtml(viewLabel(view))}. Please contact an administrator if you need access.</p>
-  `;
-  activePanel.appendChild(stateNode);
-}
-
 function render() {
   syncSelectOptions();
   renderCategoryTabs();
@@ -3573,11 +3517,9 @@ function render() {
   renderTransport();
   renderApprovals();
   renderVendors();
-  renderAudit();
   renderHistoryPage();
   if (document.getElementById("settingsView").classList.contains("active")) renderSettings();
   if (document.getElementById("notificationCenter").classList.contains("show")) renderNotificationCenter();
-  renderAuthorizationState();
   updateNotificationBadge();
   if (window.lucide) window.lucide.createIcons();
 }
@@ -3969,7 +3911,10 @@ document.getElementById("notificationCenter").addEventListener("click", (event) 
   }
   const entry = event.target.closest("[data-notification-id]");
   if (entry) {
-    markNotificationRead(entry.dataset.notificationId);
+    const item = notifications.find((row) => String(row.id) === String(entry.dataset.notificationId));
+    markNotificationRead(entry.dataset.notificationId).finally(() => {
+      if (item) openNotificationTarget(item);
+    });
   }
 });
 

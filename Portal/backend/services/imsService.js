@@ -49,6 +49,30 @@ async function createNotification(connection, input = {}) {
   );
 }
 
+async function userByEmail(connection, email) {
+  const normalizedEmail = cleanEmail(email);
+  if (!normalizedEmail) return null;
+  const [rows] = await connection.execute(
+    `SELECT id, email
+       FROM users
+      WHERE LOWER(email) = ? AND is_active = 1 AND deleted_at IS NULL
+      LIMIT 1`,
+    [normalizedEmail]
+  );
+  return rows[0] || null;
+}
+
+async function notifyEmailRecipient(connection, email, input = {}) {
+  const normalizedEmail = cleanEmail(email);
+  if (!normalizedEmail) return;
+  const user = await userByEmail(connection, normalizedEmail);
+  await createNotification(connection, {
+    ...input,
+    recipientUserId: user?.id || null,
+    recipientEmail: user?.email || normalizedEmail
+  });
+}
+
 async function usersWithPermission(connection, permission) {
   const [rows] = await connection.execute(
     `SELECT DISTINCT u.id, u.email
@@ -621,6 +645,7 @@ async function createRequest(input, userId) {
     await createNotification(connection, {
       key: `request-submitted-${requestNumber}-${requestResult.insertId}`,
       recipientUserId: requesterId || userId,
+      recipientEmail: normalizedInput.requesterEmail || null,
       title: `Request ${requestNumber} submitted`,
       body: `${normalizedInput.requestedBy || "Requester"} submitted ${items.length} item request${items.length === 1 ? "" : "s"}.`,
       entityType: "requests",
@@ -628,15 +653,20 @@ async function createRequest(input, userId) {
       metadata: { type: "request_submitted", requestNumber, audience: "direct" },
       createdBy: userId
     });
-    await notifyPermissionUsers(connection, "request.approve", {
+    const approvalNotification = {
       key: `request-approval-${requestNumber}-${requestResult.insertId}`,
       title: `Approval required for ${requestNumber}`,
       body: `${normalizedInput.requestedBy || "Requester"} submitted ${items.length} item request${items.length === 1 ? "" : "s"}.`,
       entityType: "requests",
       entityId: requestResult.insertId,
-      metadata: { type: "request_submitted", requestNumber, audience: "direct" },
+      metadata: { type: "request_approval_required", requestNumber, audience: "direct" },
       createdBy: userId
-    });
+    };
+    if (normalizedInput.lineManagerEmail) {
+      await notifyEmailRecipient(connection, normalizedInput.lineManagerEmail, approvalNotification);
+    } else {
+      await notifyPermissionUsers(connection, "request.approve", approvalNotification);
+    }
     await connection.commit();
     return { requestId: requestNumber };
   } catch (error) {
@@ -1269,16 +1299,6 @@ async function refreshPurchaseOrderStatus(connection, purchaseOrderId) {
   await connection.execute("UPDATE purchase_orders SET status = ? WHERE id = ?", [status, purchaseOrderId]);
 }
 
-async function listAudit() {
-  const [rows] = await pool.execute(
-    `SELECT a.changed_at AS date, a.action, a.table_name AS entityType, a.record_id AS entityId, a.new_values AS details
-     FROM audit_logs a
-     ORDER BY a.changed_at DESC
-     LIMIT 200`
-  );
-  return rows;
-}
-
 async function postStockMovement(input, userId, type) {
   const connection = await pool.getConnection();
   try {
@@ -1615,6 +1635,5 @@ module.exports = {
   createPurchaseOrder,
   cancelPurchaseOrder,
   listGrns,
-  createGrn,
-  listAudit
+  createGrn
 };

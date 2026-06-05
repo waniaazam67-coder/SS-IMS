@@ -1105,8 +1105,7 @@ VALUES
   ('inventory.issue', 'inventory', 'Issue approved stock to requesters.'),
   ('purchase_order.manage', 'procurement', 'Create and update purchase orders.'),
   ('purchase_order.approve', 'procurement', 'Approve purchase orders.'),
-  ('grn.manage', 'procurement', 'Create GRNs and post accepted quantities.'),
-  ('audit.view', 'audit', 'View audit and approval history.')
+  ('grn.manage', 'procurement', 'Create GRNs and post accepted quantities.')
 ON DUPLICATE KEY UPDATE module = VALUES(module), description = VALUES(description);
 
 DELETE FROM permissions
@@ -1122,7 +1121,8 @@ WHERE permission_key IN (
   'manage_purchase_orders',
   'approve_purchase_orders',
   'manage_grns',
-  'view_audit_logs'
+  'view_audit_logs',
+  'audit.view'
 );
 
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
@@ -1131,7 +1131,7 @@ FROM roles r
 JOIN permissions p ON (
   r.name = 'Admin'
   OR (r.name = 'Requester' AND p.permission_key IN ('request.create', 'inventory.view'))
-  OR (r.name = 'Inventory Manager' AND p.permission_key IN ('request.create', 'inventory.view', 'inventory.manage', 'inventory.issue', 'grn.manage', 'purchase_order.manage', 'purchase_order.approve', 'audit.view'))
+  OR (r.name = 'Inventory Manager' AND p.permission_key IN ('request.create', 'inventory.view', 'inventory.manage', 'inventory.issue', 'grn.manage', 'purchase_order.manage', 'purchase_order.approve'))
   OR (r.name = 'Approver' AND p.permission_key IN ('request.create', 'request.approve', 'inventory.view'))
 );
 

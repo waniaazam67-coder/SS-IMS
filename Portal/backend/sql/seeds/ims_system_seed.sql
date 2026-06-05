@@ -55,8 +55,7 @@ VALUES
   ('inventory.issue', 'inventory', 'Issue stock against approved requests.'),
   ('purchase_order.manage', 'procurement', 'Manage vendors and purchase orders.'),
   ('purchase_order.approve', 'procurement', 'Approve purchase orders.'),
-  ('grn.manage', 'procurement', 'Create goods received notes and post accepted stock.'),
-  ('audit.view', 'audit', 'View audit and movement reports.')
+  ('grn.manage', 'procurement', 'Create goods received notes and post accepted stock.')
 ON DUPLICATE KEY UPDATE
   module = VALUES(module),
   description = VALUES(description);
@@ -82,7 +81,7 @@ WHERE r.name = 'Approver';
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
-JOIN permissions p ON p.permission_key IN ('request.create', 'inventory.view', 'inventory.manage', 'inventory.issue', 'grn.manage', 'purchase_order.manage', 'purchase_order.approve', 'audit.view')
+JOIN permissions p ON p.permission_key IN ('request.create', 'inventory.view', 'inventory.manage', 'inventory.issue', 'grn.manage', 'purchase_order.manage', 'purchase_order.approve')
 WHERE r.name = 'Inventory Manager';
 
 INSERT INTO users (full_name, email, department_id, location_id, is_line_manager, is_active)

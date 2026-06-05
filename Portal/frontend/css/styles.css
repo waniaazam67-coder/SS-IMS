@@ -1497,6 +1497,11 @@ body[data-theme="dark"] .dashboard-scroll thead th {
   display: none !important;
 }
 
+.nav-item[hidden],
+.nav-section[hidden] {
+  display: none !important;
+}
+
 .tile-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5520,7 +5525,6 @@ textarea:focus,
 
 .dashboard-grid,
 .stats-grid,
-.report-grid,
 .compact-overview {
   gap: 14px;
 }
@@ -5785,6 +5789,20 @@ tbody td {
 
 tbody tr:hover {
   background: #f7faf5;
+}
+
+tr.notification-target-highlight {
+  animation: notificationTargetPulse 2.2s ease;
+}
+
+@keyframes notificationTargetPulse {
+  0%, 100% {
+    box-shadow: none;
+  }
+  18%, 72% {
+    box-shadow: inset 4px 0 0 var(--primary), 0 0 0 1px rgba(20, 163, 83, 0.18);
+    background: rgba(20, 163, 83, 0.08);
+  }
 }
 
 .empty-state,
@@ -6294,7 +6312,6 @@ tbody tr:hover {
 #inventoryView table,
 #issueView table,
 #vendorsView table,
-#reportsView table,
 #grnView table {
   min-width: 900px !important;
 }
@@ -6473,8 +6490,7 @@ th {
 #inventoryView table,
 #issueView table,
 #grnView table,
-#vendorsView table,
-#reportsView table {
+#vendorsView table {
   min-width: 980px !important;
 }
 
@@ -7818,20 +7834,80 @@ th {
   font-weight: 500 !important;
 }
 
-/* Keep saved PO action column visually consistent with the rest of the table. */
+/* Sidebar brand and footer alignment */
+.sidebar .brand {
+  align-items: center;
+}
+
+.sidebar .brand span {
+  font-size: 24px;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.sidebar .brand span::before,
+.sidebar .brand span::after {
+  content: none !important;
+  display: none !important;
+}
+
+.sidebar .brand-mark {
+  width: 28px;
+  height: 28px;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0;
+  color: var(--primary);
+}
+
+.sidebar .brand-mark svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2.2;
+}
+
+.sidebar-footer {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar-footer .nav-section,
+.sidebar-footer .nav-item {
+  width: 100%;
+}
+
+.sidebar-footer .nav-item,
+.sidebar-footer .nav-item:not(.has-more) {
+  margin-left: 0;
+  margin-right: 0;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+/* Keep saved PO actions compact inside the table grid. */
+#poView .table-wrap:has(#poTable) {
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+}
+
+#poView .table-wrap:has(#poTable) table {
+  min-width: 1120px !important;
+  table-layout: auto !important;
+}
+
 #poView #poTable td:last-child,
 #poView .table-wrap:has(#poTable) th:last-child,
 #poView .table-wrap:has(#poTable) td:last-child {
   position: static !important;
   right: auto !important;
   z-index: auto !important;
-  min-width: 92px !important;
-  width: 92px !important;
-  max-width: 92px !important;
-  padding: 8px !important;
-  background: inherit !important;
+  min-width: 78px !important;
+  width: 78px !important;
+  max-width: 78px !important;
+  padding: 8px 6px !important;
+  background: transparent !important;
   box-shadow: none !important;
-  text-align: left !important;
+  text-align: center !important;
   vertical-align: middle !important;
 }
 
@@ -7840,30 +7916,48 @@ th {
 }
 
 #poView .table-wrap:has(#poTable) td:last-child {
-  background: var(--ref-surface) !important;
+  background: transparent !important;
+}
+
+#poView .table-wrap:has(#poTable) th:nth-child(12),
+#poView .table-wrap:has(#poTable) td:nth-child(12) {
+  min-width: 170px !important;
+  width: 170px !important;
+  max-width: 210px !important;
 }
 
 #poTable .button-cell {
-  width: auto !important;
+  width: 78px !important;
   min-width: 0 !important;
-  max-width: none !important;
-  display: flex !important;
+  max-width: 78px !important;
+  display: inline-flex !important;
   align-items: center !important;
-  justify-content: flex-start !important;
-  gap: 6px !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  flex-wrap: wrap !important;
+  padding: 0 !important;
 }
 
 #poTable .tiny {
   width: auto !important;
-  min-width: 58px !important;
-  height: 28px !important;
-  min-height: 28px !important;
-  padding: 0 10px !important;
-  border-radius: 8px !important;
-  background: var(--ref-surface-soft) !important;
+  min-width: 52px !important;
+  height: 26px !important;
+  min-height: 26px !important;
+  padding: 0 9px !important;
+  border: 1px solid var(--ref-border) !important;
+  border-radius: 7px !important;
+  background: #ffffff !important;
   color: var(--ref-text) !important;
   box-shadow: none !important;
-  font-size: 12px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+}
+
+#poTable .tiny:hover {
+  border-color: rgba(20, 163, 83, 0.35) !important;
+  background: #f7faf5 !important;
+  color: var(--primary) !important;
 }
 
 /* Final compact fit for User Management. */
@@ -7995,52 +8089,6 @@ body[data-theme="dark"] .skeleton {
 
 body[data-theme="dark"] .skeleton::after {
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
-}
-
-.view.authorization-blocked > :not(.authorization-state) {
-  display: none !important;
-}
-
-.authorization-state {
-  display: grid;
-  place-items: center;
-  gap: 10px;
-  min-height: min(520px, calc(100vh - 220px));
-  padding: 36px 24px;
-  color: #64748b;
-  text-align: center;
-}
-
-.authorization-state-icon {
-  display: inline-grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: #eef2f7;
-  color: #0f766e;
-}
-
-.authorization-state-icon svg {
-  width: 25px;
-  height: 25px;
-}
-
-.authorization-state strong {
-  color: #0f172a;
-  font-size: 20px;
-  font-weight: 850;
-}
-
-.authorization-state p {
-  max-width: 460px;
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
-}
-
-.nav-item.unauthorized-nav {
-  opacity: 0.72;
 }
 
 /* Internal chat */

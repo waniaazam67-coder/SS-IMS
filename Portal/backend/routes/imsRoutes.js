@@ -112,8 +112,4 @@ router.post("/grn", requirePermission(PERMISSIONS.MANAGE_GRNS), async (req, res,
   try { ok(res, await imsService.createGrn(req.body, req.auth.user.id), 201); } catch (error) { next(error); }
 });
 
-router.get("/audit", requirePermission(PERMISSIONS.VIEW_AUDIT_LOGS), async (req, res, next) => {
-  try { ok(res, { auditLogs: await imsService.listAudit() }); } catch (error) { next(error); }
-});
-
 module.exports = router;
