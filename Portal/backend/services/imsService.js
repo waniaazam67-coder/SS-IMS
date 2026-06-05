@@ -1029,11 +1029,19 @@ async function createPurchaseOrder(input, userId) {
     const tax = subtotal * taxRate / 100;
     const statusMap = { Open: "Draft", Ordered: "Sent", Closed: "Closed" };
     const status = statusMap[input.status] || input.status || "Draft";
+    const allowedStatuses = new Set(["Draft", "Pending Approval", "Approved", "Sent", "Partially Received", "Received", "Cancelled", "Closed"]);
+    if (!allowedStatuses.has(status)) throwBadRequest(`Unsupported PO status: ${status}.`);
+    const vendorId = positive(input.vendorId, "Vendor");
+    const [vendorRows] = await connection.execute(
+      `SELECT id FROM vendors WHERE id = ? AND deleted_at IS NULL LIMIT 1`,
+      [vendorId]
+    );
+    if (!vendorRows.length) throwBadRequest("Selected vendor was not found. Refresh vendors and try again.");
     const [poResult] = await connection.execute(
       `INSERT INTO purchase_orders (po_number, issue_date, vendor_id, status, expected_date, delivery_location_id,
         subtotal_amount, tax_amount, total_amount, notes_remarks, created_by, updated_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [poNumber, input.issueDate || null, positive(input.vendorId, "Vendor"), status, input.arrivedBy || null, locationId, subtotal, tax, subtotal + tax, input.notesRemarks || null, userId, userId]
+      [poNumber, input.issueDate || null, vendorId, status, input.arrivedBy || null, locationId, subtotal, tax, subtotal + tax, input.notesRemarks || null, userId, userId]
     );
     for (const line of preparedLines) {
       await connection.execute(

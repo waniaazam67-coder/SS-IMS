@@ -4,6 +4,9 @@ const SETTINGS_API_BASE = "/api/settings";
 const THEME_STORAGE_KEY = "imsTheme";
 const BUSINESS_DATA_API_BASE = "/api";
 const AUTO_REFRESH_INTERVAL_MS = 10000;
+const CHAT_POLL_INTERVAL_MS = 5000;
+const OFFICIAL_EMAIL_DOMAIN = "@shehersaaz.org.pk";
+const OFFICIAL_EMAIL_MESSAGE = "Only Shehersaaz official email addresses are allowed.";
 const AVAILABLE_USER_ROLES = [
   { key: "admin", label: "admin" },
   { key: "requestor", label: "requestor" },
@@ -43,6 +46,10 @@ let businessDataLoadedForUser = "";
 let autoRefreshTimer = null;
 let isAutoRefreshing = false;
 let lastBusinessDataSignature = "";
+let businessDataLoading = true;
+let businessDataError = "";
+const businessDataErrors = {};
+let dashboardDefaultHtml = "";
 
 const seedState = {
   locations: [],
@@ -77,6 +84,14 @@ let activeNotificationTab = "direct";
 let unreadOnly = false;
 let notifications = [];
 let notificationsLoaded = false;
+let chatUsers = [];
+let chatConversations = [];
+let chatMessages = [];
+let chatUsersLoaded = false;
+let chatLoadError = "";
+let selectedChatUserId = "";
+let chatSearchTerm = "";
+let chatPollTimer = null;
 const knownUnreadNotificationIds = new Set();
 let notificationSoundUnlocked = false;
 let pendingPurchaseOrder = null;
@@ -101,6 +116,10 @@ function normalizeRoleKey(role) {
   return value;
 }
 
+function isOfficialEmail(email) {
+  return String(email || "").trim().toLowerCase().endsWith(OFFICIAL_EMAIL_DOMAIN);
+}
+
 function userRoles() {
   return [...new Set((currentUser.roles || []).map(normalizeRoleKey).filter(Boolean))];
 }
@@ -111,6 +130,7 @@ function hasRole(role) {
 }
 
 function canAccessView(view) {
+  if (view === "history") return canAccessView(previousHistoryView || "dashboard");
   const allowedRoles = VIEW_ROLE_ACCESS[view] || [];
   return allowedRoles.some((role) => hasRole(role));
 }
@@ -146,13 +166,25 @@ async function requirePortalSession() {
     redirectToLogin();
     return null;
   }
+  if (!isOfficialEmail(user.email)) {
+    localStorage.removeItem("firebase_token");
+    if (window.imsFirebaseSignOut) await window.imsFirebaseSignOut();
+    sessionStorage.setItem("imsAuthError", OFFICIAL_EMAIL_MESSAGE);
+    redirectToLogin();
+    return null;
+  }
   const token = await user.getIdToken();
   localStorage.setItem("firebase_token", token);
   try {
     const response = await fetch("/api/auth/me", {
       headers: { Authorization: `Bearer ${token}` }
     });
-    if (!response.ok) throw new Error("Unable to load your IMS permissions.");
+    if (!response.ok) {
+      const responseData = await response.json().catch(() => ({}));
+      const message = responseData.error?.message || "Unable to load your IMS permissions.";
+      if (response.status === 403) sessionStorage.setItem("imsAuthError", message);
+      throw new Error(message);
+    }
     const session = await response.json();
     const authUser = session.user || {};
     currentUser = {
@@ -168,6 +200,7 @@ async function requirePortalSession() {
     currentUser.role = currentUser.roles[0] || "requestor";
   } catch (error) {
     localStorage.removeItem("firebase_token");
+    if (window.imsFirebaseSignOut) await window.imsFirebaseSignOut();
     redirectToLogin();
     return null;
   }
@@ -551,12 +584,17 @@ async function refreshVerifiedUserShell() {
   }
   if (businessDataLoadedForUser !== currentUser.id) {
     businessDataLoadedForUser = currentUser.id;
+    businessDataLoading = true;
+    businessDataError = "";
+    Object.keys(businessDataErrors).forEach((key) => delete businessDataErrors[key]);
+    render();
     await syncImportedInventoryToDatabase();
     await loadBusinessData({ silent: true });
     lastBusinessDataSignature = businessDataSignature();
   }
   render();
   startAutoRefresh();
+  startChatPolling();
 }
 
 function syncAuthState() {
@@ -940,6 +978,12 @@ async function saveActiveSettings(event) {
 }
 
 async function loadBusinessData({ silent = false } = {}) {
+  if (!silent) {
+    businessDataLoading = true;
+    businessDataError = "";
+    Object.keys(businessDataErrors).forEach((key) => delete businessDataErrors[key]);
+    render();
+  }
   const endpoints = [
     ["items", "/items"],
     ["vendors", "/vendors"],
@@ -951,9 +995,15 @@ async function loadBusinessData({ silent = false } = {}) {
     ["inventory", "/inventory"]
   ];
   const results = await Promise.allSettled(endpoints.map(([, path]) => apiRequest(path)));
+  const failed = [];
   results.forEach((result, index) => {
-    if (result.status !== "fulfilled") return;
     const key = endpoints[index][0];
+    if (result.status !== "fulfilled") {
+      failed.push(key);
+      businessDataErrors[key] = result.reason?.message || `Unable to load ${key} data.`;
+      return;
+    }
+    delete businessDataErrors[key];
     if (key === "inventory") {
       state.transactions = [];
       state.inventoryRows = result.value.inventory || [];
@@ -972,6 +1022,8 @@ async function loadBusinessData({ silent = false } = {}) {
     ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   }
   if (!silent) showToast("IMS data refreshed from database.");
+  businessDataError = failed.length ? `Unable to load ${failed.join(", ")} data.` : "";
+  businessDataLoading = false;
 }
 
 function businessDataSignature() {
@@ -1025,15 +1077,14 @@ function startAutoRefresh() {
 
 function applyAdminVisibility() {
   document.querySelectorAll(".admin-only").forEach((element) => {
-    element.hidden = !isAdmin;
+    element.hidden = false;
   });
   document.querySelectorAll(".nav-item[data-view]").forEach((item) => {
-    item.hidden = !canAccessView(item.dataset.view);
+    item.hidden = false;
+    item.classList.toggle("unauthorized-nav", !canAccessView(item.dataset.view));
   });
   document.querySelectorAll(".nav-section").forEach((section) => {
-    const items = Array.from(section.querySelectorAll(".nav-item[data-view]"));
-    if (!items.length) return;
-    section.hidden = items.every((item) => item.hidden);
+    section.hidden = false;
   });
 }
 
@@ -1243,6 +1294,227 @@ function toggleNotificationCenter() {
   const panel = document.getElementById("notificationCenter");
   if (panel.classList.contains("show")) closeNotificationCenter();
   else openNotificationCenter();
+}
+
+function chatUserSubtitle(user) {
+  return user.department || "IMS user";
+}
+
+function selectedChatUser() {
+  return chatUsers.find((user) => String(user.id) === String(selectedChatUserId)) || null;
+}
+
+function renderUnreadBadges() {
+  const totalUnread = chatUsers.reduce((sum, user) => sum + Number(user.unreadCount || 0), 0);
+  const badge = document.getElementById("chatTopbarBadge");
+  const btn = document.getElementById("chatBtn");
+  if (!badge || !btn) return;
+  badge.hidden = totalUnread <= 0;
+  badge.textContent = totalUnread > 99 ? "99+" : String(totalUnread);
+  btn.classList.toggle("has-unread", totalUnread > 0);
+  btn.setAttribute("aria-label", totalUnread > 0 ? `Chat, ${totalUnread} unread` : "Chat");
+}
+
+function renderChatUsers() {
+  const list = document.getElementById("chatUserList");
+  if (!list) return;
+  if (!chatUsersLoaded) {
+    list.innerHTML = `<div class="chat-empty">Loading users...</div>`;
+    return;
+  }
+  if (chatLoadError) {
+    list.innerHTML = `<div class="chat-empty">${escapeHtml(chatLoadError)}</div>`;
+    return;
+  }
+  const term = chatSearchTerm.trim().toLowerCase();
+  const rows = chatUsers.filter((user) => {
+    const haystack = [user.name, user.email, user.role, user.department].join(" ").toLowerCase();
+    return !term || haystack.includes(term);
+  });
+  list.innerHTML = rows.map((user) => `
+    <button class="chat-user ${String(user.id) === String(selectedChatUserId) ? "active" : ""}" type="button" data-chat-user-id="${escapeHtml(user.id)}">
+      <span class="chat-avatar">${escapeHtml(initialsFor(user.name || user.email))}</span>
+      <span class="chat-user-copy">
+        <strong>${escapeHtml(user.name || user.email || "IMS user")}</strong>
+        <span>${escapeHtml(user.email || "")}</span>
+        ${user.department ? `<em>${escapeHtml(user.department)}</em>` : ""}
+      </span>
+      ${Number(user.unreadCount || 0) ? `<span class="chat-unread">${Number(user.unreadCount) > 99 ? "99+" : escapeHtml(user.unreadCount)}</span>` : ""}
+    </button>
+  `).join("") || `<div class="chat-empty">No users found.</div>`;
+}
+
+function renderChatThreadHead() {
+  const head = document.getElementById("chatThreadHead");
+  const input = document.getElementById("chatMessageInput");
+  const submit = document.querySelector("#chatForm button[type='submit']");
+  const user = selectedChatUser();
+  if (!head || !input || !submit) return;
+  if (!user) {
+    head.innerHTML = `<strong>Select a user</strong><span>Start a private conversation</span>`;
+    input.disabled = true;
+    submit.disabled = true;
+    return;
+  }
+  head.innerHTML = `
+    <span class="chat-avatar">${escapeHtml(initialsFor(user.name || user.email))}</span>
+    <span><strong>${escapeHtml(user.name || user.email || "IMS user")}</strong><em>${escapeHtml(user.email || chatUserSubtitle(user))}</em></span>
+  `;
+  input.disabled = false;
+  submit.disabled = false;
+}
+
+function renderChatMessages() {
+  const box = document.getElementById("chatMessages");
+  if (!box) return;
+  if (!selectedChatUserId) {
+    box.innerHTML = `<div class="chat-empty thread-empty">Choose someone from the user list.</div>`;
+    return;
+  }
+  box.innerHTML = chatMessages.map((message) => {
+    const own = String(message.senderId) === String(currentUser.id);
+    return `
+      <article class="chat-message ${own ? "own" : ""}">
+        <div class="chat-bubble">
+          <p>${escapeHtml(message.messageText || "")}</p>
+          <span class="chat-message-meta"><time>${escapeHtml(formatChatTime(message.createdAt))}</time>${own ? `<i data-lucide="check-check"></i>` : ""}</span>
+        </div>
+      </article>
+    `;
+  }).join("") || `<div class="chat-empty thread-empty">No messages yet.</div>`;
+  box.scrollTop = box.scrollHeight;
+}
+
+function formatChatTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+async function loadChatUsers({ silent = false } = {}) {
+  if (!silent) {
+    chatUsersLoaded = false;
+    chatLoadError = "";
+    renderChatUsers();
+  }
+  try {
+    const [usersResponse, conversationsResponse] = await Promise.all([
+      apiRequest("/chat/users"),
+      apiRequest("/chat/conversations")
+    ]);
+    chatConversations = conversationsResponse.conversations || [];
+    const conversationByUser = new Map(chatConversations.map((conversation) => [String(conversation.otherUserId), conversation]));
+    chatUsers = (usersResponse.users || []).map((user) => {
+      const conversation = conversationByUser.get(String(user.id));
+      return {
+        ...user,
+        unreadCount: conversation ? Number(conversation.unreadCount || 0) : Number(user.unreadCount || 0),
+        lastMessageAt: conversation?.lastMessageAt || user.lastMessageAt
+      };
+    });
+    chatLoadError = "";
+  } catch (error) {
+    chatLoadError = error.statusCode === 404
+      ? "Chat service is not available yet. Restart the IMS backend."
+      : (error.message || "Unable to load chat users.");
+    if (!silent) showToast(chatLoadError, "error");
+  } finally {
+    chatUsersLoaded = true;
+    renderUnreadBadges();
+    renderChatUsers();
+    renderChatThreadHead();
+  }
+}
+
+async function selectChatUser(userId) {
+  if (String(userId) === String(currentUser.id)) return;
+  selectedChatUserId = String(userId);
+  chatMessages = [];
+  renderChatUsers();
+  renderChatThreadHead();
+  renderChatMessages();
+  await loadMessages(userId);
+  await markMessagesRead(userId);
+}
+
+async function loadMessages(otherUserId = selectedChatUserId) {
+  if (!otherUserId) return;
+  const response = await apiRequest(`/chat/messages/${encodeURIComponent(otherUserId)}`);
+  chatMessages = response.messages || [];
+  renderChatMessages();
+}
+
+async function sendMessage(event) {
+  event.preventDefault();
+  if (!selectedChatUserId) return;
+  const input = document.getElementById("chatMessageInput");
+  const messageText = String(input?.value || "").trim();
+  if (!messageText) {
+    showToast("Message cannot be empty.", "error");
+    return;
+  }
+  input.value = "";
+  try {
+    await apiRequest("/chat/messages", {
+      method: "POST",
+      body: JSON.stringify({ receiverId: selectedChatUserId, messageText })
+    });
+    await loadMessages(selectedChatUserId);
+    await loadChatUsers({ silent: true });
+  } catch (error) {
+    input.value = messageText;
+    showToast(error.message || "Unable to send message.", "error");
+  }
+}
+
+async function markMessagesRead(otherUserId = selectedChatUserId) {
+  if (!otherUserId) return;
+  await apiRequest(`/chat/messages/${encodeURIComponent(otherUserId)}/read`, { method: "PUT" });
+  chatUsers = chatUsers.map((user) => String(user.id) === String(otherUserId) ? { ...user, unreadCount: 0 } : user);
+  renderUnreadBadges();
+  renderChatUsers();
+}
+
+async function pollChat() {
+  try {
+    await loadChatUsers({ silent: true });
+    if (selectedChatUserId && document.getElementById("chatPanel")?.classList.contains("show")) {
+      await loadMessages(selectedChatUserId);
+      await markMessagesRead(selectedChatUserId);
+    }
+  } catch (error) {
+    console.warn("Chat polling failed:", error);
+  }
+}
+
+function startChatPolling() {
+  if (chatPollTimer) return;
+  pollChat();
+  chatPollTimer = setInterval(pollChat, CHAT_POLL_INTERVAL_MS);
+}
+
+async function openChatPanel() {
+  const panel = document.getElementById("chatPanel");
+  panel.classList.add("show");
+  panel.setAttribute("aria-hidden", "false");
+  document.getElementById("chatBtn").setAttribute("aria-expanded", "true");
+  closeNotificationCenter();
+  await loadChatUsers({ silent: chatUsersLoaded });
+  renderChatMessages();
+}
+
+function closeChatPanel() {
+  const panel = document.getElementById("chatPanel");
+  panel.classList.remove("show");
+  panel.setAttribute("aria-hidden", "true");
+  document.getElementById("chatBtn").setAttribute("aria-expanded", "false");
+}
+
+function toggleChatPanel() {
+  const panel = document.getElementById("chatPanel");
+  if (panel.classList.contains("show")) closeChatPanel();
+  else openChatPanel();
 }
 
 function money(value) {
@@ -1487,10 +1759,7 @@ function updateTopbarBreadcrumb(view) {
 }
 
 function setView(view) {
-  if (!canAccessView(view)) {
-    showToast("You do not have access to this section.", "error");
-    view = firstAccessibleView();
-  }
+  if (!document.getElementById(`${view}View`)) view = firstAccessibleView();
   document.querySelector(".app-shell")?.setAttribute("data-active-view", view);
   document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
   document.getElementById(`${view}View`).classList.add("active");
@@ -1776,6 +2045,15 @@ function activityIcon(activity) {
 }
 
 function renderDashboard() {
+  if (!dashboardDefaultHtml) dashboardDefaultHtml = document.getElementById("dashboardView")?.innerHTML || "";
+  if (businessDataLoading) {
+    showCardSkeleton("dashboardView");
+    showTableSkeleton("dashboardRecentRequests", 6, 5);
+    showTableSkeleton("dashboardPendingApprovals", 5, 5);
+    showTableSkeleton("dashboardRecentActivity", 4, 6);
+    return;
+  }
+  restoreDashboardShell();
   const currentStockRows = stockRows();
   const linkedVendorIds = new Set(state.purchaseOrders.map((po) => po.vendorId).filter(Boolean));
   const linkedGrnPOs = new Set(state.grns.map((grn) => grn.poNumber).filter(Boolean));
@@ -1834,10 +2112,10 @@ function renderDashboard() {
       </tr>
     `);
   const recentRequestsTable = document.getElementById("dashboardRecentRequests");
-  if (recentRequestsTable) recentRequestsTable.innerHTML = recentRows.join("") || emptyRow(6);
+  if (recentRequestsTable) setTableContent("dashboardRecentRequests", recentRows.join("") || emptyStateRow(6, "No requests yet", "Recent inventory requests will appear here."));
 
   const pendingApprovalsTable = document.getElementById("dashboardPendingApprovals");
-  if (pendingApprovalsTable) pendingApprovalsTable.innerHTML = pendingRequests
+  if (pendingApprovalsTable) setTableContent("dashboardPendingApprovals", pendingRequests
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 5)
     .map((request) => `
@@ -1852,7 +2130,7 @@ function renderDashboard() {
           </div>
         </td>
       </tr>
-    `).join("") || emptyRow(5);
+    `).join("") || emptyStateRow(5, "No pending approvals", "Requests awaiting approval will appear here."));
 
   const activities = [
     ...state.requests.map((request) => ({
@@ -1872,7 +2150,7 @@ function renderDashboard() {
   ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
 
   const recentActivityTable = document.getElementById("dashboardRecentActivity");
-  if (recentActivityTable) recentActivityTable.innerHTML = activities.map((activity) => `
+  if (recentActivityTable) setTableContent("dashboardRecentActivity", activities.map((activity) => `
     <tr>
       <td colspan="4">
         <div class="dashboard-feed-row">
@@ -1884,10 +2162,19 @@ function renderDashboard() {
         </div>
       </td>
     </tr>
-  `).join("") || emptyRow(4);
+  `).join("") || emptyStateRow(4, "No recent activity", "Audit, request, PO, and GRN activity will appear here."));
 }
 
 function renderRequests() {
+  if (businessDataLoading) {
+    showTableSkeleton("requestsTable", 12, 7);
+    return;
+  }
+  const requestsError = sourceError("requests");
+  if (requestsError) {
+    setTableContent("requestsTable", errorStateRow(12, requestsError));
+    return;
+  }
   const rows = state.requests.flatMap((request) => request.items.map((item) => ({ request, item })))
     .filter(({ item }) => !isRequestLineHistory(item))
     .filter(({ item }) => requestsFilter === "All" || item.approvalStatus === requestsFilter);
@@ -1895,7 +2182,7 @@ function renderRequests() {
   requestsPage = Math.min(Math.max(1, requestsPage), pageCount);
   const start = (requestsPage - 1) * REQUESTS_PAGE_SIZE;
   const pageRows = rows.slice(start, start + REQUESTS_PAGE_SIZE);
-  document.getElementById("requestsTable").innerHTML = pageRows.map(({ request, item }) => {
+  setTableContent("requestsTable", pageRows.map(({ request, item }) => {
     return `
       <tr>
         <td>${escapeHtml(request.requestId)}</td>
@@ -1911,7 +2198,7 @@ function renderRequests() {
         <td>${statusBadge(item.issuanceStatus)}</td>
         <td>${formatDate(request.date)}</td>
       </tr>`;
-  }).join("") || emptyRow(12);
+  }).join("") || emptyStateRow(12, "No requests yet", "Inventory request lines will appear here once they are submitted."));
   document.getElementById("requestsPageInfo").textContent = `Page ${requestsPage} of ${pageCount}`;
   document.getElementById("requestsPrev").disabled = requestsPage === 1;
   document.getElementById("requestsNext").disabled = requestsPage === pageCount;
@@ -1953,13 +2240,29 @@ function requestTrackingRow({ request, item }) {
 }
 
 function renderRequisition() {
+  if (businessDataLoading) {
+    showTableSkeleton("myRequestsTable", 12, 6);
+    return;
+  }
   const rows = requestLineRows(state.requests.filter(requesterMatchesCurrentUser));
   const table = document.getElementById("myRequestsTable");
   if (!table) return;
-  table.innerHTML = rows.map(requestTrackingRow).join("") || emptyRow(12);
+  const requestsError = sourceError("requests");
+  setTableContent("myRequestsTable", requestsError
+    ? errorStateRow(12, requestsError)
+    : rows.map(requestTrackingRow).join("") || emptyStateRow(12, "No requests yet", "Your submitted requests will appear here."));
 }
 
 function renderInventory() {
+  if (businessDataLoading) {
+    showTableSkeleton("inventoryTable", 7, 8);
+    return;
+  }
+  const inventoryError = sourceError("inventory", "items");
+  if (inventoryError) {
+    setTableContent("inventoryTable", errorStateRow(7, inventoryError));
+    return;
+  }
   const searchTerm = inventorySearchTerm.trim().toLowerCase();
   const rows = stockRows().filter((row) => {
     const matchesCategory = inventoryCategoryFilter === "All" || row.category === inventoryCategoryFilter;
@@ -1973,15 +2276,24 @@ function renderInventory() {
   inventoryPage = Math.min(Math.max(1, inventoryPage), pageCount);
   const start = (inventoryPage - 1) * INVENTORY_PAGE_SIZE;
   const pageRows = rows.slice(start, start + INVENTORY_PAGE_SIZE);
-  document.getElementById("inventoryTable").innerHTML = pageRows.map((row) => `
+  setTableContent("inventoryTable", pageRows.map((row) => `
     <tr><td>${row.code}</td><td>${row.name}</td><td>${row.type}</td><td>${row.category}</td><td>${row.location}</td><td>${quantityValue(row.stock)}</td><td>${statusBadge(row.status)}</td></tr>
-  `).join("") || emptyRow(7);
+  `).join("") || emptyStateRow(7, "No inventory items found", "Try changing filters or add inventory items from the inventory tools."));
   document.getElementById("inventoryPageInfo").textContent = `Page ${inventoryPage} of ${pageCount} - ${rows.length} item${rows.length === 1 ? "" : "s"}`;
   document.getElementById("inventoryPrev").disabled = inventoryPage === 1;
   document.getElementById("inventoryNext").disabled = inventoryPage === pageCount;
 }
 
 function renderIssue() {
+  if (businessDataLoading) {
+    showTableSkeleton("issueTable", 8, 6);
+    return;
+  }
+  const issueError = sourceError("requests", "inventory");
+  if (issueError) {
+    setTableContent("issueTable", errorStateRow(8, issueError));
+    return;
+  }
   const rows = state.requests.flatMap((request) => request.items
     .filter((item) => item.approvalStatus === "Approved" && !["Issued", "Rejected", "Cancelled"].includes(item.issuanceStatus))
     .map((item) => {
@@ -1997,11 +2309,20 @@ function renderIssue() {
         <td><button class="tiny success" onclick="issueItem('${request.requestId}','${item.id}')">Issue</button></td>
       </tr>`;
     }));
-  document.getElementById("issueTable").innerHTML = rows.join("") || emptyRow(8);
+  setTableContent("issueTable", rows.join("") || emptyStateRow(8, "No approved stock to issue", "Approved request items ready for issuance will appear here."));
 }
 
 function renderPO() {
-  document.getElementById("poTable").innerHTML = state.purchaseOrders.map((po) => `
+  if (businessDataLoading) {
+    showTableSkeleton("poTable", 13, 7);
+    return;
+  }
+  const poError = sourceError("purchaseOrders", "vendors");
+  if (poError) {
+    setTableContent("poTable", errorStateRow(13, poError));
+    return;
+  }
+  setTableContent("poTable", state.purchaseOrders.map((po) => `
     <tr>
       <td>${po.poNumber}</td>
       <td>${formatDate(po.issueDate || po.date)}</td>
@@ -2020,7 +2341,7 @@ function renderPO() {
         ${canCancelPo(po) ? `<button class="tiny danger" onclick="cancelPO('${po.poNumber}')">Cancel</button>` : ""}
       </td>
     </tr>
-  `).join("") || emptyRow(13);
+  `).join("") || emptyStateRow(13, "No purchase orders created yet", "Saved purchase orders will appear here."));
 }
 
 function collectPurchaseOrder(formElement) {
@@ -2300,14 +2621,23 @@ async function savePendingPO() {
     closePoPreview();
     showToast("Purchase order saved.");
   } catch (error) {
-    showToast(error.message, "error");
+    showToast(`Unable to save PO: ${error.message}`, "error");
   }
 }
 
 function renderGRN() {
-  document.getElementById("grnTable").innerHTML = state.grns.map((grn) => `
+  if (businessDataLoading) {
+    showTableSkeleton("grnTable", 10, 6);
+    return;
+  }
+  const grnError = sourceError("grns", "purchaseOrders");
+  if (grnError) {
+    setTableContent("grnTable", errorStateRow(10, grnError));
+    return;
+  }
+  setTableContent("grnTable", state.grns.map((grn) => `
     <tr><td>${grn.grnNumber}</td><td>${grn.poNumber || "Manual"}</td><td>${grn.itemCode || ""}</td><td>${grn.itemName || grn.description || grn.itemType || "Specification only"}</td><td>${grn.location}</td><td>${quantityValue(grn.qtyReceived)}</td><td>${quantityValue(grn.qtyAccepted)}</td><td>${grn.receivedBy}</td><td>${formatDate(grn.date)}</td><td class="button-cell"><button class="tiny" onclick="printGRN('${escapeHtml(grn.grnNumber)}')">Print</button></td></tr>
-  `).join("") || emptyRow(10);
+  `).join("") || emptyStateRow(10, "No GRN records yet", "Goods received notes will appear here after receiving stock."));
 }
 
 function renderGrnSheet(grn) {
@@ -2486,6 +2816,27 @@ function renderTransportCard(row) {
 function renderTransport() {
   const board = document.getElementById("transportBoard");
   if (!board) return;
+  if (businessDataLoading) {
+    board.classList.add("loading");
+    board.innerHTML = Array.from({ length: 5 }, () => `
+      <section class="approval-kanban-column transport-column skeleton-card">
+        <div class="skeleton skeleton-line short"></div>
+        ${Array.from({ length: 3 }, () => `
+          <div class="skeleton-card compact">
+            <span class="skeleton skeleton-line wide"></span>
+            <span class="skeleton skeleton-line"></span>
+          </div>
+        `).join("")}
+      </section>
+    `).join("");
+    return;
+  }
+  board.classList.remove("loading");
+  const transportError = sourceError("transportRequests");
+  if (transportError) {
+    board.innerHTML = `<div class="approval-kanban-empty">${escapeHtml(transportError)}</div>`;
+    return;
+  }
   const columns = [
     { key: "pending", title: "Pending", icon: "timer" },
     { key: "approved", title: "Approved", icon: "check-circle-2" },
@@ -2638,6 +2989,28 @@ function renderApprovalCard(row) {
 
 function renderApprovals() {
   const board = document.getElementById("approvalsBoard");
+  if (!board) return;
+  if (businessDataLoading) {
+    board.classList.add("loading");
+    board.innerHTML = Array.from({ length: 4 }, () => `
+      <section class="approval-kanban-column skeleton-card">
+        <div class="skeleton skeleton-line short"></div>
+        ${Array.from({ length: 3 }, () => `
+          <div class="skeleton-card compact">
+            <span class="skeleton skeleton-line wide"></span>
+            <span class="skeleton skeleton-line"></span>
+          </div>
+        `).join("")}
+      </section>
+    `).join("");
+    return;
+  }
+  board.classList.remove("loading");
+  const approvalError = sourceError("requests", "transportRequests");
+  if (approvalError) {
+    board.innerHTML = `<div class="approval-kanban-empty">${escapeHtml(approvalError)}</div>`;
+    return;
+  }
   const columns = [
     { key: "new", title: "New", icon: "sparkles" },
     { key: "pending", title: "Pending", icon: "timer" },
@@ -2710,7 +3083,16 @@ function openApprovalColumnHistory(columnKey) {
 }
 
 function renderVendors() {
-  document.getElementById("vendorsTable").innerHTML = state.vendors.map((vendor) => `
+  if (businessDataLoading) {
+    showTableSkeleton("vendorsTable", 8, 6);
+    return;
+  }
+  const vendorsError = sourceError("vendors");
+  if (vendorsError) {
+    setTableContent("vendorsTable", errorStateRow(8, vendorsError));
+    return;
+  }
+  setTableContent("vendorsTable", state.vendors.map((vendor) => `
     <tr>
       <td>${escapeHtml(vendor.name)}</td>
       <td>${escapeHtml(vendor.phone || "")}</td>
@@ -2721,7 +3103,7 @@ function renderVendors() {
       <td>${escapeHtml(vendor.address || "")}</td>
       <td><button class="tiny" type="button" onclick="editVendor('${escapeHtml(vendor.id)}')">Edit</button></td>
     </tr>
-  `).join("") || emptyRow(8);
+  `).join("") || emptyStateRow(8, "No vendors added yet", "Vendor records used by purchase orders will appear here."));
 }
 
 function resetVendorForm() {
@@ -2752,9 +3134,18 @@ window.editVendor = function (vendorId) {
 };
 
 function renderAudit() {
-  document.getElementById("auditTable").innerHTML = state.auditLogs.map((log) => `
+  if (businessDataLoading) {
+    showTableSkeleton("auditTable", 4, 8);
+    return;
+  }
+  const auditError = sourceError("auditLogs");
+  if (auditError) {
+    setTableContent("auditTable", errorStateRow(4, auditError));
+    return;
+  }
+  setTableContent("auditTable", state.auditLogs.map((log) => `
     <tr><td>${new Date(log.date).toLocaleString()}</td><td>${log.action}</td><td>${log.entityType} ${log.entityId}</td><td>${log.details}</td></tr>
-  `).join("") || emptyRow(4);
+  `).join("") || emptyStateRow(4, "No audit activity yet", "System changes and stock movements will appear here."));
 }
 
 function detailsText(details) {
@@ -3046,6 +3437,127 @@ function emptyRow(cols) {
   return `<tr><td colspan="${cols}" class="empty">No records yet</td></tr>`;
 }
 
+function skeletonLine(width = "100%") {
+  return `<span class="skeleton skeleton-line" style="width:${escapeHtml(width)}"></span>`;
+}
+
+function showTableSkeleton(tbodyId, columnCount, rowCount = 6) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  tbody.classList.add("loading");
+  tbody.innerHTML = Array.from({ length: rowCount }, () => `
+    <tr class="skeleton-row">
+      ${Array.from({ length: columnCount }, (_, index) => `<td>${skeletonLine(index % 3 === 0 ? "72%" : index % 3 === 1 ? "92%" : "54%")}</td>`).join("")}
+    </tr>
+  `).join("");
+}
+
+function showCardSkeleton(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.classList.add("loading");
+  container.innerHTML = `
+    <div class="skeleton-card">
+      <div class="skeleton skeleton-line short"></div>
+      <div class="skeleton skeleton-line wide"></div>
+      <div class="skeleton-grid">
+        ${Array.from({ length: 6 }, () => `
+          <div class="skeleton-card compact">
+            <span class="skeleton skeleton-circle"></span>
+            <span class="skeleton skeleton-line"></span>
+            <span class="skeleton skeleton-line short"></span>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function clearSkeleton(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.classList.remove("loading");
+}
+
+function setTableContent(tbodyId, html) {
+  clearSkeleton(tbodyId);
+  const tbody = document.getElementById(tbodyId);
+  if (tbody) tbody.innerHTML = html;
+}
+
+function restoreDashboardShell() {
+  const dashboard = document.getElementById("dashboardView");
+  if (!dashboard) return;
+  if (!dashboardDefaultHtml) dashboardDefaultHtml = dashboard.innerHTML;
+  if (dashboard.classList.contains("loading")) {
+    dashboard.innerHTML = dashboardDefaultHtml;
+    dashboard.classList.remove("loading");
+  }
+}
+
+function showEmptyState(containerId, title, message, actionText = "") {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.classList.remove("loading");
+  const isTbody = container.tagName === "TBODY";
+  const colCount = isTbody ? (container.closest("table")?.querySelectorAll("thead th").length || 1) : 1;
+  const markup = `
+    <div class="empty-state">
+      <span class="empty-state-icon"><i data-lucide="inbox"></i></span>
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(message)}</p>
+      ${actionText ? `<button class="secondary" type="button">${escapeHtml(actionText)}</button>` : ""}
+    </div>
+  `;
+  container.innerHTML = isTbody ? `<tr><td colspan="${colCount}">${markup}</td></tr>` : markup;
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function emptyStateRow(cols, title, message, actionText = "") {
+  return `<tr><td colspan="${cols}">
+    <div class="empty-state">
+      <span class="empty-state-icon"><i data-lucide="inbox"></i></span>
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(message)}</p>
+      ${actionText ? `<button class="secondary" type="button">${escapeHtml(actionText)}</button>` : ""}
+    </div>
+  </td></tr>`;
+}
+
+function errorStateRow(cols, message = businessDataError || "Unable to load this data.") {
+  return emptyStateRow(cols, "Unable to load data", message);
+}
+
+function sourceError(...keys) {
+  return keys.map((key) => businessDataErrors[key]).find(Boolean) || "";
+}
+
+function viewLabel(view) {
+  const active = document.querySelector(`.nav-item[data-view="${view}"] span:last-child`);
+  return active ? active.textContent : (breadcrumbByView[view]?.at(-1) || "Section");
+}
+
+function renderAuthorizationState() {
+  document.querySelectorAll(".view.authorization-blocked").forEach((panel) => {
+    panel.classList.remove("authorization-blocked");
+    panel.querySelector(".authorization-state")?.remove();
+  });
+  const activePanel = document.querySelector(".view.active");
+  if (!activePanel) return;
+  const view = activePanel.id.replace(/View$/, "");
+  if (canAccessView(view)) return;
+  activePanel.classList.add("authorization-blocked");
+  activePanel.querySelector(".authorization-state")?.remove();
+  const stateNode = document.createElement("div");
+  stateNode.className = "authorization-state";
+  stateNode.innerHTML = `
+    <span class="authorization-state-icon"><i data-lucide="lock-keyhole"></i></span>
+    <strong>You are not authorized for this Section</strong>
+    <p>You do not have permission to view ${escapeHtml(viewLabel(view))}. Please contact an administrator if you need access.</p>
+  `;
+  activePanel.appendChild(stateNode);
+}
+
 function render() {
   syncSelectOptions();
   renderCategoryTabs();
@@ -3065,6 +3577,7 @@ function render() {
   renderHistoryPage();
   if (document.getElementById("settingsView").classList.contains("active")) renderSettings();
   if (document.getElementById("notificationCenter").classList.contains("show")) renderNotificationCenter();
+  renderAuthorizationState();
   updateNotificationBadge();
   if (window.lucide) window.lucide.createIcons();
 }
@@ -3420,6 +3933,30 @@ document.getElementById("notificationBtn").addEventListener("click", (event) => 
 
 document.getElementById("closeNotificationCenter").addEventListener("click", closeNotificationCenter);
 
+document.getElementById("chatBtn")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleChatPanel();
+});
+
+document.getElementById("closeChatPanel")?.addEventListener("click", closeChatPanel);
+
+document.getElementById("chatPanel")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const userButton = event.target.closest("[data-chat-user-id]");
+  if (userButton) {
+    selectChatUser(userButton.dataset.chatUserId).catch((error) => {
+      showToast(error.message || "Unable to open chat.", "error");
+    });
+  }
+});
+
+document.getElementById("chatUserSearch")?.addEventListener("input", (event) => {
+  chatSearchTerm = event.target.value || "";
+  renderChatUsers();
+});
+
+document.getElementById("chatForm")?.addEventListener("submit", sendMessage);
+
 document.getElementById("notificationCenter").addEventListener("click", (event) => {
   event.stopPropagation();
   const tab = event.target.closest("[data-notification-tab]");
@@ -3461,6 +3998,7 @@ document.addEventListener("click", (event) => {
   if (!event.target.closest(".approval-column-tools")) closeApprovalColumnMenus();
   if (!event.target.closest(".approval-column-tools")) closeTransportColumnMenus();
   if (!event.target.closest("#notificationCenter") && !event.target.closest("#notificationBtn")) closeNotificationCenter();
+  if (!event.target.closest("#chatPanel") && !event.target.closest("#chatBtn")) closeChatPanel();
   if (!event.target.closest("#profileMenu") && !event.target.closest("#profileBtn")) {
     const pm = document.getElementById("profileMenu");
     if (pm && pm.classList.contains("show")) {
@@ -3478,6 +4016,7 @@ document.addEventListener("keydown", (event) => {
     closeApprovalColumnMenus();
     closeTransportColumnMenus();
     closeNotificationCenter();
+    closeChatPanel();
     closePoCancelModal();
     closeDeleteUserModal();
     closeApprovalDetailModal();

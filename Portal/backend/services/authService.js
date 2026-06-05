@@ -2,6 +2,8 @@ const { pool } = require("../config/database");
 const config = require("../config/env");
 
 const DEFAULT_ROLE = "requestor";
+const ALLOWED_EMAIL_DOMAIN = "@shehersaaz.org.pk";
+const OFFICIAL_EMAIL_MESSAGE = "Only Shehersaaz official email addresses are allowed.";
 const ROLE_DEFINITIONS = Object.freeze([
   { key: "admin", dbName: "Admin", label: "Admin" },
   { key: "requestor", dbName: "Requester", label: "Requestor" },
@@ -30,6 +32,17 @@ function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
+function isAllowedOfficialEmail(email) {
+  return normalizeEmail(email).endsWith(ALLOWED_EMAIL_DOMAIN);
+}
+
+function assertAllowedOfficialEmail(email) {
+  if (isAllowedOfficialEmail(email)) return;
+  const error = new Error(OFFICIAL_EMAIL_MESSAGE);
+  error.statusCode = 403;
+  throw error;
+}
+
 function normalizeRoleKey(role) {
   return String(role || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
@@ -52,6 +65,7 @@ function toDbRoleName(roleKey) {
 async function getUserAuthContextByEmail(email, fallbackName = "") {
   const cleanEmail = normalizeEmail(email);
   if (!cleanEmail) return null;
+  assertAllowedOfficialEmail(cleanEmail);
 
   await ensureUserExists(cleanEmail, fallbackName);
 
@@ -103,6 +117,7 @@ async function getUserAuthContextByEmail(email, fallbackName = "") {
 }
 
 async function ensureUserExists(email, fallbackName) {
+  assertAllowedOfficialEmail(email);
   const name = String(fallbackName || email.split("@")[0] || "IMS User").trim();
 
   await pool.execute(
@@ -127,6 +142,7 @@ async function resolveAuthContextFromToken(token) {
   const adminAuth = getFirebaseAdminAuth();
   const payload = adminAuth ? await adminAuth.verifyIdToken(token) : null;
   if (!payload) return null;
+  assertAllowedOfficialEmail(payload.email);
   return getUserAuthContextByEmail(payload.email, payload.name || payload.displayName);
 }
 
@@ -183,6 +199,7 @@ async function createUser(input = {}, createdBy) {
     error.statusCode = 400;
     throw error;
   }
+  assertAllowedOfficialEmail(email);
 
   const normalizedRoles = [...new Set(roles.map(normalizeRoleKey))];
   const dbRoleNames = normalizedRoles.map(toDbRoleName);

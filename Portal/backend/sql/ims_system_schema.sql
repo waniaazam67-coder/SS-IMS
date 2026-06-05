@@ -503,6 +503,51 @@ CREATE TABLE IF NOT EXISTS notifications (
   CONSTRAINT fk_notifications_created_by FOREIGN KEY (created_by) REFERENCES users (id) ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS chat_conversations (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_one_id INT UNSIGNED NOT NULL,
+  user_two_id INT UNSIGNED NOT NULL,
+  last_message_id BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_chat_conversations_pair (user_one_id, user_two_id),
+  KEY idx_chat_conversations_user_two (user_two_id),
+  KEY idx_chat_conversations_updated (updated_at),
+  KEY idx_chat_conversations_last_message (last_message_id),
+  CONSTRAINT fk_chat_conversations_user_one FOREIGN KEY (user_one_id) REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_chat_conversations_user_two FOREIGN KEY (user_two_id) REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS chat_participants (
+  conversation_id BIGINT UNSIGNED NOT NULL,
+  user_id INT UNSIGNED NOT NULL,
+  joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_read_at TIMESTAMP NULL,
+  PRIMARY KEY (conversation_id, user_id),
+  KEY idx_chat_participants_user (user_id),
+  CONSTRAINT fk_chat_participants_conversation FOREIGN KEY (conversation_id) REFERENCES chat_conversations (id) ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_chat_participants_user FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  conversation_id BIGINT UNSIGNED NOT NULL,
+  sender_id INT UNSIGNED NOT NULL,
+  receiver_id INT UNSIGNED NOT NULL,
+  message_text TEXT NOT NULL,
+  read_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_chat_messages_conversation_created (conversation_id, created_at),
+  KEY idx_chat_messages_receiver_read (receiver_id, read_at),
+  KEY idx_chat_messages_sender (sender_id),
+  CONSTRAINT fk_chat_messages_conversation FOREIGN KEY (conversation_id) REFERENCES chat_conversations (id) ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_chat_messages_sender FOREIGN KEY (sender_id) REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_chat_messages_receiver FOREIGN KEY (receiver_id) REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+
 CREATE TABLE IF NOT EXISTS transport_requests (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   request_number VARCHAR(80) NOT NULL,

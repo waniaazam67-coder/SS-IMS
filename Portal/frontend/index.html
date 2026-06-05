@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=auth-roles-1">
+  <link rel="stylesheet" href="css/styles.css?v=po-error-clarity-1">
 </head>
 <body>
   <div class="app-shell">
@@ -74,6 +74,7 @@
           <input id="globalSearch" type="search" placeholder="Search anything">
         </div>
         <div class="top-actions">
+          <button class="icon-btn chat-topbar-btn" id="chatBtn" type="button" aria-label="Chat" aria-expanded="false" aria-controls="chatPanel"><i data-lucide="messages-square"></i><span class="chat-topbar-badge" id="chatTopbarBadge" hidden>0</span></button>
           <button class="icon-btn notification" id="notificationBtn" type="button" aria-label="Notifications" aria-expanded="false" aria-controls="notificationCenter"><i data-lucide="bell"></i></button>
           <div class="profile-wrap">
             <button class="profile" id="profileBtn" type="button" aria-label="Inventory Manager" data-profile-name="Inventory Manager"><span class="avatar">IM</span><span class="profile-name">Inventory Manager</span><i data-lucide="chevron-down"></i></button>
@@ -109,6 +110,36 @@
         <div class="notification-list" id="notificationList"></div>
       </aside>
 
+      <aside class="chat-panel" id="chatPanel" aria-label="Private chat" aria-hidden="true">
+        <div class="chat-head">
+          <div>
+            <h2>Chat</h2>
+            <span>Private IMS messages</span>
+          </div>
+          <button class="icon-btn" id="closeChatPanel" type="button" aria-label="Close chat"><i data-lucide="x"></i></button>
+        </div>
+        <div class="chat-layout">
+          <section class="chat-users" aria-label="IMS users">
+            <label class="chat-search">
+              <i data-lucide="search"></i>
+              <input id="chatUserSearch" type="search" placeholder="Search users">
+            </label>
+            <div class="chat-user-list" id="chatUserList"></div>
+          </section>
+          <section class="chat-thread" aria-label="Conversation">
+            <div class="chat-thread-head" id="chatThreadHead">
+              <strong>Select a user</strong>
+              <span>Start a private conversation</span>
+            </div>
+            <div class="chat-messages" id="chatMessages"></div>
+            <form class="chat-compose" id="chatForm">
+              <input id="chatMessageInput" name="message" autocomplete="off" placeholder="Type a message" disabled>
+              <button class="primary" type="submit" disabled><i data-lucide="send"></i>Send</button>
+            </form>
+          </section>
+        </div>
+      </aside>
+
       <section class="view active empty-dashboard" id="dashboardView">
         <div class="dashboard-empty-state">
           <p>Welcome back</p>
@@ -138,7 +169,7 @@
 
       <section class="view" id="requestsView">
         <div class="card table-card">
-          <div class="section-title"><h2>Requests List</h2><p>Request lines with manager approval and issuance status.</p><button class="secondary" type="button" data-history-page="requests">History</button></div>
+          <div class="section-title"><p>Review submitted request lines, approval decisions, issuance status, and request dates in one place.</p><button class="secondary" type="button" data-history-page="requests">History</button></div>
           <div class="table-wrap requests-scroll"><table><thead><tr><th>ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Approval</th><th>Issue</th><th>Date</th></tr></thead><tbody id="requestsTable"></tbody></table></div>
           <div class="pagination" id="requestsPagination">
             <button class="page-btn" id="requestsPrev" type="button"><i data-lucide="chevron-left"></i>Prev</button>
@@ -180,7 +211,7 @@
 
       <section class="view" id="stockInView">
         <form id="stockInForm" class="card form-card">
-          <div class="section-title"><h2>Manual Stock In</h2><p>Use for opening balances, old stock entries, and adjustments.</p><button class="secondary" type="button" data-history-page="stockIn">History</button></div>
+          <div class="section-title"><p>Add opening balances, old stock entries, or approved stock adjustments for a selected item and location.</p><button class="secondary" type="button" data-history-page="stockIn">History</button></div>
           <div class="form-grid">
             <label>Category<input required name="category" id="stockInCategory" data-categories list="stockInCategoryOptions" placeholder="Select category"></label>
             <label>Item name<input required name="itemName" id="stockInItemName" data-item-names data-category-source="stockInCategory" list="stockInItemNameOptions" placeholder="Select item"></label>
@@ -196,7 +227,7 @@
 
       <section class="view" id="issueView">
         <form id="manualStockOutForm" class="card form-card">
-          <div class="section-title"><h2>Manual Stock Out</h2><p>Use for direct stock issues or adjustments not linked to a request.</p><button class="secondary" type="button" data-history-page="stockOut">History</button></div>
+          <div class="section-title"><p>Record direct stock issues or adjustments that are not linked to an approved request.</p><button class="secondary" type="button" data-history-page="stockOut">History</button></div>
           <div class="form-grid">
             <label>Category<input required name="category" id="stockOutCategory" data-categories list="stockOutCategoryOptions" placeholder="Select category"></label>
             <label>Item name<input required name="itemName" id="stockOutItemName" data-item-names data-category-source="stockOutCategory" list="stockOutItemNameOptions" placeholder="Select item"></label>
@@ -211,14 +242,14 @@
           <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-minus"></i>Stock Out</button></div>
         </form>
         <div class="card table-card">
-          <div class="section-title"><h2>Issue Approved Stock</h2><p>Issuance creates STOCK_OUT only when approved and stock is available.</p><button class="secondary" type="button" data-history-page="stockOut">History</button></div>
+          <div class="section-title"><p>Issue approved request items only when stock is available at the requested location.</p><button class="secondary" type="button" data-history-page="stockOut">History</button></div>
           <div class="table-wrap"><table><thead><tr><th>Request</th><th>Item</th><th>Location</th><th>Requested</th><th>Available</th><th>Issue Qty</th><th>Issued By</th><th>Action</th></tr></thead><tbody id="issueTable"></tbody></table></div>
         </div>
       </section>
 
       <section class="view" id="poView">
         <form id="poForm" class="card form-card">
-          <div class="section-title"><h2>Purchase Order</h2><p>PO tracks procurement only. It does not change inventory stock.</p></div>
+          <div class="section-title"><p>Create procurement orders, add vendor and delivery details, and prepare saved PO records for review.</p></div>
           <div class="po-entry-layout">
             <fieldset class="po-entry-section">
               <legend>PO Reference</legend>
@@ -286,7 +317,7 @@
           <div class="form-actions"><button class="primary" type="submit"><i data-lucide="file-plus"></i>Generate PO</button></div>
         </form>
         <div class="card table-card">
-          <div class="section-title"><h2>Saved Purchase Orders</h2><p>Saved POs can be opened in the approved print format.</p></div>
+          <div class="section-title"><p>Saved purchase orders can be printed, tracked, and cancelled where allowed.</p></div>
           <div class="table-wrap"><table><thead><tr><th>PO #</th><th>Issue Date</th><th>Vendor</th><th>Specifications</th><th>Qty Ordered</th><th>Unit Price</th><th>PO Amount</th><th>Status</th><th>Arrived By</th><th>Location</th><th>Qty Received</th><th>Cancellation Reason</th><th>Actions</th></tr></thead><tbody id="poTable"></tbody></table></div>
         </div>
       </section>
@@ -311,7 +342,7 @@
 
       <section class="view" id="grnView">
         <form id="grnForm" class="card form-card">
-          <div class="section-title"><h2>Goods Received Note</h2><p>Accepted quantity creates GRN_STOCK_IN for the exact Item ID + Location.</p></div>
+          <div class="section-title"><p>Receive goods against eligible POs and post accepted quantities to the exact item and location.</p></div>
           <div class="form-grid">
             <label>PO Number<input required name="poNumber" id="poSelect" list="poNumberOptions" placeholder="Select PO number"></label>
             <label>PO item<select required name="poLineId" id="grnPoLineItem"><option value="">Select PO item</option></select></label>
@@ -327,7 +358,7 @@
           <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-check"></i>Create GRN</button></div>
         </form>
         <div class="card table-card">
-          <div class="section-title"><h2>GRN Records</h2><p>Imported GRNs are shown here. Older sheet rows without Item ID are retained as records only.</p></div>
+          <div class="section-title"><p>Track received goods, accepted quantities, receiving staff, and printable GRN records.</p></div>
           <div class="table-wrap"><table><thead><tr><th>GRN #</th><th>PO #</th><th>Item ID</th><th>Item / Specification</th><th>Location</th><th>Received</th><th>Accepted</th><th>Received By</th><th>Date</th><th>Actions</th></tr></thead><tbody id="grnTable"></tbody></table></div>
         </div>
       </section>
@@ -358,7 +389,7 @@
 
       <section class="view" id="vendorsView">
         <form id="vendorForm" class="card form-card">
-          <div class="section-title"><h2>Vendor Master</h2><p>Vendor records used by purchase orders.</p></div>
+          <div class="section-title"><p>Maintain vendor contact, address, and bank information used during purchase order creation.</p></div>
           <div class="form-grid">
             <input type="hidden" name="id">
             <label>Name<input required name="name"></label>
@@ -486,6 +517,6 @@
   <script src="js/inventory data/progressive.js?v=inventory-split-1"></script>
   <script src="js/inventory data/rwhu.js?v=inventory-split-1"></script>
   <script src="js/inventory data/stationary.js?v=inventory-split-1"></script>
-  <script src="js/script.js?v=auth-roles-1"></script>
+  <script src="js/script.js?v=po-error-clarity-1"></script>
 </body>
 </html>
