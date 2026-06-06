@@ -24,8 +24,8 @@ router.patch("/notifications/:id/read", async (req, res, next) => {
   try { ok(res, await imsService.markNotificationRead(req.params.id, req.auth)); } catch (error) { next(error); }
 });
 
-router.post("/stock/in/manual", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {
-  try { ok(res, await imsService.postStockMovement(req.body, req.auth.user.id, "MANUAL_IN"), 201); } catch (error) { next(error); }
+router.post("/stock/adjust", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {
+  try { ok(res, await imsService.postStockAdjustment(req.body, req.auth.user.id), 201); } catch (error) { next(error); }
 });
 
 router.post("/stock/out", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {
@@ -38,6 +38,10 @@ router.get("/items", requirePermission(PERMISSIONS.VIEW_INVENTORY), async (req, 
 
 router.post("/items", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {
   try { ok(res, { items: await imsService.createItems(req.body, req.auth.user.id) }, 201); } catch (error) { next(error); }
+});
+
+router.delete("/items/:itemCode", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {
+  try { ok(res, await imsService.deleteItem(req.params.itemCode, req.auth.user.id)); } catch (error) { next(error); }
 });
 
 router.post("/items/sync-import", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {

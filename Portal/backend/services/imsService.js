@@ -1,5 +1,12 @@
 const { pool } = require("../config/database");
 
+const APPROVED_LOCATIONS = ["I9 warehouse", "Secretariat", "NSR CC", "RWP CC"];
+const APPROVED_LOCATION_KEYS = new Set(APPROVED_LOCATIONS.map((location) => location.toLowerCase().replace(/[^a-z0-9]/g, "")));
+
+function isApprovedLocation(location) {
+  return APPROVED_LOCATION_KEYS.has(String(location || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
+}
+
 async function audit(tableName, recordId, action, changedBy, newValues = null, connection = pool) {
   await connection.execute(
     `INSERT INTO audit_logs (table_name, record_id, action, changed_by, new_values)
@@ -200,7 +207,7 @@ async function syncImportedInventory(input, userId) {
   try {
     await connection.beginTransaction();
 
-    for (const location of locations.map((value) => String(value || "").trim()).filter(Boolean)) {
+    for (const location of locations.map((value) => String(value || "").trim()).filter(isApprovedLocation)) {
       await connection.execute(
         `INSERT INTO locations (name, created_by, updated_by)
          VALUES (?, ?, ?)
@@ -288,6 +295,29 @@ async function createItems(input, userId) {
     }
     await connection.commit();
     return created;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function deleteItem(itemCode, userId) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const cleanCode = required(itemCode, "Item ID");
+    const item = await getItemByCode(connection, cleanCode);
+    await connection.execute(
+      `UPDATE items
+       SET is_active = 0, deleted_at = CURRENT_TIMESTAMP, updated_by = ?
+       WHERE id = ?`,
+      [userId || null, item.id]
+    );
+    await audit("items", item.id, "SOFT_DELETE", userId, { itemCode: cleanCode }, connection);
+    await connection.commit();
+    return { itemCode: cleanCode, deleted: true };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -1334,6 +1364,14 @@ async function postStockMovement(input, userId, type) {
   }
 }
 
+async function postStockAdjustment(input, userId) {
+  const quantity = Number(input.quantity);
+  if (!quantity || quantity <= 0) throwBadRequest("Adjustment quantity must be greater than zero.");
+  const direction = String(input.direction || "").toLowerCase();
+  const type = direction === "out" ? "ADJUSTMENT_OUT" : "ADJUSTMENT_IN";
+  return postStockMovement(input, userId, type);
+}
+
 async function listInventory() {
   const [rows] = await pool.execute(
     `SELECT v.item_pk AS id, v.item_id AS code, v.item_name AS name, v.item_type AS type, v.category,
@@ -1617,9 +1655,11 @@ module.exports = {
   markAllNotificationsRead,
   listInventory,
   postStockMovement,
+  postStockAdjustment,
   listItems,
   syncImportedInventory,
   createItems,
+  deleteItem,
   listVendors,
   createVendor,
   updateVendor,

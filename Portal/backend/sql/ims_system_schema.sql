@@ -1004,7 +1004,7 @@ FROM items i
 JOIN item_categories c ON c.id = i.category_id
 CROSS JOIN locations l
 LEFT JOIN inventory_balances b ON b.item_id = i.id AND b.location_id = l.id
-WHERE i.deleted_at IS NULL AND l.deleted_at IS NULL;
+WHERE i.deleted_at IS NULL AND l.deleted_at IS NULL AND l.is_active = 1;
 
 DROP PROCEDURE IF EXISTS sp_record_stock_movement;
 
@@ -1081,8 +1081,12 @@ INSERT INTO departments (id, code, name, is_active)
 VALUES (1, 'ADMIN', 'Administration', 1)
 ON DUPLICATE KEY UPDATE code = VALUES(code), name = VALUES(name), is_active = VALUES(is_active), deleted_at = NULL;
 
-INSERT INTO locations (id, code, name, is_active)
-VALUES (1, 'MAIN', 'Main Store', 1)
+INSERT INTO locations (code, name, is_active)
+VALUES
+  ('I9', 'I9 warehouse', 1),
+  ('SEC', 'Secretariat', 1),
+  ('NSR', 'NSR CC', 1),
+  ('RWP', 'RWP CC', 1)
 ON DUPLICATE KEY UPDATE code = VALUES(code), name = VALUES(name), is_active = VALUES(is_active), deleted_at = NULL;
 
 INSERT INTO roles (name, description, is_system)

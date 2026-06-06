@@ -7,8 +7,8 @@
   <link rel="icon" type="image/png" href="assets/ims-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=dashboard-search-20260605-5">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css?v=grn-layout-20260606-1">
 </head>
 <body>
   <div class="app-shell" data-active-view="dashboard">
@@ -23,21 +23,11 @@
           <div class="nav-section single nav-dashboard-section">
             <button class="nav-item active" data-view="dashboard"><span class="nav-icon"><i data-lucide="layout-grid"></i></span><span>Dashboard</span></button>
           </div>
-          <div class="nav-section collapsed">
-            <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="warehouse"></i></span><span>Inventory</span><i data-lucide="chevron-down"></i></button>
-            <div class="nav-section-items">
-            <button class="nav-item" data-view="inventory"><span class="nav-icon"><i data-lucide="boxes"></i></span><span>Inventory</span></button>
-            <button class="nav-item" data-view="stockIn"><span class="nav-icon"><i data-lucide="package-plus"></i></span><span>Stock In</span></button>
-            <button class="nav-item" data-view="issue"><span class="nav-icon"><i data-lucide="package-minus"></i></span><span>Stock Issue</span></button>
-            <button class="nav-item" data-view="grn"><span class="nav-icon"><i data-lucide="truck"></i></span><span>GRN</span></button>
-            </div>
+          <div class="nav-section single">
+            <button class="nav-item" data-view="inventory"><span class="nav-icon"><i data-lucide="warehouse"></i></span><span>Inventory</span></button>
           </div>
-          <div class="nav-section collapsed">
-            <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="shopping-cart"></i></span><span>Procurement</span><i data-lucide="chevron-down"></i></button>
-            <div class="nav-section-items">
-            <button class="nav-item" data-view="po"><span class="nav-icon"><i data-lucide="file-pen-line"></i></span><span>PO</span></button>
-            <button class="nav-item" data-view="vendors"><span class="nav-icon"><i data-lucide="building-2"></i></span><span>Vendors</span></button>
-            </div>
+          <div class="nav-section single">
+            <button class="nav-item" data-view="procurement"><span class="nav-icon"><i data-lucide="shopping-cart"></i></span><span>Procurement</span></button>
           </div>
           <div class="nav-section collapsed">
             <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="clipboard-list"></i></span><span>Requests</span><i data-lucide="chevron-down"></i></button>
@@ -202,77 +192,125 @@
         </div>
       </section>
 
-      <section class="view" id="inventoryView">
-        <div class="card table-card">
-          <div class="inventory-search-row">
-            <label class="inventory-search-filter">Search items<input id="inventorySearchInput" type="search" placeholder="Search item ID, name, type, category, location"></label>
+      <section class="view lumen-inventory" id="inventoryView">
+        <div class="inventory-page-header">
+          <div>
+            <h1>Inventory</h1>
+            <p>Items, locations, stocks, and movement-ready inventory records.</p>
           </div>
+          <div class="inventory-page-actions">
+            <button class="primary" id="openItemModal" type="button" data-inventory-items-only><i data-lucide="plus"></i>Add item</button>
+            <button class="primary" id="openManualStockIssue" type="button" data-inventory-issue-only hidden><i data-lucide="package-minus"></i>Manual stock issue</button>
+            <button class="primary" id="openGrnDrawer" type="button" data-inventory-grn-only hidden><i data-lucide="package-check"></i>Create GRN</button>
+          </div>
+        </div>
+        <div class="inventory-module-tabs" id="inventoryModuleTabs">
+          <button class="inventory-module-tab active" type="button" data-inventory-tab="items"><i data-lucide="package"></i>Items <span id="inventoryItemsTabCount">0</span></button>
+          <button class="inventory-module-tab" type="button" data-inventory-tab="warehouses"><i data-lucide="warehouse"></i>Warehouses <span id="inventoryWarehousesTabCount">0</span></button>
+          <button class="inventory-module-tab inventory-action-tab" type="button" data-inventory-tab="issue"><i data-lucide="package-minus"></i>Stock Issue</button>
+          <button class="inventory-module-tab inventory-action-tab" type="button" data-inventory-tab="grn"><i data-lucide="truck"></i>GRN</button>
+        </div>
+        <div class="inventory-kpis" id="inventoryKpis" aria-label="Inventory summary">
+          <div class="inventory-kpi">
+            <span class="inventory-kpi-icon"><i data-lucide="boxes"></i></span>
+            <div><span>Total rows</span><strong id="inventoryTotalCount">0</strong></div>
+          </div>
+          <div class="inventory-kpi">
+            <span class="inventory-kpi-icon"><i data-lucide="warehouse"></i></span>
+            <div><span>Locations</span><strong id="inventoryLocationCount">0</strong></div>
+          </div>
+          <div class="inventory-kpi">
+            <span class="inventory-kpi-icon"><i data-lucide="alert-triangle"></i></span>
+            <div><span>Low / out stock</span><strong id="inventoryLowCount">0</strong></div>
+          </div>
+          <div class="inventory-kpi">
+            <span class="inventory-kpi-icon"><i data-lucide="layers-3"></i></span>
+            <div><span>Categories</span><strong id="inventoryCategoryCount">0</strong></div>
+          </div>
+        </div>
+        <div class="card table-card inventory-lumen-card inventory-panel active" id="inventoryItemsPanel">
           <div class="inventory-toolbar">
-            <div class="category-tabs" id="categoryTabs"></div>
-            <label class="inventory-location-filter">Location<input id="inventoryLocationFilter" data-locations list="inventoryLocationOptions" placeholder="All locations"></label>
-            <button class="primary" id="openItemModal" type="button"><i data-lucide="plus"></i>Add Item</button>
+            <label class="inventory-search-filter"><i data-lucide="search"></i><input id="inventorySearchInput" type="search" placeholder="Search SKU, name, type, category, location"></label>
+            <div class="inventory-tabs" id="categoryTabs"></div>
+            <div class="inventory-status-tabs" id="inventoryStatusTabs" aria-label="Stock status filter"></div>
+            <label class="inventory-location-filter"><span>Location</span><input id="inventoryLocationFilter" data-locations list="inventoryLocationOptions" placeholder="All locations"></label>
           </div>
-          <div class="table-wrap"><table><thead><tr><th>Item ID</th><th>Name</th><th>Type</th><th>Category</th><th>Location</th><th>Stock</th><th>Status</th></tr></thead><tbody id="inventoryTable"></tbody></table></div>
+          <div class="inventory-card-grid" id="inventoryCards"></div>
           <div class="pagination" id="inventoryPagination">
             <button class="page-btn" id="inventoryPrev" type="button"><i data-lucide="chevron-left"></i>Previous</button>
             <span id="inventoryPageInfo">Page 1 of 1</span>
             <button class="page-btn" id="inventoryNext" type="button">Next<i data-lucide="chevron-right"></i></button>
           </div>
         </div>
-      </section>
-
-      <section class="view" id="stockInView">
-        <form id="stockInForm" class="card form-card">
-          <div class="section-title"><p>Add opening balances, old stock entries, or approved stock adjustments for a selected item and location.</p><button class="secondary" type="button" data-history-page="stockIn">History</button></div>
-          <div class="form-grid">
-            <label>Category<input required name="category" id="stockInCategory" data-categories list="stockInCategoryOptions" placeholder="Select category"></label>
-            <label>Item name<input required name="itemName" id="stockInItemName" data-item-names data-category-source="stockInCategory" list="stockInItemNameOptions" placeholder="Select item"></label>
-            <label>Type<input required name="itemCode" id="stockInItemType" data-item-types data-item-source="stockInItemName" data-category-source="stockInCategory" list="stockInItemTypeOptions" placeholder="Select type"></label>
-            <label>Selected Item ID<input readonly id="stockInItemId" placeholder="Choose an item"></label>
-            <label>Location<input required name="location" data-locations list="stockInLocationOptions" placeholder="Select location"></label>
-            <label>Quantity<input required min="1" type="number" name="quantity"></label>
-            <label class="span-2">Notes<input name="notes" placeholder="Optional remarks"></label>
-          </div>
-          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-plus"></i>Add Stock</button></div>
-        </form>
+        <div class="card table-card inventory-lumen-card inventory-panel" id="inventoryWarehousesPanel">
+          <div class="table-wrap"><table><thead><tr><th>Location</th><th>Code</th><th>Item rows</th><th>Total stock</th><th>Low / out stock</th></tr></thead><tbody id="inventoryWarehousesTable"></tbody></table></div>
+        </div>
+        <div class="inventory-panel inventory-form-panel" id="inventoryIssuePanel"></div>
+        <div class="inventory-panel inventory-form-panel" id="inventoryGrnPanel"></div>
       </section>
 
       <section class="view" id="issueView">
-        <form id="manualStockOutForm" class="card form-card">
-          <div class="section-title"><p>Record direct stock issues or adjustments that are not linked to an approved request.</p><button class="secondary" type="button" data-history-page="stockOut">History</button></div>
-          <div class="form-grid">
-            <label>Category<input required name="category" id="stockOutCategory" data-categories list="stockOutCategoryOptions" placeholder="Select category"></label>
-            <label>Item name<input required name="itemName" id="stockOutItemName" data-item-names data-category-source="stockOutCategory" list="stockOutItemNameOptions" placeholder="Select item"></label>
-            <label>Type<input required name="itemCode" id="stockOutItemType" data-item-types data-item-source="stockOutItemName" data-category-source="stockOutCategory" list="stockOutItemTypeOptions" placeholder="Select type"></label>
-            <label>Selected Item ID<input readonly id="stockOutItemId" placeholder="Choose an item"></label>
-            <label>Location<input required name="location" data-locations list="stockOutLocationOptions" placeholder="Select location"></label>
-            <label>Quantity<input required min="1" type="number" name="quantity"></label>
-            <label>Issued by<input name="issuedBy" placeholder="Inventory Manager"></label>
-            <label>Issued to<input name="issuedTo" placeholder="Person, team, or department"></label>
-            <label class="span-2">Notes<input name="notes" placeholder="Optional remarks"></label>
+        <div class="stock-issue-table-section">
+          <div class="stock-issue-toolbar">
+            <label class="stock-issue-search"><i data-lucide="search"></i><input id="stockIssueSearchInput" type="search" placeholder="Search request ID, location, or item name"></label>
+            <label class="stock-issue-location-filter"><span>Location</span><input id="stockIssueLocationFilter" data-locations list="stockIssueLocationOptions" placeholder="All locations"></label>
+            <button class="secondary" type="button" data-history-page="stockOut">History</button>
           </div>
-          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-minus"></i>Stock Out</button></div>
-        </form>
-        <div class="card table-card">
-          <div class="section-title"><p>Issue approved request items only when stock is available at the requested location.</p><button class="secondary" type="button" data-history-page="stockOut">History</button></div>
           <div class="table-wrap"><table><thead><tr><th>Request</th><th>Item</th><th>Location</th><th>Requested</th><th>Available</th><th>Issue Qty</th><th>Issued By</th><th>Action</th></tr></thead><tbody id="issueTable"></tbody></table></div>
+        </div>
+        <div class="stock-issue-drawer" id="manualStockIssueDrawer" aria-hidden="true">
+          <form id="manualStockOutForm" class="card form-card stock-issue-drawer-card">
+            <div class="section-title"><div><h2>Manual Stock Issue</h2><p>Record direct stock issues or adjustments that are not linked to an approved request.</p></div></div>
+            <button class="icon-btn stock-issue-drawer-close" id="closeManualStockIssue" type="button" aria-label="Close manual stock issue"><i data-lucide="x"></i></button>
+            <div class="form-grid">
+              <label>Category<input required name="category" id="stockOutCategory" data-categories list="stockOutCategoryOptions" placeholder="Select category"></label>
+              <label>Item name<input required name="itemName" id="stockOutItemName" data-item-names data-category-source="stockOutCategory" list="stockOutItemNameOptions" placeholder="Select item"></label>
+              <label>Type<input required name="itemCode" id="stockOutItemType" data-item-types data-item-source="stockOutItemName" data-category-source="stockOutCategory" list="stockOutItemTypeOptions" placeholder="Select type"></label>
+              <label>Selected Item ID<input readonly id="stockOutItemId" placeholder="Choose an item"></label>
+              <label>Location<input required name="location" data-locations list="stockOutLocationOptions" placeholder="Select location"></label>
+              <label>Quantity<input required min="1" type="number" name="quantity"></label>
+              <label>Issued by<input name="issuedBy" placeholder="Inventory Manager"></label>
+              <label>Issued to<input name="issuedTo" placeholder="Person, team, or department"></label>
+              <label class="span-2">Notes<input name="notes" placeholder="Optional remarks"></label>
+            </div>
+            <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-minus"></i>Stock Out</button></div>
+          </form>
         </div>
       </section>
 
       <section class="view" id="poView">
-        <form id="poForm" class="card form-card">
-          <div class="section-title"><p>Create procurement orders, add vendor and delivery details, and prepare saved PO records for review.</p></div>
-          <div class="po-entry-layout">
-            <fieldset class="po-entry-section">
-              <legend>PO Reference</legend>
-              <div class="form-grid">
-                <label>PO number<input name="poNumber" placeholder="Leave blank for auto number"></label>
-                <label>Issue date<input name="issueDate" type="date"></label>
-                <label>Status<input name="status" list="poStatusOptions" placeholder="Select status"><datalist id="poStatusOptions"><option value="Open"></option><option value="Ordered"></option><option value="Closed"></option></datalist></label>
-                <label>Budget line / donor<input name="budgetLine" placeholder="Budget line, grant, or donor"></label>
-              </div>
-            </fieldset>
-            <div class="po-entry-columns">
+        <div class="po-records-screen">
+          <div class="po-records-head">
+            <div>
+              <h2>Purchase Orders</h2>
+              <p>Confirmed POs. Convert RFQs or create directly.</p>
+            </div>
+            <button class="primary po-new-button" id="openPoDrawer" type="button"><i data-lucide="plus"></i>Generate PO</button>
+          </div>
+          <div class="po-records-toolbar">
+            <label class="po-search-filter"><i data-lucide="search"></i><input id="poSearchInput" type="search" placeholder="Search by ID or vendor..."></label>
+            <label class="po-vendor-filter"><select id="poVendorFilter"><option value="">All vendors</option></select></label>
+            <div class="po-status-filters" id="poStatusFilters" aria-label="PO status filters"></div>
+          </div>
+          <div class="po-records-card">
+            <div class="table-wrap"><table><thead><tr><th>PO</th><th>Vendor</th><th>Ordered</th><th>Expected</th><th>From RFQ</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody id="poTable"></tbody></table></div>
+          </div>
+        </div>
+        <div class="po-drawer" id="poDrawer" aria-hidden="true">
+          <form id="poForm" class="card form-card po-drawer-card">
+            <button class="icon-btn po-drawer-close" id="closePoDrawer" type="button" aria-label="Close PO form"><i data-lucide="x"></i></button>
+            <div class="section-title"><h2>Generate PO</h2><p>Create procurement orders, add vendor and delivery details, and prepare saved PO records for review.</p></div>
+            <div class="po-entry-layout">
+              <fieldset class="po-entry-section">
+                <legend>PO Reference</legend>
+                <div class="form-grid">
+                  <label>PO number<input name="poNumber" placeholder="Leave blank for auto number"></label>
+                  <label>Issue date<input name="issueDate" type="date"></label>
+                  <label>Status<input name="status" list="poStatusOptions" placeholder="Select status"><datalist id="poStatusOptions"><option value="Draft"></option><option value="Pending Approval"></option><option value="Approved"></option><option value="Sent"></option><option value="Partially Received"></option><option value="Received"></option><option value="Cancelled"></option><option value="Closed"></option></datalist></label>
+                  <label>Budget line / donor<input name="budgetLine" placeholder="Budget line, grant, or donor"></label>
+                </div>
+              </fieldset>
+              <div class="po-entry-columns">
               <fieldset class="po-entry-section">
                 <legend>Vendor Details</legend>
                 <div class="form-grid">
@@ -291,47 +329,59 @@
                   <label>Service completion date<input name="serviceCompletionDate" type="date"></label>
                 </div>
               </fieldset>
+              </div>
+              <fieldset class="po-entry-section">
+                <legend>Bank Account Details</legend>
+                <div class="form-grid">
+                  <label>Bank<input name="bankName"></label>
+                  <label>A/C title<input name="accountTitle" placeholder="Account title"></label>
+                  <label>A/C no.<input name="accountNo"></label>
+                </div>
+              </fieldset>
+              <fieldset class="po-entry-section">
+                <legend>Terms & Reference</legend>
+                <div class="form-grid">
+                  <label>Payment terms<input name="paymentTerms" value="As per Shehersaaz Standard Payment terms (30 days)"></label>
+                  <label>Delivery terms<input name="deliveryTerms" placeholder="Delivery terms"></label>
+                  <label class="span-2">Quotation reference<input name="quotationReference" placeholder="Quotation number / reference"></label>
+                </div>
+              </fieldset>
+              <fieldset class="po-entry-section">
+                <legend>Item Details</legend>
+                <div class="po-items-toolbar">
+                  <span>Up to 20 items can be ordered from this vendor on one PO.</span>
+                  <button class="secondary" id="addPoItem" type="button"><i data-lucide="plus"></i>Add item</button>
+                </div>
+                <div id="poItems" class="po-items-editor"></div>
+              </fieldset>
+              <fieldset class="po-entry-section">
+                <legend>Amount</legend>
+                <div class="form-grid po-amount-grid">
+                  <label>GST %<input min="0" step="0.01" type="number" name="taxRate" value="18"></label>
+                  <label>PO amount<input readonly name="poAmount" value="0"></label>
+                  <label>Approved by<input name="approvedBy" placeholder="Approver name"></label>
+                  <label class="span-2">Notes / remarks<input name="notesRemarks" placeholder="Optional remarks"></label>
+                </div>
+              </fieldset>
             </div>
-            <fieldset class="po-entry-section">
-              <legend>Bank Account Details</legend>
-              <div class="form-grid">
-                <label>Bank<input name="bankName"></label>
-                <label>A/C title<input name="accountTitle" placeholder="Account title"></label>
-                <label>A/C no.<input name="accountNo"></label>
-              </div>
-            </fieldset>
-            <fieldset class="po-entry-section">
-              <legend>Terms & Reference</legend>
-              <div class="form-grid">
-                <label>Payment terms<input name="paymentTerms" value="As per Shehersaaz Standard Payment terms (30 days)"></label>
-                <label>Delivery terms<input name="deliveryTerms" placeholder="Delivery terms"></label>
-                <label class="span-2">Quotation reference<input name="quotationReference" placeholder="Quotation number / reference"></label>
-              </div>
-            </fieldset>
-            <fieldset class="po-entry-section">
-              <legend>Item Details</legend>
-              <div class="po-items-toolbar">
-                <span>Up to 20 items can be ordered from this vendor on one PO.</span>
-                <button class="secondary" id="addPoItem" type="button"><i data-lucide="plus"></i>Add item</button>
-              </div>
-              <div id="poItems" class="po-items-editor"></div>
-            </fieldset>
-            <fieldset class="po-entry-section">
-              <legend>Amount</legend>
-              <div class="form-grid po-amount-grid">
-                <label>GST %<input min="0" step="0.01" type="number" name="taxRate" value="18"></label>
-                <label>PO amount<input readonly name="poAmount" value="0"></label>
-                <label>Approved by<input name="approvedBy" placeholder="Approver name"></label>
-                <label class="span-2">Notes / remarks<input name="notesRemarks" placeholder="Optional remarks"></label>
-              </div>
-            </fieldset>
-          </div>
-          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="file-plus"></i>Generate PO</button></div>
-        </form>
-        <div class="card table-card">
-          <div class="section-title"><p>Saved purchase orders can be printed, tracked, and cancelled where allowed.</p></div>
-          <div class="table-wrap"><table><thead><tr><th>PO #</th><th>Issue Date</th><th>Vendor</th><th>Specifications</th><th>Qty Ordered</th><th>Unit Price</th><th>PO Amount</th><th>Status</th><th>Arrived By</th><th>Location</th><th>Qty Received</th><th>Cancellation Reason</th><th>Actions</th></tr></thead><tbody id="poTable"></tbody></table></div>
+            <div class="form-actions"><button class="primary" type="submit"><i data-lucide="file-plus"></i>Generate PO</button></div>
+          </form>
         </div>
+      </section>
+
+      <section class="view procurement-view" id="procurementView">
+        <div class="inventory-page-header">
+          <div>
+            <h1>Procurement</h1>
+            <p>Purchase orders, vendor records, and procurement-ready supplier details.</p>
+          </div>
+        </div>
+        <div class="inventory-module-tabs" id="procurementModuleTabs">
+          <button class="inventory-module-tab active" type="button" data-procurement-tab="po"><i data-lucide="file-pen-line"></i>PO</button>
+          <button class="inventory-module-tab" type="button" data-procurement-tab="vendors"><i data-lucide="building-2"></i>Vendors</button>
+        </div>
+        <div class="procurement-panel active" id="procurementPoPanel"></div>
+        <div class="procurement-panel" id="procurementVendorsPanel"></div>
       </section>
 
       <template id="poItemTemplate">
@@ -353,25 +403,33 @@
       </template>
 
       <section class="view" id="grnView">
-        <form id="grnForm" class="card form-card">
-          <div class="section-title"><p>Receive goods against eligible POs and post accepted quantities to the exact item and location.</p></div>
-          <div class="form-grid">
-            <label>PO Number<input required name="poNumber" id="poSelect" list="poNumberOptions" placeholder="Select PO number"></label>
-            <label>PO item<select required name="poLineId" id="grnPoLineItem"><option value="">Select PO item</option></select></label>
-            <label>Item name<input readonly name="itemName" id="grnItemName"></label>
-            <label>Type<input readonly name="itemType" id="grnItemType"></label>
-            <label>Item ID<input readonly required name="itemCode" id="grnItemCode"></label>
-            <label>Location<input required name="location" data-locations list="grnLocationOptions" placeholder="Select location"></label>
-            <label>Qty received<input required min="1" type="number" name="qtyReceived"></label>
-            <label>Qty accepted<input required min="0" type="number" name="qtyAccepted"></label>
-            <label>Received by<input required name="receivedBy"></label>
-            <label class="span-2">Notes<input name="notes"></label>
+        <div class="grn-screen-shell">
+          <div class="stock-issue-toolbar grn-records-toolbar">
+            <label class="stock-issue-search grn-record-search"><i data-lucide="search"></i><input id="grnSearchInput" type="search" placeholder="Search by GRN, PO, or vendor."></label>
+            <label class="stock-issue-location-filter grn-filter-field"><span>Vendor</span><select id="grnVendorFilter"><option>All vendors</option></select></label>
           </div>
-          <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-check"></i>Create GRN</button></div>
-        </form>
-        <div class="card table-card">
-          <div class="section-title"><p>Track received goods, accepted quantities, receiving staff, and printable GRN records.</p></div>
-          <div class="table-wrap"><table><thead><tr><th>GRN #</th><th>PO #</th><th>Item ID</th><th>Item / Specification</th><th>Location</th><th>Received</th><th>Accepted</th><th>Received By</th><th>Date</th><th>Actions</th></tr></thead><tbody id="grnTable"></tbody></table></div>
+          <div class="grn-records-card">
+            <div class="table-wrap"><table><thead><tr><th>GRN</th><th>Linked PO</th><th>Vendor</th><th>Received</th><th>Into</th><th>Units</th><th>Status</th><th></th></tr></thead><tbody id="grnTable"></tbody></table></div>
+          </div>
+        </div>
+        <div class="grn-drawer" id="grnDrawer" aria-hidden="true">
+          <form id="grnForm" class="card form-card grn-drawer-card">
+            <button class="icon-btn grn-drawer-close" id="closeGrnDrawer" type="button" aria-label="Close GRN form"><i data-lucide="x"></i></button>
+            <div class="section-title"><h2>Create GRN</h2><p>Receive goods against eligible POs and post accepted quantities to the exact item and location.</p></div>
+            <div class="form-grid">
+              <label>PO Number<input required name="poNumber" id="poSelect" list="poNumberOptions" placeholder="Select PO number"></label>
+              <label class="grn-po-item-field">PO item<select name="poLineId" id="grnPoLineItem"><option value="">Select PO item</option></select></label>
+              <label>Item name<input readonly name="itemName" id="grnItemName"></label>
+              <label>Type<input readonly name="itemType" id="grnItemType"></label>
+              <label>Item ID<input readonly required name="itemCode" id="grnItemCode"></label>
+              <label>Location<input required name="location" data-locations list="grnLocationOptions" placeholder="Select location"></label>
+              <label>Qty received<input required min="1" type="number" name="qtyReceived"></label>
+              <label>Qty accepted<input required min="0" type="number" name="qtyAccepted"></label>
+              <label>Received by<input required name="receivedBy"></label>
+              <label class="span-2">Notes<input name="notes"></label>
+            </div>
+            <div class="form-actions"><button class="primary" type="submit"><i data-lucide="package-check"></i>Create GRN</button></div>
+          </form>
         </div>
       </section>
 
@@ -517,6 +575,33 @@
         <button class="danger-btn" id="confirmDeleteUser" type="button"><i data-lucide="trash-2"></i>Delete User</button>
       </div>
     </div>
+  </div>
+
+  <div class="modal-backdrop" id="deleteInventoryItemModal" aria-hidden="true">
+    <div class="card modal-card delete-user-card">
+      <div class="modal-head">
+        <div class="section-title"><h2>Delete Product</h2><p id="deleteInventoryItemMessage">Do you want to delete this product? It will be permanently deleted from the IMS.</p></div>
+        <button class="icon-btn" id="closeDeleteInventoryItemModal" type="button" aria-label="Close delete product confirmation"><i data-lucide="x"></i></button>
+      </div>
+      <div class="form-actions">
+        <button class="secondary" id="cancelDeleteInventoryItem" type="button">Cancel</button>
+        <button class="danger-btn" id="confirmDeleteInventoryItem" type="button"><i data-lucide="trash-2"></i>Delete Product</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="inventoryItemDetailModal" aria-hidden="true">
+    <section class="card modal-card inventory-detail-card" role="dialog" aria-modal="true" aria-label="Inventory item details">
+      <div class="modal-head">
+        <div class="section-title"><h2 id="inventoryDetailTitle">Item details</h2><p id="inventoryDetailSubtitle"></p></div>
+        <div class="modal-head-actions">
+          <button class="danger-btn inventory-delete-detail" id="deleteInventoryItem" type="button"><i data-lucide="trash-2"></i>Delete</button>
+          <button class="icon-btn" id="closeInventoryDetail" type="button" aria-label="Close item details"><i data-lucide="x"></i></button>
+        </div>
+      </div>
+      <div class="inventory-detail-body" id="inventoryDetailBody"></div>
+      <div class="form-actions"><button class="secondary" id="dismissInventoryDetail" type="button">Close</button><button class="primary" id="saveInventoryStock" type="button"><i data-lucide="check-circle"></i>Update stock</button></div>
+    </section>
   </div>
 
   <div class="modal-backdrop" id="approvalDetailModal" aria-hidden="true">

@@ -19,7 +19,7 @@ const VIEW_ROLE_ACCESS = {
   requests: ["admin"],
   approvals: ["admin", "approver"],
   inventory: ["admin", "inventory_manager"],
-  stockIn: ["admin", "inventory_manager"],
+  procurement: ["admin", "inventory_manager"],
   issue: ["admin", "inventory_manager"],
   grn: ["admin", "inventory_manager"],
   po: ["admin", "inventory_manager"],
@@ -49,6 +49,11 @@ let businessDataLoading = true;
 let businessDataError = "";
 const businessDataErrors = {};
 let dashboardDefaultHtml = "";
+const APPROVED_LOCATIONS = ["I9 warehouse", "Secretariat", "NSR CC", "RWP CC"];
+const APPROVED_LOCATION_LOOKUP = new Map(APPROVED_LOCATIONS.map((location) => [
+  location.toLowerCase().replace(/[^a-z0-9]/g, ""),
+  location
+]));
 
 const seedState = {
   locations: [],
@@ -70,8 +75,37 @@ let inventoryCategoryFilter = "All";
 let inventoryLocationFilter = "All";
 let inventoryStatusFilter = "All";
 let inventorySearchTerm = "";
+let stockIssueSearchTerm = "";
+let stockIssueLocationFilter = "All";
+let grnSearchTerm = "";
+let grnVendorFilter = "All";
+let poSearchTerm = "";
+let poVendorFilter = "All";
+let poStatusFilter = "All";
 let inventoryPage = 1;
-const INVENTORY_PAGE_SIZE = 15;
+let inventoryModuleTab = "items";
+let procurementModuleTab = "po";
+let activeInventoryDetailCode = "";
+let lastAppliedGrnPoNumber = "";
+const INVENTORY_VIEW_TABS = {
+  issue: "issue",
+  grn: "grn"
+};
+const INVENTORY_TAB_LABELS = {
+  items: "Items",
+  warehouses: "Warehouses",
+  issue: "Stock Issue",
+  grn: "GRN"
+};
+const PROCUREMENT_VIEW_TABS = {
+  po: "po",
+  vendors: "vendors"
+};
+const PROCUREMENT_TAB_LABELS = {
+  po: "PO",
+  vendors: "Vendors"
+};
+const INVENTORY_PAGE_SIZE = 18;
 let requestsPage = 1;
 let requestsFilter = "All";
 const REQUESTS_PAGE_SIZE = 10;
@@ -224,7 +258,7 @@ const settingsSections = [
   { group: "user_management", title: "User Management", icon: "user-cog", description: "Manage user account roles and access.", adminOnly: true, fields: [] },
   { group: "inventory", title: "Inventory", icon: "boxes", description: "Inventory masters and stock movement rules.", fields: [
     ["item_categories", "Item categories", "textarea"],
-    ["stock_status_rules", "Stock status rules", "textarea"], ["allow_negative_stock", "Allow negative stock", "checkbox"], ["allow_manual_stock_in", "Allow manual stock in", "checkbox"],
+    ["stock_status_rules", "Stock status rules", "textarea"], ["allow_negative_stock", "Allow negative stock", "checkbox"],
     ["allow_stock_adjustments", "Allow stock adjustments", "checkbox"]
   ] },
   { group: "locations", title: "Locations", icon: "map-pin", description: "Location master configuration.", fields: [
@@ -344,6 +378,21 @@ function applyImportedInventoryBase(sourceState) {
     locations: imported.locations.length ? imported.locations : (sourceState?.locations || []),
     items: imported.items.length ? imported.items : (sourceState?.items || [])
   };
+}
+
+function approvedLocationName(location) {
+  const key = String(location || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return APPROVED_LOCATION_LOOKUP.get(key) || "";
+}
+
+function enforceApprovedLocations() {
+  state.locations = [...APPROVED_LOCATIONS];
+  if (Array.isArray(state.inventoryRows)) {
+    state.inventoryRows = state.inventoryRows
+      .map((row) => ({ ...row, location: approvedLocationName(row.location) }))
+      .filter((row) => row.location);
+  }
+  if (!APPROVED_LOCATIONS.includes(inventoryLocationFilter)) inventoryLocationFilter = "All";
 }
 
 function saveState() {
@@ -479,6 +528,17 @@ function stockFor(itemCode, location) {
     }, 0);
 }
 
+function lowStockThreshold() {
+  return 10;
+}
+
+function inventoryStockStatus(stock) {
+  const quantity = Number(stock);
+  if (!Number.isFinite(quantity)) return "Item master";
+  if (quantity <= 0) return "Out of stock";
+  return quantity < lowStockThreshold() ? "Low stock" : "In stock";
+}
+
 function stockRows() {
   const importedInventoryByKey = new Map((state.inventoryRows || [])
     .filter((row) => row.code && row.location)
@@ -503,7 +563,7 @@ function stockRows() {
     const item = findItem(pair.itemCode) || dbRow || {};
     const stock = dbRow ? Number(dbRow.stock || 0) : stockFor(pair.itemCode, pair.location);
     const available = dbRow ? Number(dbRow.available ?? dbRow.stock ?? 0) : stock;
-    const status = stock <= 0 ? "Out of stock" : "OK";
+    const status = inventoryStockStatus(stock);
     return { ...item, location: pair.location, stock, available, status };
   });
 }
@@ -1001,13 +1061,7 @@ async function loadBusinessData({ silent = false } = {}) {
     if (key === "vendors") state.vendors = state.vendors.map(normalizeVendorRecord);
   });
   state = applyImportedInventoryBase(state);
-  if (!importedInventoryState().locations.length) {
-    state.locations = [...new Set([
-      ...state.locations,
-      ...state.requests.map((request) => request.location),
-      ...state.inventoryRows?.map((row) => row.location) || []
-    ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  }
+  enforceApprovedLocations();
   if (!silent) showToast("IMS data refreshed from database.");
   businessDataError = failed.length ? `Unable to load ${failed.join(", ")} data.` : "";
   businessDataLoading = false;
@@ -1615,6 +1669,23 @@ function syncSelectOptions(scope = document) {
     inventoryLocationFilter = "All";
     inventoryLocationSelect.value = "";
   }
+  const stockIssueLocationSelect = document.getElementById("stockIssueLocationFilter");
+  setChoiceOptions(stockIssueLocationSelect, "All locations", state.locations);
+  if (state.locations.includes(stockIssueLocationFilter)) {
+    stockIssueLocationSelect.value = stockIssueLocationFilter;
+  } else {
+    stockIssueLocationFilter = "All";
+    if (stockIssueLocationSelect) stockIssueLocationSelect.value = "";
+  }
+  const grnVendorSelect = document.getElementById("grnVendorFilter");
+  const vendorNames = [...new Set(state.vendors.map((vendor) => vendor.name).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  setChoiceOptions(grnVendorSelect, "All vendors", vendorNames);
+  if (vendorNames.includes(grnVendorFilter)) {
+    grnVendorSelect.value = grnVendorFilter;
+  } else {
+    grnVendorFilter = "All";
+    if (grnVendorSelect) grnVendorSelect.value = "";
+  }
   scope.querySelectorAll("[data-items]").forEach((field) => {
     const selected = field.value;
     const categorySourceId = field.dataset.categorySource;
@@ -1697,10 +1768,6 @@ function updateSelectedItemId(typeSelectId, displayInputId) {
   document.getElementById(displayInputId).value = item ? item.code : "";
 }
 
-function updateStockInItemId() {
-  updateSelectedItemId("stockInItemType", "stockInItemId");
-}
-
 function updateStockOutItemId() {
   updateSelectedItemId("stockOutItemType", "stockOutItemId");
 }
@@ -1715,14 +1782,78 @@ function closeItemModal() {
   document.getElementById("itemModal").setAttribute("aria-hidden", "true");
 }
 
+function openManualStockIssue() {
+  const drawer = document.getElementById("manualStockIssueDrawer");
+  if (!drawer) return;
+  if (drawer.parentElement !== document.body) document.body.appendChild(drawer);
+  drawer.classList.add("show");
+  drawer.setAttribute("aria-hidden", "false");
+  document.body.classList.add("manual-stock-issue-open");
+}
+
+function closeManualStockIssue() {
+  const drawer = document.getElementById("manualStockIssueDrawer");
+  if (!drawer) return;
+  drawer.classList.remove("show");
+  drawer.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("manual-stock-issue-open");
+}
+
+function openPoDrawer() {
+  const drawer = document.getElementById("poDrawer");
+  if (!drawer) return;
+  if (drawer.parentElement !== document.body) document.body.appendChild(drawer);
+  syncSelectOptions(drawer);
+  drawer.classList.add("show");
+  drawer.setAttribute("aria-hidden", "false");
+  document.body.classList.add("po-drawer-open");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function closePoDrawer() {
+  const drawer = document.getElementById("poDrawer");
+  if (!drawer) return;
+  drawer.classList.remove("show");
+  drawer.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("po-drawer-open");
+}
+
+function mountInventorySubsections() {
+  [
+    ["issueView", "inventoryIssuePanel"],
+    ["grnView", "inventoryGrnPanel"]
+  ].forEach(([sourceId, targetId]) => {
+    const source = document.getElementById(sourceId);
+    const target = document.getElementById(targetId);
+    if (!source || !target || target.childElementCount) return;
+    while (source.firstElementChild) {
+      target.appendChild(source.firstElementChild);
+    }
+  });
+}
+
+function mountProcurementSubsections() {
+  [
+    ["poView", "procurementPoPanel"],
+    ["vendorsView", "procurementVendorsPanel"]
+  ].forEach(([sourceId, targetId]) => {
+    const source = document.getElementById(sourceId);
+    const target = document.getElementById(targetId);
+    if (!source || !target || target.childElementCount) return;
+    while (source.firstElementChild) {
+      target.appendChild(source.firstElementChild);
+    }
+  });
+}
+
 const breadcrumbByView = {
   dashboard: ["Dashboard"],
   requisition: ["Requests", "Requisition Form"],
   requests: ["Requests"],
   inventory: ["Inventory"],
-  stockIn: ["Inventory", "Stock In"],
   issue: ["Inventory", "Stock Issue"],
   grn: ["Inventory", "GRN"],
+  procurement: ["Procurement"],
   po: ["Procurement", "PO"],
   vendors: ["Procurement", "Vendors"],
   transport: ["Requests", "Transport Requests"],
@@ -1734,7 +1865,11 @@ const breadcrumbByView = {
 function updateTopbarBreadcrumb(view) {
   const breadcrumb = document.getElementById("topbarBreadcrumb");
   if (!breadcrumb) return;
-  const parts = breadcrumbByView[view] || ["Dashboard"];
+  const parts = view === "inventory"
+    ? ["Inventory", INVENTORY_TAB_LABELS[inventoryModuleTab] || "Items"]
+    : view === "procurement"
+      ? ["Procurement", PROCUREMENT_TAB_LABELS[procurementModuleTab] || "PO"]
+    : breadcrumbByView[view] || ["Dashboard"];
   breadcrumb.innerHTML = `<span>Workspace</span>${parts.map((part, index) => `
     <i data-lucide="chevron-right"></i>
     ${index === parts.length - 1 ? `<strong>${escapeHtml(part)}</strong>` : `<span>${escapeHtml(part)}</span>`}
@@ -1743,6 +1878,14 @@ function updateTopbarBreadcrumb(view) {
 }
 
 function setView(view) {
+  if (INVENTORY_VIEW_TABS[view]) {
+    inventoryModuleTab = INVENTORY_VIEW_TABS[view];
+    view = "inventory";
+  }
+  if (PROCUREMENT_VIEW_TABS[view]) {
+    procurementModuleTab = PROCUREMENT_VIEW_TABS[view];
+    view = "procurement";
+  }
   if (!canAccessView(view)) {
     view = firstAccessibleView();
   }
@@ -1926,7 +2069,7 @@ function dashboardSummaryRows() {
     ["Inventory Requests", state.requests.length],
     ["Transport Requests", state.transportRequests.length],
     ["Approved Requests", approvedRequests.length],
-    ["Low Stock Items", currentStockRows.filter((row) => row.status === "Restock needed").length],
+    ["Low Stock Items", currentStockRows.filter((row) => row.status === "Low stock").length],
     ["Out of Stock Items", currentStockRows.filter((row) => row.status === "Out of stock").length],
     ["Opened PO", openPOs.length],
     ["Ordered PO", orderedPOs.length],
@@ -1982,7 +2125,7 @@ function handleDashboardAction(action) {
     },
     "pending-issue": () => setView("issue"),
     "low-stock": () => {
-      inventoryStatusFilter = "Restock needed";
+      inventoryStatusFilter = "Low stock";
       inventorySearchTerm = "";
       const inventorySearchInput = document.getElementById("inventorySearchInput");
       if (inventorySearchInput) inventorySearchInput.value = "";
@@ -2066,7 +2209,7 @@ function renderDashboard() {
   setText("kpiCancelledPO", cancelledPOs.length);
   setText("kpiStockLines", currentStockRows.length);
   setText("kpiInStock", currentStockRows.filter((row) => row.stock > 0).length);
-  setText("kpiStockLow", currentStockRows.filter((row) => row.status === "Restock needed").length);
+  setText("kpiStockLow", currentStockRows.filter((row) => row.status === "Low stock").length);
   setText("kpiOutOfStock", currentStockRows.filter((row) => row.status === "Out of stock").length);
   setText("kpiVendors", state.vendors.filter(isActiveVendor).length);
   setText("kpiVendorContacts", state.vendors.filter((vendor) => vendor.contact).length);
@@ -2240,34 +2383,335 @@ function renderRequisition() {
 
 function renderInventory() {
   if (businessDataLoading) {
-    showTableSkeleton("inventoryTable", 7, 8);
+    const cards = document.getElementById("inventoryCards");
+    if (cards) cards.innerHTML = `<div class="inventory-card-empty">Loading inventory...</div>`;
     return;
   }
   const inventoryError = sourceError("inventory", "items");
   if (inventoryError) {
-    setTableContent("inventoryTable", errorStateRow(7, inventoryError));
+    const cards = document.getElementById("inventoryCards");
+    if (cards) cards.innerHTML = `<div class="inventory-card-empty">${escapeHtml(inventoryError)}</div>`;
     return;
   }
   const searchTerm = inventorySearchTerm.trim().toLowerCase();
-  const rows = stockRows().filter((row) => {
+  const allStockRows = stockRows();
+  const filteredStockRows = allStockRows.filter((row) => {
     const matchesCategory = inventoryCategoryFilter === "All" || row.category === inventoryCategoryFilter;
     const matchesLocation = inventoryLocationFilter === "All" || row.location === inventoryLocationFilter;
-    const matchesStatus = inventoryStatusFilter === "All" || row.status === inventoryStatusFilter;
     const matchesSearch = !searchTerm || [row.code, row.name, row.type, row.category, row.location, row.status]
       .some((value) => String(value || "").toLowerCase().includes(searchTerm));
-    return matchesCategory && matchesLocation && matchesStatus && matchesSearch;
+    return matchesCategory && matchesLocation && matchesSearch;
   });
+  renderInventoryStatusTabs();
+  const rows = inventoryItemCards(filteredStockRows).filter((item) => {
+    return inventoryStatusFilter === "All" || inventoryItemStatus(item).label === inventoryStatusFilter;
+  });
+  const lowOrOutRows = allStockRows.filter((row) => {
+    const status = String(row.status || "").toLowerCase();
+    return status.includes("out of stock") || status.includes("low stock");
+  });
+  const inventoryTotalCount = document.getElementById("inventoryTotalCount");
+  const inventoryLocationCount = document.getElementById("inventoryLocationCount");
+  const inventoryLowCount = document.getElementById("inventoryLowCount");
+  const inventoryCategoryCount = document.getElementById("inventoryCategoryCount");
+  if (inventoryTotalCount) inventoryTotalCount.textContent = String(rows.length);
+  if (inventoryLocationCount) inventoryLocationCount.textContent = String(new Set(allStockRows.map((row) => row.location).filter(Boolean)).size);
+  if (inventoryLowCount) inventoryLowCount.textContent = String(lowOrOutRows.length);
+  if (inventoryCategoryCount) inventoryCategoryCount.textContent = String(categories().length);
+  renderInventoryModuleTabs(allStockRows, lowOrOutRows);
+  renderInventoryWarehouses(allStockRows);
   const pageCount = Math.max(1, Math.ceil(rows.length / INVENTORY_PAGE_SIZE));
   inventoryPage = Math.min(Math.max(1, inventoryPage), pageCount);
   const start = (inventoryPage - 1) * INVENTORY_PAGE_SIZE;
   const pageRows = rows.slice(start, start + INVENTORY_PAGE_SIZE);
-  setTableContent("inventoryTable", pageRows.map((row) => `
-    <tr><td>${row.code}</td><td>${row.name}</td><td>${row.type}</td><td>${row.category}</td><td>${row.location}</td><td>${quantityValue(row.stock)}</td><td>${statusBadge(row.status)}</td></tr>
-  `).join("") || emptyStateRow(7, "No inventory items found", "Try changing filters or add inventory items from the inventory tools."));
+  renderInventoryCards(pageRows);
   document.getElementById("inventoryPageInfo").textContent = `Page ${inventoryPage} of ${pageCount} - ${rows.length} item${rows.length === 1 ? "" : "s"}`;
   document.getElementById("inventoryPrev").disabled = inventoryPage === 1;
   document.getElementById("inventoryNext").disabled = inventoryPage === pageCount;
 }
+
+function inventoryItemCards(rows) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    if (!row.code) return;
+    if (!groups.has(row.code)) {
+      groups.set(row.code, {
+        code: row.code,
+        name: row.name,
+        type: row.type,
+        category: row.category,
+        totalStock: 0,
+        available: 0,
+        locations: []
+      });
+    }
+    const group = groups.get(row.code);
+    const stock = Number(row.stock) || 0;
+    group.totalStock += stock;
+    group.available += Number(row.available ?? row.stock) || 0;
+    group.locations.push({ location: row.location, stock, available: Number(row.available ?? row.stock) || 0, status: row.status });
+  });
+  const items = [...groups.values()];
+  if (inventoryCategoryFilter !== "All") {
+    return items.sort((a, b) => `${a.category} ${a.name}`.localeCompare(`${b.category} ${b.name}`));
+  }
+  const byCategory = categories().map((category) => ({
+    category,
+    items: items
+      .filter((item) => item.category === category)
+      .sort((a, b) => String(a.name || a.code).localeCompare(String(b.name || b.code)))
+  }));
+  const mixed = [];
+  const longest = Math.max(0, ...byCategory.map((group) => group.items.length));
+  for (let index = 0; index < longest; index += 1) {
+    byCategory.forEach((group) => {
+      if (group.items[index]) mixed.push(group.items[index]);
+    });
+  }
+  return mixed;
+}
+
+function inventoryCardGradient(item = {}) {
+  const category = item.category || "";
+  const key = String(category).toLowerCase();
+  if (key.includes("station")) return "linear-gradient(135deg,#fb8a45,#d94b0d)";
+  if (key.includes("rwh")) return "linear-gradient(135deg,#37a665,#00602d)";
+  if (key.includes("progress")) return "linear-gradient(135deg,#5488e9,#243fbd)";
+  return "linear-gradient(135deg,#10b981,#0b6a36)";
+}
+
+function itemInitials(item) {
+  return String(item.name || item.code || "?")
+    .split(/\s+/)
+    .map((part) => part[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+function inventoryItemStatus(item = {}) {
+  const stock = Number(item.totalStock);
+  if (!Number.isFinite(stock) || stock <= 0) return { label: "Out of stock", className: "out", barClass: "out" };
+  if (stock < lowStockThreshold()) return { label: "Low stock", className: "low", barClass: "low" };
+  return { label: "In stock", className: "in", barClass: "in" };
+}
+
+function renderInventoryStatusTabs() {
+  const container = document.getElementById("inventoryStatusTabs");
+  if (!container) return;
+  const statuses = ["All", "In stock", "Low stock", "Out of stock"];
+  if (!statuses.includes(inventoryStatusFilter)) inventoryStatusFilter = "All";
+  container.innerHTML = statuses.map((status) => `
+    <button class="inventory-status-tab ${status === inventoryStatusFilter ? "active" : ""}" type="button" data-inventory-status="${status}">${status === "Low stock" ? "Low" : status}</button>
+  `).join("");
+}
+
+function renderInventoryCards(items) {
+  const container = document.getElementById("inventoryCards");
+  if (!container) return;
+  container.innerHTML = items.map((item) => {
+    const status = inventoryItemStatus(item);
+    const stockPercent = Math.max(4, Math.min(100, (item.totalStock / Math.max(lowStockThreshold(), item.totalStock, 1)) * 100));
+    const stockLabel = status.className === "low" ? `${quantityValue(item.totalStock)} - min ${lowStockThreshold()}` : quantityValue(item.totalStock);
+    return `<button class="inventory-item-card" type="button" data-item-code="${escapeHtml(item.code)}">
+      <span class="inventory-card-visual" style="background:${inventoryCardGradient(item)}">
+        <span>${escapeHtml(item.category || "Item")}</span>
+        <strong>${escapeHtml(itemInitials(item))}</strong>
+      </span>
+      <span class="inventory-card-head">
+        <span><strong>${escapeHtml(item.name || item.code)}</strong><small>${escapeHtml(item.code)}</small></span>
+        <em class="${status.className}">${status.label === "Low stock" ? "Low" : status.label}</em>
+      </span>
+      <span class="inventory-card-meta"><span>Stock</span><strong>${stockLabel}</strong></span>
+      <span class="inventory-card-bar ${status.barClass}"><i style="width:${stockPercent}%"></i></span>
+      <span class="inventory-card-foot"><span>${escapeHtml(item.type || "NA")}</span><span>${item.locations.length} location${item.locations.length === 1 ? "" : "s"}</span></span>
+    </button>`;
+  }).join("") || `<div class="inventory-card-empty">No inventory items found.</div>`;
+}
+
+function openInventoryItemDetail(itemCode) {
+  const rows = stockRows().filter((row) => row.code === itemCode);
+  if (!rows.length) return;
+  activeInventoryDetailCode = itemCode;
+  const item = inventoryItemCards(rows)[0];
+  const modal = document.getElementById("inventoryItemDetailModal");
+  const title = document.getElementById("inventoryDetailTitle");
+  const subtitle = document.getElementById("inventoryDetailSubtitle");
+  const body = document.getElementById("inventoryDetailBody");
+  if (!modal || !title || !subtitle || !body) return;
+  title.textContent = item.name || item.code;
+  subtitle.textContent = `${item.code} · ${item.category || "Uncategorized"}`;
+  const locationRows = APPROVED_LOCATIONS.map((location) => {
+    const row = rows.find((entry) => entry.location === location);
+    const stock = Number(row?.stock || 0);
+    const available = Number(row?.available ?? row?.stock ?? 0);
+    return `<div class="inventory-detail-stock-row">
+      <span>${escapeHtml(location)}</span>
+      <input type="number" min="0" step="1" value="${stock}" data-detail-stock-location="${escapeHtml(location)}" data-current-stock="${stock}">
+      <small>${escapeHtml(inventoryStockStatus(available))}</small>
+    </div>`;
+  }).join("");
+  body.innerHTML = `
+    <div class="inventory-detail-summary">
+      <span class="inventory-card-visual" style="background:${inventoryCardGradient(item)}">
+        <span>${escapeHtml(item.category || "Item")}</span>
+        <strong>${escapeHtml(itemInitials(item))}</strong>
+      </span>
+      <div class="inventory-detail-facts">
+        <div><span>Item ID</span><strong>${escapeHtml(item.code)}</strong></div>
+        <div><span>Category</span><strong>${escapeHtml(item.category || "NA")}</strong></div>
+        <div><span>Type / Specification</span><strong>${escapeHtml(item.type || "NA")}</strong></div>
+        <div><span>Total stock</span><strong>${quantityValue(item.totalStock)}</strong></div>
+      </div>
+    </div>
+    <section class="inventory-detail-stock">
+      <h3>Stock on hand</h3>
+      <p>Current quantity across approved IMS locations.</p>
+      ${locationRows}
+    </section>`;
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function closeInventoryItemDetail() {
+  const modal = document.getElementById("inventoryItemDetailModal");
+  if (!modal) return;
+  activeInventoryDetailCode = "";
+  modal.classList.remove("show");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+async function saveInventoryDetailStock() {
+  if (!activeInventoryDetailCode) return;
+  const rows = stockRows().filter((row) => row.code === activeInventoryDetailCode);
+  const item = rows[0] || findItem(activeInventoryDetailCode);
+  const inputs = [...document.querySelectorAll("[data-detail-stock-location]")];
+  const changes = inputs.map((input) => {
+    const next = Math.max(Number(input.value) || 0, 0);
+    const current = Number(input.dataset.currentStock) || 0;
+    return {
+      location: input.dataset.detailStockLocation,
+      delta: next - current
+    };
+  }).filter((change) => change.delta !== 0);
+  if (!changes.length) return showToast("No stock changes to save.", "error");
+  try {
+    for (const change of changes) {
+      await apiRequest("/stock/adjust", {
+        method: "POST",
+        body: JSON.stringify({
+          itemCode: activeInventoryDetailCode,
+          itemName: item?.name || "",
+          category: item?.category || "",
+          location: change.location,
+          quantity: Math.abs(change.delta),
+          direction: change.delta > 0 ? "in" : "out",
+          notes: "Adjusted from inventory item details"
+        })
+      });
+    }
+    const reopenedCode = activeInventoryDetailCode;
+    await loadBusinessData({ silent: true });
+    render();
+    openInventoryItemDetail(reopenedCode);
+    showToast("Stock updated.");
+  } catch (error) {
+    showToast(error.message || "Unable to update stock.", "error");
+  }
+}
+
+function openDeleteInventoryItemModal() {
+  if (!activeInventoryDetailCode) return;
+  const modal = document.getElementById("deleteInventoryItemModal");
+  const message = document.getElementById("deleteInventoryItemMessage");
+  const item = stockRows().find((row) => row.code === activeInventoryDetailCode);
+  if (message) {
+    message.textContent = `Do you want to delete ${item?.name || activeInventoryDetailCode}? It will be permanently deleted from the IMS.`;
+  }
+  if (!modal) return;
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function closeDeleteInventoryItemModal() {
+  const modal = document.getElementById("deleteInventoryItemModal");
+  if (!modal) return;
+  modal.classList.remove("show");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+async function confirmDeleteInventoryDetailItem() {
+  if (!activeInventoryDetailCode) return;
+  try {
+    await apiRequest(`/items/${encodeURIComponent(activeInventoryDetailCode)}`, { method: "DELETE" });
+    closeDeleteInventoryItemModal();
+    closeInventoryItemDetail();
+    await loadBusinessData({ silent: true });
+    inventoryPage = 1;
+    render();
+    showToast("Product deleted from IMS.");
+  } catch (error) {
+    showToast(error.message || "Unable to delete product.", "error");
+  }
+}
+
+function renderInventoryModuleTabs(allStockRows = stockRows()) {
+  document.querySelectorAll("[data-inventory-tab]").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.inventoryTab === inventoryModuleTab);
+  });
+  document.querySelectorAll(".inventory-panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.id === `inventory${inventoryModuleTab[0].toUpperCase()}${inventoryModuleTab.slice(1)}Panel`);
+  });
+  const kpis = document.getElementById("inventoryKpis");
+  if (kpis) kpis.hidden = inventoryModuleTab !== "items";
+  document.querySelectorAll("[data-inventory-items-only]").forEach((element) => {
+    element.hidden = inventoryModuleTab !== "items";
+  });
+  document.querySelectorAll("[data-inventory-issue-only]").forEach((element) => {
+    element.hidden = inventoryModuleTab !== "issue";
+  });
+  document.querySelectorAll("[data-inventory-grn-only]").forEach((element) => {
+    element.hidden = inventoryModuleTab !== "grn";
+  });
+  const itemCount = new Set(allStockRows.map((row) => row.code).filter(Boolean)).size;
+  const setText = (id, value) => {
+    const element = document.getElementById(id);
+    if (element) element.textContent = String(value);
+  };
+  setText("inventoryItemsTabCount", itemCount || state.items.length);
+  setText("inventoryWarehousesTabCount", state.locations.length);
+}
+
+function isLowOrOutStock(row) {
+  const status = String(row.status || "").toLowerCase();
+  return status.includes("out of stock") || status.includes("restock") || status.includes("low stock");
+}
+
+function renderInventoryWarehouses(allStockRows = stockRows()) {
+  const tbody = document.getElementById("inventoryWarehousesTable");
+  if (!tbody) return;
+  tbody.innerHTML = state.locations.map((location) => {
+    const rows = allStockRows.filter((row) => row.location === location);
+    const totalStock = rows.reduce((sum, row) => sum + (Number(row.stock) || 0), 0);
+    const lowCount = rows.filter(isLowOrOutStock).length;
+    const code = location === "I9 warehouse" ? "I9" : location.replace(/\s*CC$/i, "").slice(0, 3).toUpperCase();
+    return `<tr><td>${escapeHtml(location)}</td><td>${escapeHtml(code)}</td><td>${rows.length}</td><td>${quantityValue(totalStock)}</td><td>${lowCount}</td></tr>`;
+  }).join("") || emptyStateRow(5, "No warehouses found", "Approved locations will appear here.");
+}
+
+function renderProcurement() {
+  if (!PROCUREMENT_TAB_LABELS[procurementModuleTab]) procurementModuleTab = "po";
+  document.querySelectorAll("#procurementView [data-procurement-tab]").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.procurementTab === procurementModuleTab);
+  });
+  document.querySelectorAll("#procurementView .procurement-panel").forEach((panel) => {
+    const panelTab = panel.id === "procurementVendorsPanel" ? "vendors" : "po";
+    panel.classList.toggle("active", panelTab === procurementModuleTab);
+  });
+}
+
 
 function renderIssue() {
   if (businessDataLoading) {
@@ -2279,8 +2723,15 @@ function renderIssue() {
     setTableContent("issueTable", errorStateRow(8, issueError));
     return;
   }
+  const searchTerm = stockIssueSearchTerm.trim().toLowerCase();
   const rows = state.requests.flatMap((request) => request.items
     .filter((item) => item.approvalStatus === "Approved" && !["Issued", "Rejected", "Cancelled"].includes(item.issuanceStatus))
+    .filter(() => stockIssueLocationFilter === "All" || request.location === stockIssueLocationFilter)
+    .filter((item) => {
+      if (!searchTerm) return true;
+      return [request.requestId, request.location, item.itemName, item.itemCode]
+        .some((value) => String(value || "").toLowerCase().includes(searchTerm));
+    })
     .map((item) => {
       const available = stockFor(item.itemCode, request.location);
       const approvedQty = Number(item.quantityApproved || item.quantity || 0);
@@ -2294,39 +2745,109 @@ function renderIssue() {
         <td><button class="tiny success" onclick="issueItem('${request.requestId}','${item.id}')">Issue</button></td>
       </tr>`;
     }));
-  setTableContent("issueTable", rows.join("") || emptyStateRow(8, "No approved stock to issue", "Approved request items ready for issuance will appear here."));
+  const emptyTitle = searchTerm ? "No matching approved stock issues" : "No approved stock to issue";
+  const emptyBody = searchTerm ? "Try another request ID, location, or item name." : "Approved request items ready for issuance will appear here.";
+  setTableContent("issueTable", rows.join("") || emptyStateRow(8, emptyTitle, emptyBody));
 }
 
 function renderPO() {
   if (businessDataLoading) {
-    showTableSkeleton("poTable", 13, 7);
+    showTableSkeleton("poTable", 8, 7);
     return;
   }
   const poError = sourceError("purchaseOrders", "vendors");
   if (poError) {
-    setTableContent("poTable", errorStateRow(13, poError));
+    setTableContent("poTable", errorStateRow(8, poError));
     return;
   }
-  setTableContent("poTable", state.purchaseOrders.map((po) => `
+  renderPoVendorFilter();
+  renderPoStatusFilters();
+  const searchTerm = poSearchTerm.trim().toLowerCase();
+  const rows = state.purchaseOrders.filter((po) => {
+    const status = poDisplayStatus(po);
+    const matchesStatus = poStatusFilter === "All" || status === poStatusFilter;
+    const matchesVendor = poVendorFilter === "All" || poVendorName(po) === poVendorFilter;
+    const matchesSearch = !searchTerm || [po.poNumber, poVendorName(po), poItemSummary(po), po.location, po.quotationReference]
+      .some((value) => String(value || "").toLowerCase().includes(searchTerm));
+    return matchesStatus && matchesVendor && matchesSearch;
+  });
+  setTableContent("poTable", rows.map(renderPoRecordRow).join("") || emptyStateRow(8, "No matching purchase orders", "Try another PO number, vendor, or status filter."));
+  if (window.lucide) lucide.createIcons();
+}
+
+function poVendorName(po = {}) {
+  return po.vendorName || state.vendors.find((vendor) => String(vendor.id) === String(po.vendorId))?.name || "-";
+}
+
+function poDisplayStatus(po = {}) {
+  const status = String(po.status || "").trim().toLowerCase();
+  const ordered = Number(po.quantityOrdered ?? po.quantity ?? 0);
+  const received = Number(po.quantityReceived || 0);
+  if (status.includes("cancel")) return "Cancelled";
+  if (status.includes("draft")) return "Draft";
+  if (status.includes("partial")) return "Partial";
+  if (status.includes("received") || (ordered > 0 && received >= ordered)) return "Received";
+  if (received > 0) return "Partial";
+  if (status.includes("confirm") || status.includes("approved") || status.includes("sent") || status.includes("pending approval") || status.includes("open") || status.includes("ordered") || status.includes("closed")) return "Confirmed";
+  return "Draft";
+}
+
+function poExpectedDate(po = {}) {
+  return po.arrivedBy || po.serviceCompletionDate || po.expectedDate || po.deliveryDate || "";
+}
+
+function poSourceReference(po = {}) {
+  return po.rfqNumber || po.rfq || po.quotationReference || "-";
+}
+
+function poStatusCount(status) {
+  if (status === "All") return state.purchaseOrders.length;
+  return state.purchaseOrders.filter((po) => poDisplayStatus(po) === status).length;
+}
+
+function renderPoStatusFilters() {
+  const container = document.getElementById("poStatusFilters");
+  if (!container) return;
+  const statuses = ["All", "Draft", "Confirmed", "Partial", "Received", "Cancelled"];
+  if (!statuses.includes(poStatusFilter)) poStatusFilter = "All";
+  container.innerHTML = statuses.map((status) => `
+    <button class="po-status-filter ${status === poStatusFilter ? "active" : ""}" type="button" data-po-status="${status}">
+      ${status} <span>${poStatusCount(status)}</span>
+    </button>
+  `).join("");
+}
+
+function renderPoVendorFilter() {
+  const select = document.getElementById("poVendorFilter");
+  if (!select) return;
+  const selected = poVendorFilter === "All" ? "" : poVendorFilter;
+  const vendors = [...new Set(state.purchaseOrders.map(poVendorName).filter((name) => name && name !== "-"))]
+    .sort((a, b) => a.localeCompare(b));
+  select.innerHTML = `<option value="">All vendors</option>${vendors.map((vendor) => `<option value="${escapeHtml(vendor)}">${escapeHtml(vendor)}</option>`).join("")}`;
+  select.value = vendors.includes(selected) ? selected : "";
+  poVendorFilter = select.value || "All";
+}
+
+function renderPoRecordRow(po) {
+  const status = poDisplayStatus(po);
+  return `
     <tr data-reference-id="${escapeHtml(po.poNumber)}">
-      <td>${po.poNumber}</td>
+      <td><strong>${escapeHtml(po.poNumber)}</strong></td>
+      <td>${escapeHtml(poVendorName(po))}</td>
       <td>${formatDate(po.issueDate || po.date)}</td>
-      <td>${po.vendorName}</td>
-      <td>${escapeHtml(poItemSummary(po))}</td>
-      <td>${quantityValue(po.quantityOrdered ?? po.quantity)}</td>
-      <td>${money(po.unitPrice)}</td>
-      <td>${money(po.poAmount ?? po.total)}</td>
-      <td>${statusBadge(po.status)}</td>
-      <td>${formatDate(po.arrivedBy)}</td>
-      <td>${po.location || ""}</td>
-      <td>${quantityValue(po.quantityReceived)}</td>
-      <td class="po-cancel-reason">${escapeHtml(cancellationReason(po.notesRemarks) || "")}</td>
+      <td>${formatDate(poExpectedDate(po)) || "-"}</td>
+      <td>${escapeHtml(poSourceReference(po))}</td>
+      <td><span class="po-status-select">${escapeHtml(status)}<i data-lucide="chevron-down"></i></span></td>
+      <td><strong>$${money(po.poAmount ?? po.total)}</strong></td>
       <td class="button-cell">
-        <button class="tiny" onclick="printPO('${po.poNumber}')">Print</button>
-        ${canCancelPo(po) ? `<button class="tiny danger" onclick="cancelPO('${po.poNumber}')">Cancel</button>` : ""}
+        <span class="po-row-actions">
+          <button class="tiny" onclick="printPO('${escapeHtml(po.poNumber)}')" title="Print PO" aria-label="Print PO"><i data-lucide="clipboard-list"></i></button>
+          <button class="tiny" type="button" title="Receive PO" aria-label="Receive PO" onclick="setView('grn')"><i data-lucide="package-open"></i></button>
+          ${canCancelPo(po) ? `<button class="tiny danger" onclick="cancelPO('${escapeHtml(po.poNumber)}')" title="Cancel PO" aria-label="Cancel PO"><i data-lucide="trash-2"></i></button>` : ""}
+        </span>
       </td>
     </tr>
-  `).join("") || emptyStateRow(13, "No purchase orders created yet", "Saved purchase orders will appear here."));
+  `;
 }
 
 function collectPurchaseOrder(formElement) {
@@ -2595,6 +3116,32 @@ function resetGrnForm() {
   syncSelectOptions(form);
 }
 
+function clearGrnPoDetails() {
+  lastAppliedGrnPoNumber = String(document.getElementById("poSelect")?.value || "").trim();
+  document.getElementById("grnItemName").value = "";
+  document.getElementById("grnItemType").value = "";
+  document.getElementById("grnItemCode").value = "";
+  document.getElementById("grnPoLineItem").innerHTML = `<option value="">Select PO item</option>`;
+  const form = document.getElementById("grnForm");
+  ["qtyReceived", "qtyAccepted"].forEach((name) => {
+    form.elements[name].removeAttribute("max");
+    form.elements[name].placeholder = "";
+    form.elements[name].value = "";
+  });
+}
+
+function selectedGrnPo() {
+  const poNumber = String(document.getElementById("poSelect")?.value || "").trim().toLowerCase();
+  return state.purchaseOrders.find((row) => String(row.poNumber || "").trim().toLowerCase() === poNumber);
+}
+
+function syncGrnPoSelection() {
+  const currentPoNumber = String(document.getElementById("poSelect")?.value || "").trim();
+  if (currentPoNumber === lastAppliedGrnPoNumber) return;
+  lastAppliedGrnPoNumber = currentPoNumber;
+  applySelectedPoToGrn();
+}
+
 async function savePendingPO() {
   if (!pendingPurchaseOrder) return;
   try {
@@ -2604,6 +3151,7 @@ async function savePendingPO() {
     await loadBusinessData({ silent: true });
     render();
     closePoPreview();
+    closePoDrawer();
     showToast("Purchase order saved.");
   } catch (error) {
     showToast(`Unable to save PO: ${error.message}`, "error");
@@ -2612,17 +3160,52 @@ async function savePendingPO() {
 
 function renderGRN() {
   if (businessDataLoading) {
-    showTableSkeleton("grnTable", 10, 6);
+    showTableSkeleton("grnTable", 8, 6);
     return;
   }
   const grnError = sourceError("grns", "purchaseOrders");
   if (grnError) {
-    setTableContent("grnTable", errorStateRow(10, grnError));
+    setTableContent("grnTable", errorStateRow(8, grnError));
     return;
   }
-  setTableContent("grnTable", state.grns.map((grn) => `
-    <tr data-reference-id="${escapeHtml(grn.grnNumber)}"><td>${grn.grnNumber}</td><td>${grn.poNumber || "Manual"}</td><td>${grn.itemCode || ""}</td><td>${grn.itemName || grn.description || grn.itemType || "Specification only"}</td><td>${grn.location}</td><td>${quantityValue(grn.qtyReceived)}</td><td>${quantityValue(grn.qtyAccepted)}</td><td>${grn.receivedBy}</td><td>${formatDate(grn.date)}</td><td class="button-cell"><button class="tiny" onclick="printGRN('${escapeHtml(grn.grnNumber)}')">Print</button></td></tr>
-  `).join("") || emptyStateRow(10, "No GRN records yet", "Goods received notes will appear here after receiving stock."));
+  const searchTerm = grnSearchTerm.trim().toLowerCase();
+  const rows = state.grns.filter((grn) => {
+    const grnRow = grnRecordDetails(grn);
+    const matchesVendor = grnVendorFilter === "All" || grnRow.vendorName === grnVendorFilter;
+    const matchesSearch = !searchTerm || [grn.grnNumber, grn.poNumber, grn.itemCode, grn.itemName, grn.location, grnRow.vendorName]
+      .some((value) => String(value || "").toLowerCase().includes(searchTerm));
+    return matchesVendor && matchesSearch;
+  });
+  setTableContent("grnTable", rows.map((grn) => `
+    ${renderGrnRecordRow(grn)}
+  `).join("") || emptyStateRow(8, "No matching GRN records", "Try another GRN, PO, vendor, or filter."));
+  if (window.lucide) lucide.createIcons();
+}
+
+function grnRecordDetails(grn) {
+  const po = state.purchaseOrders.find((row) => row.poNumber === grn.poNumber) || {};
+  const vendor = state.vendors.find((row) => String(row.id) === String(po.vendorId));
+  const vendorName = po.vendorName || vendor?.name || "-";
+  return { po, vendorName };
+}
+
+function renderGrnRecordRow(grn) {
+  const { vendorName } = grnRecordDetails(grn);
+  const received = Number(grn.qtyReceived || 0);
+  const accepted = Number(grn.qtyAccepted || 0);
+  const status = accepted < received ? "Rejected" : (grn.status || "Received");
+  return `
+    <tr data-reference-id="${escapeHtml(grn.grnNumber)}">
+      <td>${escapeHtml(grn.grnNumber)}</td>
+      <td>${escapeHtml(grn.poNumber || "Manual")}</td>
+      <td>${escapeHtml(vendorName)}</td>
+      <td>${formatDate(grn.date)}</td>
+      <td>${escapeHtml(grn.location || "-")}</td>
+      <td>${quantityValue(accepted || received)}</td>
+      <td><span class="grn-status-pill">${escapeHtml(status)}</span></td>
+      <td class="button-cell"><span class="grn-row-actions"><button class="tiny" onclick="printGRN('${escapeHtml(grn.grnNumber)}')" title="Print GRN" aria-label="Print GRN"><i data-lucide="clipboard-list"></i></button></span></td>
+    </tr>
+  `;
 }
 
 function renderGrnSheet(grn) {
@@ -2705,28 +3288,35 @@ function renderGrnSheet(grn) {
 }
 
 function applySelectedPoToGrn() {
-  const poNumber = document.getElementById("poSelect")?.value;
-  const po = state.purchaseOrders.find((row) => row.poNumber === poNumber);
-  if (!po || !canReceivePo(po)) {
-    resetGrnForm();
+  const po = selectedGrnPo();
+  if (!po) {
+    clearGrnPoDetails();
     return;
   }
+  document.getElementById("poSelect").value = po.poNumber;
+  lastAppliedGrnPoNumber = po.poNumber;
   const lineSelect = document.getElementById("grnPoLineItem");
-  const lines = poLineItems(po).filter((item) => remainingPoLineQuantity(item) > 0);
+  const allLines = poLineItems(po).filter((item) => item.itemCode || item.itemName || item.specifications);
+  const receivableLines = allLines.filter((item) => remainingPoLineQuantity(item) > 0);
+  const lines = receivableLines.length ? receivableLines : allLines;
   lineSelect.innerHTML = `<option value="">Select PO item</option>${lines.map((item, index) => `
-    <option value="${escapeHtml(item.lineId || "")}" ${index === 0 ? "selected" : ""}>
+    <option value="${escapeHtml(item.lineId || `line-${index}`)}" ${index === 0 ? "selected" : ""}>
       ${escapeHtml(item.itemCode || "Item")} - ${escapeHtml(item.itemName || item.specifications || "")} (${quantityValue(remainingPoLineQuantity(item))} remaining)
     </option>
   `).join("")}`;
+  if (lines[0]) lineSelect.value = lines[0].lineId || "line-0";
   applySelectedPoLineToGrn();
 }
 
 function applySelectedPoLineToGrn() {
-  const poNumber = document.getElementById("poSelect")?.value;
-  const po = state.purchaseOrders.find((row) => row.poNumber === poNumber);
+  const po = selectedGrnPo();
   const selectedLineId = document.getElementById("grnPoLineItem")?.value;
-  const selectedLine = poLineItems(po).find((item) => String(item.lineId) === String(selectedLineId));
+  const allLines = poLineItems(po).filter((item) => item.itemCode || item.itemName || item.specifications);
+  const selectedLine = allLines.find((item, index) => String(item.lineId || `line-${index}`) === String(selectedLineId))
+    || allLines.find((item) => remainingPoLineQuantity(item) > 0)
+    || allLines[0];
   if (!po || !selectedLine) return;
+  document.getElementById("grnPoLineItem").value = selectedLine.lineId || `line-${poLineItems(po).indexOf(selectedLine)}`;
   const itemNameInput = document.getElementById("grnItemName");
   const itemTypeInput = document.getElementById("grnItemType");
   const itemCodeInput = document.getElementById("grnItemCode");
@@ -2745,6 +3335,27 @@ function applySelectedPoLineToGrn() {
   acceptedInput.placeholder = remaining ? `Remaining: ${quantityValue(remaining)}` : "No quantity remaining";
   receivedInput.value = remaining > 0 ? remaining : "";
   acceptedInput.value = remaining > 0 ? remaining : "";
+}
+
+function openGrnDrawer() {
+  const drawer = document.getElementById("grnDrawer");
+  if (!drawer) return;
+  if (drawer.parentElement !== document.body) {
+    document.body.appendChild(drawer);
+  }
+  syncSelectOptions(drawer);
+  if (document.getElementById("poSelect")?.value) applySelectedPoToGrn();
+  drawer.classList.add("show");
+  drawer.setAttribute("aria-hidden", "false");
+  document.body.classList.add("grn-drawer-open");
+}
+
+function closeGrnDrawer() {
+  const drawer = document.getElementById("grnDrawer");
+  if (!drawer) return;
+  drawer.classList.remove("show");
+  drawer.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("grn-drawer-open");
 }
 
 function applySelectedVendorToPo() {
@@ -3188,7 +3799,6 @@ function historyRows(section) {
     if (section === "requests") return !entity.includes("transport") && (entity.includes("request") || isIssuedStockHistory(log));
     if (section === "transport") return entity.includes("transport");
     if (section === "approvals") return isApprovedHistory(log);
-    if (section === "stockIn") return false;
     if (section === "stockOut") return isIssuedStockHistory(log);
     return false;
   });
@@ -3378,7 +3988,6 @@ function renderHistoryPage() {
     requests: "Requests history",
     transport: "Transport history",
     approvals: "Approvals history",
-    stockIn: "Stock in history",
     stockOut: "Stock out history"
   };
   setText("historyTitle", titles[activeHistorySection] || titles.requests);
@@ -3505,12 +4114,12 @@ function sourceError(...keys) {
 function render() {
   syncSelectOptions();
   renderCategoryTabs();
-  updateStockInItemId();
   updateStockOutItemId();
   renderDashboard();
   renderRequests();
   renderRequisition();
   renderInventory();
+  renderProcurement();
   renderIssue();
   renderPO();
   renderGRN();
@@ -3816,8 +4425,12 @@ document.querySelector(".sidebar")?.addEventListener("click", (event) => {
     requestsPage = 1;
   }
   if (item.dataset.view === "inventory") {
+    inventoryModuleTab = "items";
     inventoryStatusFilter = "All";
     inventoryPage = 1;
+  }
+  if (item.dataset.view === "procurement") {
+    procurementModuleTab = "po";
   }
   setView(item.dataset.view);
 });
@@ -4019,6 +4632,42 @@ document.getElementById("categoryTabs").addEventListener("click", (event) => {
   renderInventory();
 });
 
+document.getElementById("inventoryStatusTabs")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-inventory-status]");
+  if (!button) return;
+  inventoryStatusFilter = button.dataset.inventoryStatus;
+  inventoryPage = 1;
+  renderInventory();
+});
+
+document.getElementById("inventoryModuleTabs")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-inventory-tab]");
+  if (!button) return;
+  inventoryModuleTab = button.dataset.inventoryTab;
+  renderInventory();
+  updateTopbarBreadcrumb("inventory");
+});
+
+document.getElementById("procurementModuleTabs")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-procurement-tab]");
+  if (!button) return;
+  procurementModuleTab = button.dataset.procurementTab;
+  renderProcurement();
+  updateTopbarBreadcrumb("procurement");
+});
+
+document.getElementById("inventoryCards")?.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-item-code]");
+  if (!card) return;
+  openInventoryItemDetail(card.dataset.itemCode);
+});
+
+document.getElementById("inventoryView")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-view]");
+  if (!button) return;
+  setView(button.dataset.view);
+});
+
 document.getElementById("inventoryLocationFilter").addEventListener("change", (event) => {
   inventoryLocationFilter = event.target.value || "All";
   inventoryPage = 1;
@@ -4029,6 +4678,43 @@ document.getElementById("inventorySearchInput").addEventListener("input", (event
   inventorySearchTerm = event.target.value || "";
   inventoryPage = 1;
   renderInventory();
+});
+
+document.getElementById("stockIssueSearchInput")?.addEventListener("input", (event) => {
+  stockIssueSearchTerm = event.target.value || "";
+  renderIssue();
+});
+
+document.getElementById("stockIssueLocationFilter")?.addEventListener("change", (event) => {
+  stockIssueLocationFilter = event.target.value || "All";
+  renderIssue();
+});
+
+document.getElementById("grnSearchInput")?.addEventListener("input", (event) => {
+  grnSearchTerm = event.target.value || "";
+  renderGRN();
+});
+
+document.getElementById("grnVendorFilter")?.addEventListener("change", (event) => {
+  grnVendorFilter = event.target.value || "All";
+  renderGRN();
+});
+
+document.getElementById("poSearchInput")?.addEventListener("input", (event) => {
+  poSearchTerm = event.target.value || "";
+  renderPO();
+});
+
+document.getElementById("poVendorFilter")?.addEventListener("change", (event) => {
+  poVendorFilter = event.target.value || "All";
+  renderPO();
+});
+
+document.getElementById("poStatusFilters")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-po-status]");
+  if (!button) return;
+  poStatusFilter = button.dataset.poStatus;
+  renderPO();
 });
 
 document.getElementById("inventoryPrev").addEventListener("click", () => {
@@ -4065,10 +4751,38 @@ document.getElementById("openRequisitionForm")?.addEventListener("click", () => 
 document.getElementById("addRequestItem").addEventListener("click", addRequestLine);
 document.getElementById("addItemType").addEventListener("click", addItemTypeLine);
 document.getElementById("openItemModal").addEventListener("click", openItemModal);
+document.getElementById("openManualStockIssue")?.addEventListener("click", openManualStockIssue);
+document.getElementById("closeManualStockIssue")?.addEventListener("click", closeManualStockIssue);
+document.getElementById("openPoDrawer")?.addEventListener("click", openPoDrawer);
+document.getElementById("closePoDrawer")?.addEventListener("click", closePoDrawer);
 document.getElementById("closeItemModal").addEventListener("click", closeItemModal);
 document.getElementById("cancelItemModal").addEventListener("click", closeItemModal);
 document.getElementById("itemModal").addEventListener("click", (event) => {
   if (event.target.id === "itemModal") closeItemModal();
+});
+document.getElementById("manualStockIssueDrawer")?.addEventListener("click", (event) => {
+  if (event.target.id === "manualStockIssueDrawer") closeManualStockIssue();
+});
+document.getElementById("poDrawer")?.addEventListener("click", (event) => {
+  if (event.target.id === "poDrawer") closePoDrawer();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeManualStockIssue();
+  if (event.key === "Escape") closePoDrawer();
+});
+
+document.getElementById("closeInventoryDetail")?.addEventListener("click", closeInventoryItemDetail);
+document.getElementById("dismissInventoryDetail")?.addEventListener("click", closeInventoryItemDetail);
+document.getElementById("saveInventoryStock")?.addEventListener("click", saveInventoryDetailStock);
+document.getElementById("deleteInventoryItem")?.addEventListener("click", openDeleteInventoryItemModal);
+document.getElementById("inventoryItemDetailModal")?.addEventListener("click", (event) => {
+  if (event.target.id === "inventoryItemDetailModal") closeInventoryItemDetail();
+});
+document.getElementById("closeDeleteInventoryItemModal")?.addEventListener("click", closeDeleteInventoryItemModal);
+document.getElementById("cancelDeleteInventoryItem")?.addEventListener("click", closeDeleteInventoryItemModal);
+document.getElementById("confirmDeleteInventoryItem")?.addEventListener("click", confirmDeleteInventoryDetailItem);
+document.getElementById("deleteInventoryItemModal")?.addEventListener("click", (event) => {
+  if (event.target.id === "deleteInventoryItemModal") closeDeleteInventoryItemModal();
 });
 document.getElementById("closePoPreview").addEventListener("click", closePoPreview);
 document.getElementById("editPoPreview").addEventListener("click", closePoPreview);
@@ -4167,21 +4881,6 @@ document.getElementById("approvalDetailModal")?.addEventListener("click", (event
   }
 });
 
-document.getElementById("stockInCategory").addEventListener("change", () => {
-  document.getElementById("stockInItemName").value = "";
-  document.getElementById("stockInItemType").value = "";
-  syncSelectOptions(document.getElementById("stockInForm"));
-  updateStockInItemId();
-});
-
-document.getElementById("stockInItemName").addEventListener("change", () => {
-  document.getElementById("stockInItemType").value = "";
-  syncSelectOptions(document.getElementById("stockInForm"));
-  updateStockInItemId();
-});
-
-document.getElementById("stockInItemType").addEventListener("change", updateStockInItemId);
-
 document.getElementById("stockOutCategory").addEventListener("change", () => {
   document.getElementById("stockOutItemName").value = "";
   document.getElementById("stockOutItemType").value = "";
@@ -4251,23 +4950,6 @@ document.getElementById("requestForm").addEventListener("submit", async (event) 
   }
 });
 
-document.getElementById("stockInForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const item = findItemBySelection(form.get("itemName"), form.get("itemCode"), form.get("category"));
-  if (!item) return showToast("Select a valid item type.", "error");
-  form.set("itemCode", item.code);
-  try {
-    await apiRequest("/stock/in/manual", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
-    event.currentTarget.reset();
-    await loadBusinessData({ silent: true });
-    render();
-    showToast("Manual stock-in saved.");
-  } catch (error) {
-    showToast(error.message, "error");
-  }
-});
-
 document.getElementById("manualStockOutForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -4286,6 +4968,7 @@ document.getElementById("manualStockOutForm").addEventListener("submit", async (
   try {
     await apiRequest("/stock/out", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     event.currentTarget.reset();
+    closeManualStockIssue();
     await loadBusinessData({ silent: true });
     render();
     showToast("Manual stock-out saved.");
@@ -4344,25 +5027,43 @@ document.getElementById("grnForm").addEventListener("submit", async (event) => {
   const form = new FormData(event.currentTarget);
   const accepted = Number(form.get("qtyAccepted"));
   const received = Number(form.get("qtyReceived"));
-  const po = state.purchaseOrders.find((row) => row.poNumber === form.get("poNumber"));
-  const poLine = poLineItems(po).find((item) => String(item.lineId) === String(form.get("poLineId")));
+  const po = selectedGrnPo();
+  const selectedPoLineId = String(form.get("poLineId") || "");
+  const poLine = poLineItems(po).find((item, index) => String(item.lineId || `line-${index}`) === selectedPoLineId);
   const remaining = poLine ? remainingPoLineQuantity(poLine) : Infinity;
   if (!canReceivePo(po)) return showToast("Select an open PO with remaining quantity.", "error");
-  if (!poLine) return showToast("Select a PO item to receive.", "error");
+  if (!poLine) return showToast("Select a PO with an item to receive.", "error");
   if (accepted > received) return showToast("Accepted quantity cannot exceed received quantity.", "error");
   if (accepted > remaining) return showToast(`Accepted quantity cannot exceed remaining PO quantity (${quantityValue(remaining)}).`, "error");
+  if (/^line-\d+$/.test(selectedPoLineId)) form.set("poLineId", "");
   try {
     const result = await apiRequest("/grn", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     await loadBusinessData({ silent: true });
     resetGrnForm();
     render();
+    closeGrnDrawer();
     showToast(`${result.grnNumber} saved and stock ledger updated.`);
   } catch (error) {
     showToast(error.message, "error");
   }
 });
 
+document.getElementById("openGrnDrawer")?.addEventListener("click", openGrnDrawer);
+document.getElementById("closeGrnDrawer")?.addEventListener("click", closeGrnDrawer);
+document.getElementById("grnDrawer")?.addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeGrnDrawer();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeGrnDrawer();
+});
 document.getElementById("poSelect").addEventListener("change", applySelectedPoToGrn);
+document.getElementById("poSelect").addEventListener("input", () => {
+  const po = selectedGrnPo();
+  if (po) {
+    applySelectedPoToGrn();
+  }
+});
+document.getElementById("poSelect").addEventListener("blur", applySelectedPoToGrn);
 document.getElementById("grnPoLineItem").addEventListener("change", applySelectedPoLineToGrn);
 
 document.getElementById("vendorForm").addEventListener("submit", async (event) => {
@@ -4406,7 +5107,6 @@ const GLOBAL_SEARCH_ITEMS = [
   { group: "Recent", title: "Inventory", subtitle: "Stock overview", view: "inventory", icon: "boxes", terms: "items stock warehouse locations" },
   { group: "Navigation", title: "Dashboard", subtitle: "Go to page", view: "dashboard", icon: "layout-grid", terms: "home overview widgets" },
   { group: "Navigation", title: "Inventory", subtitle: "Go to page", view: "inventory", icon: "boxes", terms: "stock items warehouse" },
-  { group: "Navigation", title: "Inventory › Stock In", subtitle: "Go to page", view: "stockIn", icon: "package-plus", terms: "add receive stock" },
   { group: "Navigation", title: "Inventory › Stock Issue", subtitle: "Go to page", view: "issue", icon: "package-minus", terms: "issue out stock" },
   { group: "Navigation", title: "Inventory › GRN", subtitle: "Go to page", view: "grn", icon: "truck", terms: "goods receipt note receive" },
   { group: "Navigation", title: "Procurement › PO", subtitle: "Go to page", view: "po", icon: "file-pen-line", terms: "purchase order procurement" },
@@ -4508,6 +5208,8 @@ async function initializePortal() {
   applyTheme(localStorage.getItem(THEME_STORAGE_KEY));
   const session = await requirePortalSession();
   if (!session) return;
+  mountInventorySubsections();
+  mountProcurementSubsections();
   enableDatalistRefocusOptions();
   applyAdminVisibility();
   addRequestLine();

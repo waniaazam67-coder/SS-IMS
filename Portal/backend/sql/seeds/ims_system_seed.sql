@@ -12,12 +12,12 @@ ON DUPLICATE KEY UPDATE
   name = VALUES(name),
   is_active = VALUES(is_active);
 
-INSERT INTO locations (id, code, name, is_active)
+INSERT INTO locations (code, name, is_active)
 VALUES
-  (1, 'MAIN', 'Main Store', 1),
-  (2, 'RWHU', 'RWHU Store', 1),
-  (3, 'PROG', 'Progressive Store', 1),
-  (4, 'STAT', 'Stationary Store', 1)
+  ('I9', 'I9 warehouse', 1),
+  ('SEC', 'Secretariat', 1),
+  ('NSR', 'NSR CC', 1),
+  ('RWP', 'RWP CC', 1)
 ON DUPLICATE KEY UPDATE
   code = VALUES(code),
   name = VALUES(name),
