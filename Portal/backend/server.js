@@ -19,7 +19,7 @@ app.use(corsMiddleware);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(frontendPath, {
   setHeaders(res, filePath) {
-    if (filePath.endsWith(".html")) {
+    if (filePath.endsWith(".html") || filePath.endsWith(".css") || filePath.endsWith(".js")) {
       res.setHeader("Cache-Control", "no-store");
     }
   }

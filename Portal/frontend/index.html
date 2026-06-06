@@ -8,61 +8,69 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=reports-removed-1">
+  <link rel="stylesheet" href="css/styles.css?v=dashboard-search-20260605-5">
 </head>
 <body>
-  <div class="app-shell">
+  <div class="app-shell" data-active-view="dashboard">
     <aside class="sidebar" aria-label="Main navigation">
       <div class="brand">
         <div class="brand-mark"><i data-lucide="package-open"></i></div>
         <span>IMS</span>
-        <button class="sidebar-toggle sidebar-toggle-main" id="sidebarToggle" type="button" aria-label="Collapse sidebar" aria-expanded="true"><i data-lucide="panel-left-close"></i></button>
       </div>
       <nav class="side-nav" id="sideNav">
-        <div class="nav-label">Main</div>
-        <div class="nav-section single">
-          <button class="nav-item active" data-view="dashboard"><span class="nav-icon"><i data-lucide="layout-grid"></i></span><span>Dashboard</span></button>
-        </div>
-        <div class="nav-section collapsed">
-          <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="warehouse"></i></span><span>Inventory</span><i data-lucide="chevron-down"></i></button>
-          <div class="nav-section-items">
+        <div class="nav-group">
+          <div class="nav-label">Workspace</div>
+          <div class="nav-section single nav-dashboard-section">
+            <button class="nav-item active" data-view="dashboard"><span class="nav-icon"><i data-lucide="layout-grid"></i></span><span>Dashboard</span></button>
+          </div>
+          <div class="nav-section collapsed">
+            <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="warehouse"></i></span><span>Inventory</span><i data-lucide="chevron-down"></i></button>
+            <div class="nav-section-items">
             <button class="nav-item" data-view="inventory"><span class="nav-icon"><i data-lucide="boxes"></i></span><span>Inventory</span></button>
             <button class="nav-item" data-view="stockIn"><span class="nav-icon"><i data-lucide="package-plus"></i></span><span>Stock In</span></button>
             <button class="nav-item" data-view="issue"><span class="nav-icon"><i data-lucide="package-minus"></i></span><span>Stock Issue</span></button>
             <button class="nav-item" data-view="grn"><span class="nav-icon"><i data-lucide="truck"></i></span><span>GRN</span></button>
+            </div>
           </div>
-        </div>
-        <div class="nav-section collapsed">
-          <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="shopping-cart"></i></span><span>Procurement</span><i data-lucide="chevron-down"></i></button>
-          <div class="nav-section-items">
+          <div class="nav-section collapsed">
+            <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="shopping-cart"></i></span><span>Procurement</span><i data-lucide="chevron-down"></i></button>
+            <div class="nav-section-items">
             <button class="nav-item" data-view="po"><span class="nav-icon"><i data-lucide="file-pen-line"></i></span><span>PO</span></button>
             <button class="nav-item" data-view="vendors"><span class="nav-icon"><i data-lucide="building-2"></i></span><span>Vendors</span></button>
+            </div>
           </div>
-        </div>
-        <div class="nav-section collapsed">
-          <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="clipboard-list"></i></span><span>Requests</span><i data-lucide="chevron-down"></i></button>
-          <div class="nav-section-items">
+          <div class="nav-section collapsed">
+            <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="clipboard-list"></i></span><span>Requests</span><i data-lucide="chevron-down"></i></button>
+            <div class="nav-section-items">
             <button class="nav-item" data-view="requisition"><span class="nav-icon"><i data-lucide="file-plus-2"></i></span><span>Requisition Form</span></button>
             <button class="nav-item" data-view="transport"><span class="nav-icon"><i data-lucide="route"></i></span><span>Transport Requests</span></button>
             <button class="nav-item" data-view="requests"><span class="nav-icon"><i data-lucide="list-checks"></i></span><span>Requests</span></button>
+            </div>
+          </div>
+          <div class="nav-section single">
+            <button class="nav-item" data-view="approvals"><span class="nav-icon"><i data-lucide="shield-check"></i></span><span>Approvals</span></button>
           </div>
         </div>
-        <div class="nav-section single">
-          <button class="nav-item" data-view="approvals"><span class="nav-icon"><i data-lucide="shield-check"></i></span><span>Approvals</span></button>
-        </div>
-        <div class="nav-section single">
+        <div class="nav-group">
+          <div class="nav-label">Insights</div>
+          <div class="nav-section single">
+            <button class="nav-item nav-item-static" type="button" aria-disabled="true"><span class="nav-icon"><i data-lucide="bar-chart-3"></i></span><span>Reports</span></button>
+            <button class="nav-item admin-only" data-view="settings"><span class="nav-icon"><i data-lucide="settings"></i></span><span>Settings</span></button>
+          </div>
         </div>
       </nav>
       <div class="sidebar-footer">
-        <div class="nav-section single">
-          <button class="nav-item admin-only" data-view="settings"><span class="nav-icon"><i data-lucide="settings"></i></span><span>Settings</span></button>
+        <div class="profile-wrap sidebar-profile-wrap">
+          <button class="profile sidebar-profile" id="profileBtn" type="button" aria-label="Inventory Manager" data-profile-name="Inventory Manager"><span class="avatar">IM</span><span class="profile-copy"><span class="profile-name">Inventory Manager</span><small>Member</small></span><i data-lucide="log-out"></i></button>
+          <div class="profile-menu sidebar-profile-menu" id="profileMenu" aria-hidden="true">
+            <button class="profile-menu-item" id="logoutBtn" type="button">Logout</button>
+          </div>
         </div>
       </div>
     </aside>
 
     <main class="main-content">
       <header class="topbar">
-        <button class="sidebar-toggle topbar-sidebar-toggle" id="topbarSidebarToggle" type="button" aria-label="Expand sidebar" aria-expanded="false"><i data-lucide="panel-left-open"></i></button>
         <nav class="topbar-breadcrumb" id="topbarBreadcrumb" aria-label="Breadcrumb">
           <span>Workspace</span>
           <i data-lucide="chevron-right"></i>
@@ -70,17 +78,11 @@
         </nav>
         <div class="search">
           <i data-lucide="search"></i>
-          <input id="globalSearch" type="search" placeholder="Search anything">
+          <input id="globalSearch" type="search" placeholder="Search" aria-haspopup="dialog" aria-controls="globalSearchOverlay">
         </div>
         <div class="top-actions">
           <button class="icon-btn chat-topbar-btn" id="chatBtn" type="button" aria-label="Chat" aria-expanded="false" aria-controls="chatPanel"><i data-lucide="messages-square"></i><span class="chat-topbar-badge" id="chatTopbarBadge" hidden>0</span></button>
           <button class="icon-btn notification" id="notificationBtn" type="button" aria-label="Notifications" aria-expanded="false" aria-controls="notificationCenter"><i data-lucide="bell"></i></button>
-          <div class="profile-wrap">
-            <button class="profile" id="profileBtn" type="button" aria-label="Inventory Manager" data-profile-name="Inventory Manager"><span class="avatar">IM</span><span class="profile-name">Inventory Manager</span><i data-lucide="chevron-down"></i></button>
-            <div class="profile-menu" id="profileMenu" aria-hidden="true">
-              <button class="profile-menu-item" id="logoutBtn" type="button">Logout</button>
-            </div>
-          </div>
         </div>
       </header>
 
@@ -140,10 +142,21 @@
       </aside>
 
       <section class="view active empty-dashboard" id="dashboardView">
+        <div class="dashboard-hero">
+          <div>
+            <h1>Welcome back, Wania</h1>
+            <p>NGO · Main · June 5</p>
+          </div>
+          <div class="dashboard-actions">
+            <button class="primary dashboard-add-widget" type="button"><i data-lucide="plus"></i>Add widget</button>
+            <button class="secondary dashboard-done" type="button"><i data-lucide="check"></i>Done</button>
+          </div>
+        </div>
         <div class="dashboard-empty-state">
-          <p>Welcome back</p>
-          <h2>IMS Portal</h2>
-          <span>Your dashboard is ready for a new design.</span>
+          <span class="dashboard-empty-icon"><i data-lucide="layout-grid"></i></span>
+          <strong>Your dashboard is empty</strong>
+          <p>Add widgets to track sales, inventory, customers, and more.</p>
+          <button class="primary dashboard-add-widget" type="button"><i data-lucide="plus"></i>Add your first widget</button>
         </div>
       </section>
 
@@ -417,6 +430,18 @@
         </div>
       </section>
     </main>
+
+    <div class="search-overlay" id="globalSearchOverlay" aria-hidden="true">
+      <div class="search-backdrop" data-search-close></div>
+      <section class="search-palette" role="dialog" aria-modal="true" aria-label="Search records, pages, actions">
+        <div class="search-palette-head">
+          <i data-lucide="search"></i>
+          <input id="globalSearchPaletteInput" type="search" placeholder="Search" autocomplete="off">
+          <button class="search-close" id="closeGlobalSearch" type="button" aria-label="Close search"><i data-lucide="x"></i></button>
+        </div>
+        <div class="search-results" id="globalSearchResults"></div>
+      </section>
+    </div>
   </div>
 
   <template id="requestItemTemplate">
@@ -509,6 +534,6 @@
   <script src="js/inventory data/progressive.js?v=inventory-split-1"></script>
   <script src="js/inventory data/rwhu.js?v=inventory-split-1"></script>
   <script src="js/inventory data/stationary.js?v=inventory-split-1"></script>
-  <script src="js/script.js?v=reports-removed-1"></script>
+  <script src="js/script.js?v=dashboard-search-20260605-5"></script>
 </body>
 </html>

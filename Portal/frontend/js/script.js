@@ -4010,23 +4010,6 @@ document.getElementById("settingsForm").addEventListener("change", (event) => {
   input.closest(".role-pill").classList.toggle("selected", input.checked);
 });
 
-function toggleSidebar() {
-  const shell = document.querySelector(".app-shell");
-  const collapsed = shell.classList.toggle("sidebar-collapsed");
-  const sidebarToggle = document.getElementById("sidebarToggle");
-  const topbarToggle = document.getElementById("topbarSidebarToggle");
-  [sidebarToggle, topbarToggle].forEach((toggle) => {
-    if (!toggle) return;
-    toggle.setAttribute("aria-expanded", String(!collapsed));
-    toggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
-    toggle.innerHTML = `<i data-lucide="${collapsed ? "panel-left-open" : "panel-left-close"}"></i>`;
-  });
-  if (window.lucide) window.lucide.createIcons();
-}
-
-document.getElementById("sidebarToggle")?.addEventListener("click", toggleSidebar);
-document.getElementById("topbarSidebarToggle")?.addEventListener("click", toggleSidebar);
-
 document.getElementById("categoryTabs").addEventListener("click", (event) => {
   const button = event.target.closest("[data-category]");
   if (!button) return;
@@ -4419,11 +4402,106 @@ document.getElementById("vendorForm").addEventListener("submit", async (event) =
 
 document.getElementById("cancelVendorEdit").addEventListener("click", resetVendorForm);
 
-document.getElementById("globalSearch").addEventListener("input", (event) => {
-  const term = event.target.value.toLowerCase();
-  document.querySelectorAll("tbody tr").forEach((row) => {
-    row.style.display = row.textContent.toLowerCase().includes(term) ? "" : "none";
+const GLOBAL_SEARCH_ITEMS = [
+  { group: "Recent", title: "Inventory", subtitle: "Stock overview", view: "inventory", icon: "boxes", terms: "items stock warehouse locations" },
+  { group: "Navigation", title: "Dashboard", subtitle: "Go to page", view: "dashboard", icon: "layout-grid", terms: "home overview widgets" },
+  { group: "Navigation", title: "Inventory", subtitle: "Go to page", view: "inventory", icon: "boxes", terms: "stock items warehouse" },
+  { group: "Navigation", title: "Inventory › Stock In", subtitle: "Go to page", view: "stockIn", icon: "package-plus", terms: "add receive stock" },
+  { group: "Navigation", title: "Inventory › Stock Issue", subtitle: "Go to page", view: "issue", icon: "package-minus", terms: "issue out stock" },
+  { group: "Navigation", title: "Inventory › GRN", subtitle: "Go to page", view: "grn", icon: "truck", terms: "goods receipt note receive" },
+  { group: "Navigation", title: "Procurement › PO", subtitle: "Go to page", view: "po", icon: "file-pen-line", terms: "purchase order procurement" },
+  { group: "Navigation", title: "Procurement › Vendors", subtitle: "Go to page", view: "vendors", icon: "building-2", terms: "suppliers vendor accounts" },
+  { group: "Navigation", title: "Requests › Requisition Form", subtitle: "Go to page", view: "requisition", icon: "file-plus-2", terms: "request form submit items" },
+  { group: "Navigation", title: "Requests › Transport Requests", subtitle: "Go to page", view: "transport", icon: "route", terms: "vehicle transport travel" },
+  { group: "Navigation", title: "Requests", subtitle: "Go to page", view: "requests", icon: "list-checks", terms: "submitted approvals request list" },
+  { group: "Navigation", title: "Approvals", subtitle: "Go to page", view: "approvals", icon: "shield-check", terms: "approve reject managers" },
+  { group: "Navigation", title: "Reports", subtitle: "Visible in sidebar", icon: "bar-chart-3", terms: "insights analytics report" },
+  { group: "Navigation", title: "Settings", subtitle: "Go to page", view: "settings", icon: "settings", terms: "admin users roles configuration" },
+  { group: "Actions", title: "Add inventory item", subtitle: "Open Inventory", view: "inventory", icon: "plus", terms: "new add item inventory" },
+  { group: "Actions", title: "Create requisition", subtitle: "Open Requisition Form", view: "requisition", icon: "send", terms: "new request submit requisition" },
+  { group: "Actions", title: "Create purchase order", subtitle: "Open PO", view: "po", icon: "file-plus", terms: "new po procurement purchase" },
+  { group: "Actions", title: "Add vendor", subtitle: "Open Vendors", view: "vendors", icon: "building-2", terms: "new supplier vendor" }
+];
+
+function searchableItems() {
+  return GLOBAL_SEARCH_ITEMS.filter((item) => !item.view || canAccessView(item.view));
+}
+
+function renderGlobalSearchResults() {
+  const results = document.getElementById("globalSearchResults");
+  const input = document.getElementById("globalSearchPaletteInput");
+  if (!results || !input) return;
+  const term = input.value.trim().toLowerCase();
+  const items = searchableItems().filter((item) => {
+    const haystack = `${item.title} ${item.subtitle || ""} ${item.group} ${item.terms || ""}`.toLowerCase();
+    return !term || haystack.includes(term);
   });
+  if (!items.length) {
+    results.innerHTML = `<div class="search-empty">No sections found.</div>`;
+    return;
+  }
+  let currentGroup = "";
+  results.innerHTML = items.map((item, index) => {
+    const heading = item.group !== currentGroup ? `<div class="search-result-group">${escapeHtml(item.group)}</div>` : "";
+    currentGroup = item.group;
+    return `${heading}
+      <button class="search-result-item ${index === 0 ? "active" : ""}" type="button" ${item.view ? `data-search-view="${escapeHtml(item.view)}"` : "disabled"} aria-label="${escapeHtml(item.title)}">
+        <span class="search-result-icon"><i data-lucide="${escapeHtml(item.icon)}"></i></span>
+        <span class="search-result-title">${escapeHtml(item.title)}</span>
+        <span class="search-result-subtitle">${escapeHtml(item.subtitle || "")}</span>
+        ${item.view ? `<span class="search-enter"><i data-lucide="corner-down-left"></i></span>` : ""}
+      </button>`;
+  }).join("");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function openGlobalSearch(seed = "") {
+  const overlay = document.getElementById("globalSearchOverlay");
+  const input = document.getElementById("globalSearchPaletteInput");
+  if (!overlay || !input) return;
+  overlay.classList.add("show");
+  overlay.setAttribute("aria-hidden", "false");
+  input.value = seed;
+  renderGlobalSearchResults();
+  requestAnimationFrame(() => input.focus());
+}
+
+function closeGlobalSearch() {
+  const overlay = document.getElementById("globalSearchOverlay");
+  const topInput = document.getElementById("globalSearch");
+  if (!overlay) return;
+  overlay.classList.remove("show");
+  overlay.setAttribute("aria-hidden", "true");
+  if (topInput) topInput.value = "";
+}
+
+document.querySelector(".search")?.addEventListener("click", () => openGlobalSearch(document.getElementById("globalSearch")?.value || ""));
+document.getElementById("globalSearch")?.addEventListener("focus", (event) => openGlobalSearch(event.target.value));
+document.getElementById("globalSearch")?.addEventListener("input", (event) => openGlobalSearch(event.target.value));
+document.getElementById("globalSearchPaletteInput")?.addEventListener("input", renderGlobalSearchResults);
+document.getElementById("closeGlobalSearch")?.addEventListener("click", closeGlobalSearch);
+document.getElementById("globalSearchOverlay")?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-search-close]")) closeGlobalSearch();
+  const item = event.target.closest("[data-search-view]");
+  if (!item) return;
+  closeGlobalSearch();
+  setView(item.dataset.searchView);
+});
+
+document.addEventListener("keydown", (event) => {
+  const isShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k";
+  if (isShortcut) {
+    event.preventDefault();
+    openGlobalSearch();
+  }
+  if (event.key === "Escape") closeGlobalSearch();
+  if (event.key === "Enter" && document.getElementById("globalSearchOverlay")?.classList.contains("show")) {
+    const active = document.querySelector(".search-result-item.active[data-search-view]");
+    if (!active || document.activeElement?.id !== "globalSearchPaletteInput") return;
+    event.preventDefault();
+    closeGlobalSearch();
+    setView(active.dataset.searchView);
+  }
 });
 
 async function initializePortal() {
