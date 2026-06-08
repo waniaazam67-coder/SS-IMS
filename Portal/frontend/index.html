@@ -40,6 +40,7 @@
           <div class="nav-label">Insights</div>
           <div class="nav-section single">
             <button class="nav-item nav-item-static" type="button" aria-disabled="true"><span class="nav-icon"><i data-lucide="bar-chart-3"></i></span><span>Reports</span></button>
+            <button class="nav-item admin-only" data-view="audit"><span class="nav-icon"><i data-lucide="scroll-text"></i></span><span>Audit Logs</span></button>
             <button class="nav-item admin-only" data-view="settings"><span class="nav-icon"><i data-lucide="settings"></i></span><span>Settings</span></button>
           </div>
         </div>
@@ -126,23 +127,30 @@
         </div>
       </aside>
 
-      <section class="view active empty-dashboard" id="dashboardView">
+      <section class="view active empty-dashboard dashboard-view" id="dashboardView">
         <div class="dashboard-hero">
           <div>
             <h1>Welcome back</h1>
-            <p>NGO · Main · June 5</p>
+            <p>Pin IMS metrics you want to track every day.</p>
           </div>
           <div class="dashboard-actions">
-            <button class="primary dashboard-add-widget" type="button"><i data-lucide="plus"></i>Add widget</button>
-            <button class="secondary dashboard-done" type="button"><i data-lucide="check"></i>Done</button>
+            <button class="primary dashboard-add-widget" type="button" data-dashboard-picker-open><i data-lucide="plus"></i>Add widget</button>
           </div>
         </div>
-        <div class="dashboard-empty-state">
-          <span class="dashboard-empty-icon"><i data-lucide="layout-grid"></i></span>
-          <strong>Your dashboard is empty</strong>
-          <p>Add widgets to track sales, inventory, customers, and more.</p>
-          <button class="primary dashboard-add-widget" type="button"><i data-lucide="plus"></i>Add your first widget</button>
-        </div>
+        <div class="dashboard-widget-canvas" id="dashboardWidgetCanvas" aria-live="polite"></div>
+        <aside class="dashboard-widget-picker" id="dashboardWidgetPicker" aria-hidden="true">
+          <div class="dashboard-widget-picker-backdrop" data-dashboard-picker-close></div>
+          <section class="dashboard-widget-picker-card" role="dialog" aria-modal="true" aria-label="Add dashboard widgets">
+            <div class="dashboard-widget-picker-head">
+              <div>
+                <h2>Add widgets</h2>
+                <p>Select IMS metrics and pin them to your dashboard.</p>
+              </div>
+              <button class="icon-btn" type="button" data-dashboard-picker-close aria-label="Close widget picker"><i data-lucide="x"></i></button>
+            </div>
+            <div class="dashboard-widget-picker-list" id="dashboardWidgetPickerList"></div>
+          </section>
+        </aside>
       </section>
 
       <section class="view" id="requestView">
@@ -466,15 +474,47 @@
         </div>
       </section>
 
-      <section class="view" id="historyView">
-        <div class="history-page">
-          <div class="history-heading">
+      <section class="view" id="auditView">
+        <div class="audit-log-page">
+          <div class="audit-log-heading">
             <div>
-              <h2 id="historyTitle">Requests history</h2>
+              <h2><i data-lucide="scroll-text"></i>Audit Log</h2>
+              <p>Immutable record of every important action in this workspace.</p>
             </div>
-            <button class="secondary" type="button" id="historyBackBtn">Back</button>
+            <div class="audit-log-heading-meta">
+              <span class="audit-log-verified" id="auditVerifiedCount"><i data-lucide="shield-check"></i>Verified - 0 entries</span>
+              <button class="secondary" type="button" id="auditBackBtn" hidden>Back</button>
+            </div>
           </div>
-          <div class="history-list" id="historyList"></div>
+          <div class="audit-log-filters">
+            <label class="audit-log-search">
+              <i data-lucide="search"></i>
+              <input id="auditSearchInput" type="search" placeholder="Search summary or record ID...">
+            </label>
+            <select id="auditActionFilter" aria-label="Filter audit logs by action">
+              <option value="all">All actions</option>
+            </select>
+            <input id="auditEntityFilter" type="search" placeholder="Entity (e.g. inventory.items)">
+            <select id="auditActorFilter" aria-label="Filter audit logs by actor">
+              <option value="all">Actors</option>
+            </select>
+          </div>
+          <div class="audit-log-table-card">
+            <div class="table-wrap">
+              <table class="audit-log-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Actor</th>
+                    <th>Action</th>
+                    <th>Entity</th>
+                    <th>Summary</th>
+                  </tr>
+                </thead>
+                <tbody id="auditLogTable"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -662,6 +702,6 @@
   <script src="js/inventory data/progressive.js?v=inventory-split-1"></script>
   <script src="js/inventory data/rwhu.js?v=inventory-split-1"></script>
   <script src="js/inventory data/stationary.js?v=inventory-split-1"></script>
-  <script src="js/script.js?v=signin-fix-20260608-2"></script>
+  <script src="js/script.js?v=audit-log-20260608-1"></script>
 </body>
 </html>

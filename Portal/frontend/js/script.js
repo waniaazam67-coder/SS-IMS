@@ -6,6 +6,10 @@ const LOGIN_PAGE_URL = IS_FILE_PROTOCOL ? `${BACKEND_ORIGIN}/login.html` : "logi
 const SETTINGS_CACHE_KEY = "imsSystemSettingsDraft";
 const SETTINGS_API_BASE = IS_FILE_PROTOCOL ? `${BACKEND_ORIGIN}/api/settings` : "/api/settings";
 const THEME_STORAGE_KEY = "imsTheme";
+const DASHBOARD_WIDGET_STORAGE_KEY = "imsDashboardWidgetsV1";
+const AUDIT_LOG_STORAGE_KEY = "imsAuditLogsV1";
+const AUDIT_LOGIN_SESSION_KEY = "imsAuditLoginSession";
+const AUDIT_LOG_LIMIT = 1500;
 const BUSINESS_DATA_API_BASE = IS_FILE_PROTOCOL ? `${BACKEND_ORIGIN}/api` : "/api";
 const AUTO_REFRESH_INTERVAL_MS = 10000;
 const CHAT_POLL_INTERVAL_MS = 5000;
@@ -30,6 +34,7 @@ const VIEW_ROLE_ACCESS = {
   vendors: ["admin", "inventory_manager"],
   itemRequests: ["admin"],
   transport: ["admin", "inventory_manager"],
+  audit: ["admin"],
   settings: ["admin"],
   history: ["admin"]
 };
@@ -54,6 +59,8 @@ let businessDataLoading = true;
 let businessDataError = "";
 const businessDataErrors = {};
 let dashboardDefaultHtml = "";
+let dashboardPickerOpen = false;
+let dashboardWidgetIds = loadDashboardWidgetIds();
 const APPROVED_LOCATIONS = ["I9 warehouse", "Secretariat", "NSR CC", "RWP CC"];
 const APPROVED_LOCATION_LOOKUP = new Map(APPROVED_LOCATIONS.map((location) => [
   location.toLowerCase().replace(/[^a-z0-9]/g, ""),
@@ -77,6 +84,7 @@ const VENDOR_ACCOUNT_DETAILS_KEY = "imsVendorAccountDetails";
 const vendorAccountDetails = loadVendorAccountDetails();
 
 let state = loadState();
+state.auditLogs = loadAuditLogs();
 let inventoryCategoryFilter = "All";
 let inventoryLocationFilter = "All";
 let inventoryStatusFilter = "All";
@@ -137,6 +145,7 @@ let lastInvitedUserName = "";
 let copiedInviteMessageTimer = null;
 let isAddingUser = false;
 let activeEditPermissionsUserId = "";
+let activeRoleAccessPreviewRole = "";
 let activeSettingsGroup = "team";
 let activeNotificationTab = "direct";
 let unreadOnly = false;
@@ -158,6 +167,11 @@ let pendingDeleteUserId = "";
 let activeHistorySection = "requests";
 let previousHistoryView = "dashboard";
 const expandedHistoryIds = new Set();
+let auditSearchTerm = "";
+let auditActionFilter = "all";
+let auditActorFilter = "all";
+let auditEntityFilter = "";
+let activeAuditSection = "all";
 
 function redirectToLogin() {
   const target = IS_FILE_PROTOCOL
@@ -293,6 +307,7 @@ async function requirePortalSession() {
     return null;
   }
   isAdmin = hasRole("admin");
+  recordAuditLoginIfNeeded();
   // #region debug-point F:portal-session-ready
   fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"F",location:"script.js:requirePortalSession:ready",msg:"[DEBUG] portal session established",data:{currentUserName:currentUser?.name||"",currentUserEmail:currentUser?.email||"",currentUserId:currentUser?.id||"",isAdmin},ts:Date.now()})}).catch(()=>{});
   // #endregion
@@ -430,6 +445,40 @@ function loadState() {
   } catch {
     return { ...structuredClone(seedState), ...imported };
   }
+}
+
+function loadDashboardWidgetIds() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DASHBOARD_WIDGET_STORAGE_KEY) || "[]");
+    return Array.isArray(saved) ? [...new Set(saved.map((value) => String(value || "").trim()).filter(Boolean))] : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDashboardWidgetIds() {
+  localStorage.setItem(DASHBOARD_WIDGET_STORAGE_KEY, JSON.stringify(dashboardWidgetIds));
+}
+
+function loadAuditLogs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AUDIT_LOG_STORAGE_KEY) || "[]");
+    return Array.isArray(saved)
+      ? saved.filter((log) => {
+          const section = String(log?.section || "").toLowerCase();
+          const entityType = String(log?.entityType || "").toLowerCase();
+          return !["audit", "navigation"].includes(section)
+            && !entityType.startsWith("audit.")
+            && !entityType.startsWith("navigation.");
+        })
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveAuditLogs() {
+  localStorage.setItem(AUDIT_LOG_STORAGE_KEY, JSON.stringify((state.auditLogs || []).slice(0, AUDIT_LOG_LIMIT)));
 }
 
 function importedInventoryState() {
@@ -652,6 +701,98 @@ function showToast(message, type = "success") {
   setTimeout(() => toast.className = "toast", 2800);
 }
 
+function auditActionLabel(action) {
+  return String(action || "view").replace(/[_-]+/g, " ").trim().toUpperCase();
+}
+
+function auditActionTone(action) {
+  const key = String(action || "").toLowerCase();
+  if (["create", "login", "approve", "issue", "receive"].includes(key)) return "success";
+  if (["delete", "reject", "cancel", "deactivate", "logout"].includes(key)) return "danger";
+  if (["update", "edit", "refresh", "change"].includes(key)) return "info";
+  return "neutral";
+}
+
+function auditEntityText(log = {}) {
+  return [log.entityType, log.entityId].filter(Boolean).join(" · ");
+}
+
+function sanitizeAuditSummary(summary, fallback = "Activity recorded") {
+  const text = String(summary || "").trim();
+  return text || fallback;
+}
+
+function auditActorMatchesUser(log = {}, user = {}) {
+  const logActorId = String(log.actorId || "").trim();
+  const logActorEmail = String(log.actorEmail || "").trim().toLowerCase();
+  const logActorName = String(log.actorName || "").trim().toLowerCase();
+  const userId = String(user.id || "").trim();
+  const userEmail = String(user.email || "").trim().toLowerCase();
+  const userName = String(user.name || "").trim().toLowerCase();
+  return Boolean(
+    (logActorId && userId && logActorId === userId)
+    || (logActorEmail && userEmail && logActorEmail === userEmail)
+    || (logActorName && userName && logActorName === userName)
+  );
+}
+
+function isAdminAuditActor(log = {}) {
+  const actorRoles = Array.isArray(log.actorRoles) ? log.actorRoles.map(normalizeRoleKey) : [];
+  if (actorRoles.includes("admin")) return true;
+  if (auditActorMatchesUser(log, currentUser) && hasRole("admin")) return true;
+  return userManagementUsers.some((user) =>
+    auditActorMatchesUser(log, user) && Array.isArray(user.roles) && user.roles.map(normalizeRoleKey).includes("admin"));
+}
+
+function recordAuditEvent({
+  action = "view",
+  entityType = "",
+  entityId = "",
+  summary = "",
+  details = {},
+  section = "workspace",
+  actorName = currentUser.name || currentUser.email || "IMS User",
+  actorEmail = currentUser.email || "",
+  actorId = currentUser.id || "",
+  date = new Date().toISOString()
+} = {}) {
+  const normalizedSection = String(section || "workspace").trim().toLowerCase();
+  const normalizedEntityType = String(entityType || "").trim().toLowerCase();
+  if (normalizedSection === "audit" || normalizedSection === "navigation") return null;
+  if (normalizedEntityType.startsWith("audit.") || normalizedEntityType.startsWith("navigation.")) return null;
+  if (!Array.isArray(state.auditLogs)) state.auditLogs = [];
+  const entry = {
+    id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    action: String(action || "view").toLowerCase(),
+    entityType: String(entityType || "").trim(),
+    entityId: String(entityId || "").trim(),
+    summary: sanitizeAuditSummary(summary),
+    actorName: String(actorName || "IMS User").trim(),
+    actorEmail: String(actorEmail || "").trim(),
+    actorId: String(actorId || "").trim(),
+    actorRoles: currentUser.roles || [],
+    section: String(section || "workspace").trim(),
+    date,
+    details: typeof details === "object" && details ? details : { details: String(details || "") }
+  };
+  state.auditLogs = [entry, ...state.auditLogs].slice(0, AUDIT_LOG_LIMIT);
+  saveAuditLogs();
+  return entry;
+}
+
+function recordAuditLoginIfNeeded() {
+  const sessionKey = `${currentUser.uid || currentUser.id}:${currentUser.email || ""}`;
+  if (!sessionKey || sessionStorage.getItem(AUDIT_LOGIN_SESSION_KEY) === sessionKey) return;
+  sessionStorage.setItem(AUDIT_LOGIN_SESSION_KEY, sessionKey);
+  recordAuditEvent({
+    action: "login",
+    entityType: "auth.login",
+    entityId: currentUser.uid || currentUser.id,
+    summary: `${currentUser.name || currentUser.email || "IMS User"} logged in`,
+    section: "auth"
+  });
+}
+
 function initialsFor(nameOrEmail) {
   const source = String(nameOrEmail || "IMS User").trim();
   const parts = source.includes("@") ? [source.split("@")[0]] : source.split(/\s+/);
@@ -817,6 +958,7 @@ async function loadUserManagement({ silent = false } = {}) {
       roles: Array.isArray(user.roles) ? user.roles.map(normalizeRoleKey) : []
     }));
     userManagementLoaded = true;
+    renderAuditPage();
     renderSettings();
   } catch (error) {
     if (!silent) showToast(error.message || "Unable to load users.", "error");
@@ -1034,6 +1176,29 @@ function renderRolesManagement(section) {
     approver: "list-checks",
     inventory_manager: "package"
   };
+  const roleAccessSections = [
+    { module: "Workspace", label: "Dashboard", view: "dashboard" },
+    { module: "Requests", label: "Requisition Form", view: "requisition" },
+    { module: "Requests", label: "Item Requests", view: "requests" },
+    { module: "Requests", label: "Transport Requests", view: "transport" },
+    { module: "Approvals", label: "Approvals", view: "approvals" },
+    { module: "Inventory", label: "Items", view: "inventory" },
+    { module: "Inventory", label: "Warehouses", view: "inventory" },
+    { module: "Inventory", label: "Categories", view: "inventory" },
+    { module: "Inventory", label: "Stock Issue", view: "issue" },
+    { module: "Inventory", label: "GRN", view: "grn" },
+    { module: "Procurement", label: "Purchase Orders", view: "po" },
+    { module: "Procurement", label: "Vendors", view: "vendors" },
+    { module: "Settings", label: "Settings", view: "settings" },
+    { module: "History", label: "History", view: "history" }
+  ];
+  const roleCanAccess = (roleKey, view) => roleKey === "admin" || (VIEW_ROLE_ACCESS[view] || []).includes(roleKey);
+  const groupedRoleAccess = (roleKey) => roleAccessSections.reduce((groups, sectionInfo) => {
+    if (!roleCanAccess(roleKey, sectionInfo.view)) return groups;
+    if (!groups[sectionInfo.module]) groups[sectionInfo.module] = [];
+    groups[sectionInfo.module].push(sectionInfo.label);
+    return groups;
+  }, {});
   document.getElementById("settingsSectionTitle").textContent = section.title;
   document.getElementById("settingsSectionDescription").textContent = section.description;
   document.getElementById("settingsForm").innerHTML = `
@@ -1045,6 +1210,8 @@ function renderRolesManagement(section) {
       ${AVAILABLE_USER_ROLES.map((role) => {
         const memberCount = userManagementUsers.filter((user) => (user.roles || []).includes(role.key)).length;
         const permissionCount = role.key === "admin" ? "All" : role.key === "inventory_manager" ? "Procurement + inventory" : role.key === "approver" ? "Approvals" : "Requests";
+        const roleAccess = groupedRoleAccess(role.key);
+        const isExpanded = activeRoleAccessPreviewRole === role.key;
         return `
           <article class="settings-role-card settings-role-${escapeHtml(role.key)}">
             <div class="settings-role-icon"><i data-lucide="${roleIcons[role.key] || "shield"}"></i></div>
@@ -1054,7 +1221,20 @@ function renderRolesManagement(section) {
               <small>${escapeHtml(permissionCount)} permissions · ${memberCount} ${memberCount === 1 ? "member" : "members"}</small>
             </div>
             <span class="settings-role-member-pill">${memberCount} ${memberCount === 1 ? "member" : "members"}</span>
-            <button class="secondary" type="button"><i data-lucide="eye"></i>View</button>
+            <button class="secondary view-role-access" type="button" data-role-access-preview="${escapeHtml(role.key)}"><i data-lucide="eye"></i>${isExpanded ? "Hide" : "View"}</button>
+            ${isExpanded ? `
+              <div class="settings-role-access-preview">
+                <strong>Accessible modules and sections</strong>
+                <div class="settings-role-access-groups">
+                  ${Object.entries(roleAccess).map(([module, sections]) => `
+                    <div class="settings-role-access-group">
+                      <span>${escapeHtml(module)}</span>
+                      <p>${sections.map((label) => escapeHtml(label)).join(" · ")}</p>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ""}
           </article>
         `;
       }).join("")}
@@ -1221,6 +1401,14 @@ function sendUserInviteLink() {
     `Hello ${name},\n\nYour IMS Portal account has been created. Use the link below to create your password:\n\n${link}\n\nAfter setting your password, you will be signed in automatically.\n\nThanks.`
   );
   window.location.href = `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${body}`;
+  recordAuditEvent({
+    action: "share",
+    entityType: "auth.invite",
+    entityId: email,
+    summary: `${currentUser.name || "IMS User"} prepared an invite email for ${email}`,
+    section: "settings",
+    details: { invitedUser: name, email }
+  });
   showToast("Invite email draft opened.");
 }
 
@@ -1245,6 +1433,14 @@ async function saveUserRoles(userId, rolesOverride = null) {
       : user);
     closePermissionsDrawer();
     renderSettings();
+    recordAuditEvent({
+      action: "update",
+      entityType: "settings.user_roles",
+      entityId: updatedUser?.email || String(userId),
+      summary: `${currentUser.name || "IMS User"} updated roles for ${updatedUser?.name || updatedUser?.email || "a user"}`,
+      section: "settings",
+      details: { roles: checkedRoles.join(", "), userId }
+    });
     showToast("User roles updated.");
   } catch (error) {
     showToast(error.message || "Unable to update user roles.", "error");
@@ -1286,6 +1482,14 @@ async function addUserFromManagement() {
     nameField.value = "";
     emailField.value = "";
     renderSettings();
+    recordAuditEvent({
+      action: "create",
+      entityType: "settings.user",
+      entityId: createdUser?.email || email,
+      summary: `${currentUser.name || "IMS User"} added user ${createdUser?.name || name}`,
+      section: "settings",
+      details: { email: createdUser?.email || email, roles: roles.join(", ") }
+    });
     if (inviteLink) {
       setUserInviteLink(inviteLink, inviteRecipient);
       openAddUserDrawer();
@@ -1319,6 +1523,14 @@ async function toggleUserStatus(userId, nextActive) {
       ? { ...user, ...updatedUser, roles: (updatedUser.roles || user.roles || []).map(normalizeRoleKey) }
       : user);
     renderSettings();
+    recordAuditEvent({
+      action: nextActive ? "activate" : "deactivate",
+      entityType: "settings.user_status",
+      entityId: updatedUser?.email || String(userId),
+      summary: `${currentUser.name || "IMS User"} ${nextActive ? "activated" : "deactivated"} ${updatedUser?.name || updatedUser?.email || "a user"}`,
+      section: "settings",
+      details: { userId, isActive: nextActive }
+    });
     showToast(nextActive ? "User activated." : "User deactivated.");
   } catch (error) {
     showToast(error.message || "Unable to update user status.", "error");
@@ -1348,11 +1560,20 @@ function closeDeleteUserModal() {
 async function confirmDeleteUser() {
   const userId = pendingDeleteUserId;
   if (!userId) return;
+  const user = userManagementUsers.find((item) => String(item.id) === String(userId));
   try {
     await apiRequest(`/auth/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
     userManagementUsers = userManagementUsers.filter((item) => String(item.id) !== String(userId));
     closeDeleteUserModal();
     renderSettings();
+    recordAuditEvent({
+      action: "delete",
+      entityType: "settings.user",
+      entityId: user?.email || userId,
+      summary: `${currentUser.name || "IMS User"} deleted ${user?.name || user?.email || "a user"}`,
+      section: "settings",
+      details: { userId }
+    });
     showToast("User deleted.");
   } catch (error) {
     showToast(error.message || "Unable to delete user.", "error");
@@ -2270,8 +2491,9 @@ const breadcrumbByView = {
   vendors: ["Procurement", "Vendors"],
   transport: ["Requests", "Transport Requests"],
   approvals: ["Approvals"],
+  audit: ["Audit Logs"],
   settings: ["Settings"],
-  history: ["History"]
+  history: ["Audit Logs"]
 };
 
 function updateTopbarBreadcrumb(view) {
@@ -2292,6 +2514,8 @@ function updateTopbarBreadcrumb(view) {
 }
 
 function setView(view) {
+  if (view === "history") view = "audit";
+  const previousView = document.querySelector(".app-shell")?.getAttribute("data-active-view") || "";
   if (INVENTORY_VIEW_TABS[view]) {
     inventoryModuleTab = INVENTORY_VIEW_TABS[view];
     view = "inventory";
@@ -2305,6 +2529,7 @@ function setView(view) {
     view = "requests";
   }
   if (view === "requests") normalizeRequestModuleTab();
+  if (view !== "dashboard" && dashboardPickerOpen) dashboardPickerOpen = false;
   if (!canAccessView(view)) {
     view = firstAccessibleView();
     if (INVENTORY_VIEW_TABS[view]) {
@@ -2327,7 +2552,7 @@ function setView(view) {
   document.getElementById(`${view}View`).classList.add("active");
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
   const active = document.querySelector(`.nav-item[data-view="${view}"] span:last-child`);
-  document.getElementById("pageTitle").textContent = view === "history" ? "History" : active ? active.textContent : "Dashboard";
+  document.getElementById("pageTitle").textContent = view === "audit" ? "Audit Logs" : active ? active.textContent : "Dashboard";
   updateTopbarBreadcrumb(view);
   render();
 }
@@ -2336,8 +2561,13 @@ function openHistoryPage(section) {
   const activePanel = document.querySelector(".view.active");
   previousHistoryView = activePanel ? activePanel.id.replace(/View$/, "") : "dashboard";
   activeHistorySection = section;
+  activeAuditSection = section || "all";
+  auditSearchTerm = "";
+  auditActionFilter = "all";
+  auditActorFilter = "all";
+  auditEntityFilter = "";
   expandedHistoryIds.clear();
-  setView("history");
+  setView("audit");
 }
 
 function addRequestLine() {
@@ -2594,135 +2824,188 @@ function handleDashboardAction(action) {
   actionMap[action]?.();
 }
 
-function activityIcon(activity) {
-  const icons = {
-    "Request submitted": "send",
-    "Approved": "check-circle-2",
-    "Issued": "package-check",
-    "PO created": "file-pen-line",
-    "GRN received": "truck"
+function dashboardMetricState() {
+  const currentStockRows = stockRows();
+  const approvedRequests = state.requests.filter((request) => requestOverallStatus(request) === "Approved" || requestOverallStatus(request) === "Issued");
+  const pendingRequests = state.requests.filter((request) => request.items.some((item) => item.approvalStatus === "Pending"));
+  const openPOs = state.purchaseOrders.filter((po) => poStatusKey(po) === "open");
+  const orderedPOs = state.purchaseOrders.filter((po) => ["ordered", "pending"].includes(poStatusKey(po)));
+  const activeVendors = state.vendors.filter(isActiveVendor);
+  return {
+    requests: state.requests.length,
+    transportRequests: state.transportRequests.length,
+    pendingApprovals: pendingRequests.length,
+    approvedRequests: approvedRequests.length,
+    lowStock: currentStockRows.filter((row) => row.status === "Low stock").length,
+    outOfStock: currentStockRows.filter((row) => row.status === "Out of stock").length,
+    openPOs: openPOs.length,
+    orderedPOs: orderedPOs.length,
+    activeVendors: activeVendors.length,
+    totalGRNs: state.grns.length,
+    inventoryItems: state.items.length,
+    itemCategories: categories().length
   };
-  return icons[activity] || "activity";
+}
+
+function dashboardWidgetCatalog() {
+  const metrics = dashboardMetricState();
+  return [
+    { id: "requests-count", group: "Requests", title: "Inventory Requests", description: "Total requests recorded in IMS.", value: metrics.requests, note: "Track incoming inventory demand.", action: "view-requests", actionLabel: "Open requests", view: "requests" },
+    { id: "transport-count", group: "Transport", title: "Transport Requests", description: "All submitted transport requests.", value: metrics.transportRequests, note: "Monitor transport workload.", action: "transport-requests", actionLabel: "Open transport", view: "transport" },
+    { id: "pending-approvals", group: "Approvals", title: "Pending Approvals", description: "Requests still waiting for approval.", value: metrics.pendingApprovals, note: "Follow up on delayed approvals.", action: "pending-approvals", actionLabel: "Open approvals", view: "approvals" },
+    { id: "approved-requests", group: "Requests", title: "Approved Requests", description: "Requests already approved or issued.", value: metrics.approvedRequests, note: "See fulfilled demand progress.", action: "view-requests", actionLabel: "Review requests", view: "requests" },
+    { id: "low-stock", group: "Inventory", title: "Low Stock Items", description: "Items currently flagged as low stock.", value: metrics.lowStock, note: "Restock before operations are affected.", action: "low-stock", actionLabel: "Open inventory", view: "inventory" },
+    { id: "out-of-stock", group: "Inventory", title: "Out of Stock Items", description: "Items with no available stock.", value: metrics.outOfStock, note: "Critical inventory shortages.", action: "out-of-stock", actionLabel: "Open inventory", view: "inventory" },
+    { id: "open-po", group: "Procurement", title: "Open POs", description: "Purchase orders still open.", value: metrics.openPOs, note: "Track active procurement commitments.", action: "open-po", actionLabel: "Open procurement", view: "po" },
+    { id: "ordered-po", group: "Procurement", title: "Ordered POs", description: "POs sent or pending vendor fulfilment.", value: metrics.orderedPOs, note: "Monitor expected deliveries.", action: "open-po", actionLabel: "Open procurement", view: "po" },
+    { id: "active-vendors", group: "Vendors", title: "Active Vendors", description: "Vendors currently available for procurement.", value: metrics.activeVendors, note: "Keep supplier coverage visible.", action: "procurement-export", actionLabel: "Export procurement", view: "vendors" },
+    { id: "total-grns", group: "GRN", title: "Total GRNs", description: "Goods received notes recorded in IMS.", value: metrics.totalGRNs, note: "View receiving activity at a glance.", action: "pending-grns", actionLabel: "Open GRN", view: "grn" },
+    { id: "inventory-items", group: "Inventory", title: "Inventory Items", description: "Total item types available in IMS.", value: metrics.inventoryItems, note: "Overall catalog size.", action: "inventory-items", actionLabel: "Open items", view: "inventory" },
+    { id: "item-categories", group: "Inventory", title: "Item Categories", description: "Categories currently defined in IMS.", value: metrics.itemCategories, note: "Review catalog structure.", action: "inventory-items", actionLabel: "Open inventory", view: "inventory" }
+  ].filter((widget) => !widget.view || canAccessView(widget.view));
+}
+
+function dashboardWidgetById(widgetId) {
+  return dashboardWidgetCatalog().find((widget) => widget.id === widgetId) || null;
+}
+
+function normalizeDashboardWidgets() {
+  const allowed = new Set(dashboardWidgetCatalog().map((widget) => widget.id));
+  dashboardWidgetIds = dashboardWidgetIds.filter((widgetId) => allowed.has(widgetId));
+  saveDashboardWidgetIds();
+  return dashboardWidgetIds;
+}
+
+function openDashboardWidgetPicker() {
+  dashboardPickerOpen = true;
+  renderDashboard();
+}
+
+function closeDashboardWidgetPicker() {
+  dashboardPickerOpen = false;
+  renderDashboard();
+}
+
+function addDashboardWidget(widgetId) {
+  if (!dashboardWidgetById(widgetId) || dashboardWidgetIds.includes(widgetId)) return;
+  dashboardWidgetIds.push(widgetId);
+  saveDashboardWidgetIds();
+  const widget = dashboardWidgetById(widgetId);
+  recordAuditEvent({
+    action: "create",
+    entityType: "dashboard.widget",
+    entityId: widgetId,
+    summary: `${currentUser.name || "IMS User"} added ${widget?.title || "a widget"} to the dashboard`,
+    section: "dashboard",
+    details: { widgetId, title: widget?.title || "" }
+  });
+  renderDashboard();
+}
+
+function removeDashboardWidget(widgetId) {
+  dashboardWidgetIds = dashboardWidgetIds.filter((id) => id !== widgetId);
+  saveDashboardWidgetIds();
+  const widget = dashboardWidgetById(widgetId);
+  recordAuditEvent({
+    action: "delete",
+    entityType: "dashboard.widget",
+    entityId: widgetId,
+    summary: `${currentUser.name || "IMS User"} removed ${widget?.title || "a widget"} from the dashboard`,
+    section: "dashboard",
+    details: { widgetId, title: widget?.title || "" }
+  });
+  renderDashboard();
+}
+
+function renderDashboardWidgetPicker() {
+  const picker = document.getElementById("dashboardWidgetPicker");
+  const list = document.getElementById("dashboardWidgetPickerList");
+  if (picker) {
+    picker.classList.toggle("show", dashboardPickerOpen);
+    picker.setAttribute("aria-hidden", String(!dashboardPickerOpen));
+  }
+  if (!list) return;
+  const selected = new Set(normalizeDashboardWidgets());
+  list.innerHTML = dashboardWidgetCatalog().map((widget) => `
+    <article class="dashboard-widget-picker-item ${selected.has(widget.id) ? "selected" : ""}">
+      <div class="dashboard-widget-picker-copy">
+        <span class="dashboard-widget-picker-group">${escapeHtml(widget.group)}</span>
+        <h3>${escapeHtml(widget.title)}</h3>
+        <p>${escapeHtml(widget.description)}</p>
+      </div>
+      <button class="${selected.has(widget.id) ? "secondary" : "primary"}" type="button" data-dashboard-widget-add="${escapeHtml(widget.id)}" ${selected.has(widget.id) ? "disabled" : ""}>
+        ${selected.has(widget.id) ? "Added" : "Add"}
+      </button>
+    </article>
+  `).join("");
+}
+
+function renderDashboardWidgetCanvas() {
+  const dashboard = document.getElementById("dashboardView");
+  const canvas = document.getElementById("dashboardWidgetCanvas");
+  if (!dashboard || !canvas) return;
+  const widgets = normalizeDashboardWidgets().map(dashboardWidgetById).filter(Boolean);
+  dashboard.classList.toggle("empty-dashboard", !widgets.length);
+  dashboard.classList.toggle("dashboard-managing", dashboardPickerOpen);
+  if (!widgets.length) {
+    canvas.innerHTML = `
+      <div class="dashboard-empty-state">
+        <span class="dashboard-empty-icon"><i data-lucide="layout-grid"></i></span>
+        <strong>Your dashboard is empty</strong>
+        <p>Select IMS metrics from the widget picker to build your dashboard.</p>
+        <button class="primary dashboard-add-widget" type="button" data-dashboard-picker-open><i data-lucide="plus"></i>Add your first widget</button>
+      </div>
+    `;
+    return;
+  }
+  canvas.innerHTML = `
+    <div class="dashboard-widget-grid">
+      ${widgets.map((widget) => `
+        <article class="dashboard-widget-card">
+          <div class="dashboard-widget-card-head">
+            <div>
+              <span class="dashboard-widget-group">${escapeHtml(widget.group)}</span>
+              <h3>${escapeHtml(widget.title)}</h3>
+            </div>
+            <button class="icon-btn dashboard-widget-remove" type="button" data-dashboard-widget-remove="${escapeHtml(widget.id)}" aria-label="Remove ${escapeHtml(widget.title)}" title="Remove widget"><i data-lucide="trash-2"></i></button>
+          </div>
+          <strong class="dashboard-widget-value">${escapeHtml(widget.value)}</strong>
+          <p class="dashboard-widget-note">${escapeHtml(widget.note)}</p>
+          <button class="dashboard-widget-link" type="button" data-dashboard-action="${escapeHtml(widget.action)}">${escapeHtml(widget.actionLabel)}</button>
+        </article>
+      `).join("")}
+    </div>
+  `;
 }
 
 function renderDashboard() {
   if (!dashboardDefaultHtml) dashboardDefaultHtml = document.getElementById("dashboardView")?.innerHTML || "";
+  renderDashboardWidgetPicker();
+  const canvas = document.getElementById("dashboardWidgetCanvas");
+  if (!canvas) return;
   if (businessDataLoading) {
-    showCardSkeleton("dashboardView");
-    showTableSkeleton("dashboardRecentRequests", 6, 5);
-    showTableSkeleton("dashboardPendingApprovals", 5, 5);
-    showTableSkeleton("dashboardRecentActivity", 4, 6);
+    canvas.innerHTML = `
+      <div class="dashboard-empty-state">
+        <span class="dashboard-empty-icon"><i data-lucide="loader-circle"></i></span>
+        <strong>Loading dashboard</strong>
+        <p>Fetching the latest IMS metrics for your widgets.</p>
+      </div>
+    `;
     return;
   }
-  restoreDashboardShell();
-  const currentStockRows = stockRows();
-  const linkedVendorIds = new Set(state.purchaseOrders.map((po) => po.vendorId).filter(Boolean));
-  const linkedGrnPOs = new Set(state.grns.map((grn) => grn.poNumber).filter(Boolean));
-  const pendingRequests = state.requests.filter((request) => request.items.some((item) => item.approvalStatus === "Pending"));
-  const approvedRequests = state.requests.filter((request) => requestOverallStatus(request) === "Approved" || requestOverallStatus(request) === "Issued");
-  const rejectedRequests = state.requests.filter((request) => requestOverallStatus(request) === "Rejected");
-  const openPOs = state.purchaseOrders.filter((po) => poStatusKey(po) === "open");
-  const orderedPOs = state.purchaseOrders.filter((po) => ["ordered", "pending"].includes(poStatusKey(po)));
-  const closedDeliveredPOs = state.purchaseOrders.filter((po) => ["closed", "delivered", "received"].includes(poStatusKey(po)));
-  const partialDeliveredPOs = state.purchaseOrders.filter((po) => poStatusKey(po).includes("partial") || (Number(po.quantityReceived || 0) > 0 && remainingPoQuantity(po) > 0));
-  const cancelledPOs = state.purchaseOrders.filter((po) => ["cancelled", "canceled"].includes(poStatusKey(po)) || po.cancellationReason);
-
-  setText("kpiRequests", state.requests.length);
-  setText("kpiTransport", state.transportRequests.length);
-  setText("kpiApprovedRequests", approvedRequests.length);
-  setText("kpiRejectedRequests", rejectedRequests.length);
-  setText("kpiLowStock", currentStockRows.filter((row) => row.status !== "OK").length);
-  setText("kpiPO", state.purchaseOrders.length);
-  setText("kpiGRN", state.purchaseOrders.filter((po) => po.status !== "Closed").length);
-  setText("kpiOpenPO", openPOs.length);
-  setText("kpiOrderedPO", orderedPOs.length);
-  setText("kpiClosedDeliveredPO", closedDeliveredPOs.length);
-  setText("kpiPartialDeliveredPO", partialDeliveredPOs.length);
-  setText("kpiCancelledPO", cancelledPOs.length);
-  setText("kpiStockLines", currentStockRows.length);
-  setText("kpiInStock", currentStockRows.filter((row) => row.stock > 0).length);
-  setText("kpiStockLow", currentStockRows.filter((row) => row.status === "Low stock").length);
-  setText("kpiOutOfStock", currentStockRows.filter((row) => row.status === "Out of stock").length);
-  setText("kpiVendors", state.vendors.filter(isActiveVendor).length);
-  setText("kpiVendorContacts", state.vendors.filter((vendor) => vendor.contact).length);
-  setText("kpiVendorPhones", state.vendors.filter((vendor) => vendor.phone).length);
-  setText("kpiVendorPOs", linkedVendorIds.size);
-  setText("kpiTotalGRNs", state.grns.length);
-  setText("kpiInventoryItems", state.items.length);
-  setText("kpiItemCategories", categories().length);
-  setText("kpiAcceptedQty", quantityValue(state.grns.reduce((sum, grn) => sum + Number(grn.qtyAccepted || 0), 0)));
-  setText("kpiGRNLinkedPOs", linkedGrnPOs.size);
-  setText("kpiManualGRNs", state.grns.filter((grn) => !grn.poNumber).length);
-  setText("pendingApprovalCount", pendingRequests.length);
-
-  const recentRows = [...state.requests]
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-    .slice(0, 5)
-    .map((request) => `
-      <tr class="clickable-row" data-dashboard-request="${escapeHtml(request.requestId)}">
-        <td colspan="6">
-          <div class="dashboard-feed-row">
-            <span class="activity-icon"><i data-lucide="package"></i></span>
-            <span class="dashboard-feed-copy">
-              <strong>${escapeHtml(request.requestId)} created by ${escapeHtml(request.requester || "Requester")}</strong>
-              <span>${escapeHtml(request.department || "Department")} - ${formatDate(request.date)} - ${requestOverallStatus(request)} / ${requestIssuanceStatus(request)}</span>
-            </span>
-          </div>
-        </td>
-      </tr>
-    `);
-  const recentRequestsTable = document.getElementById("dashboardRecentRequests");
-  if (recentRequestsTable) setTableContent("dashboardRecentRequests", recentRows.join("") || emptyStateRow(6, "No requests yet", "Recent inventory requests will appear here."));
-
-  const pendingApprovalsTable = document.getElementById("dashboardPendingApprovals");
-  if (pendingApprovalsTable) setTableContent("dashboardPendingApprovals", pendingRequests
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-    .slice(0, 5)
-    .map((request) => `
-      <tr class="clickable-row" data-dashboard-request="${escapeHtml(request.requestId)}">
-        <td colspan="5">
-          <div class="dashboard-feed-row">
-            <span class="activity-icon"><i data-lucide="circle-alert"></i></span>
-            <span class="dashboard-feed-copy">
-              <strong>${escapeHtml(request.requestId)} awaiting approval</strong>
-              <span>${escapeHtml(request.requester || "Requester")} - ${escapeHtml(request.department || "Department")} - ${formatDate(request.date)}</span>
-            </span>
-          </div>
-        </td>
-      </tr>
-    `).join("") || emptyStateRow(5, "No pending approvals", "Requests awaiting approval will appear here."));
-
-  const activities = [
-    ...state.requests.map((request) => ({
-      date: request.date,
-      activity: "Request submitted",
-      reference: request.requestId,
-      details: `${request.requester || "Requester"} • ${request.department || "Department"}`
-    })),
-    ...state.requests.flatMap((request) => request.items
-      .filter((item) => item.approvalStatus === "Approved")
-      .map((item) => ({ date: request.date, activity: "Approved", reference: request.requestId, details: item.itemName || item.itemCode }))),
-    ...state.transactions
-      .filter((entry) => entry.type === "STOCK_OUT" && String(entry.sourceId || "").startsWith("REQ"))
-      .map((entry) => ({ date: entry.date, activity: "Issued", reference: entry.sourceId, details: `${entry.quantity} ${entry.itemCode}` })),
-    ...state.purchaseOrders.map((po) => ({ date: po.issueDate || po.date, activity: "PO created", reference: po.poNumber, details: po.vendorName || po.itemCode || "" })),
-    ...state.grns.map((grn) => ({ date: grn.date, activity: "GRN received", reference: grn.grnNumber, details: grn.poNumber || grn.itemCode || "" }))
-  ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10);
-
-  const recentActivityTable = document.getElementById("dashboardRecentActivity");
-  if (recentActivityTable) setTableContent("dashboardRecentActivity", activities.map((activity) => `
-    <tr>
-      <td colspan="4">
-        <div class="dashboard-feed-row">
-          <span class="activity-icon"><i data-lucide="${activityIcon(activity.activity)}"></i></span>
-          <span class="dashboard-feed-copy">
-            <strong>${escapeHtml(activity.reference)} - ${escapeHtml(activity.activity)}</strong>
-            <span>${escapeHtml(activity.details)} - ${formatDate(activity.date)}</span>
-          </span>
-        </div>
-      </td>
-    </tr>
-  `).join("") || emptyStateRow(4, "No recent activity", "Audit, request, PO, and GRN activity will appear here."));
+  if (businessDataError && !state.requests.length && !state.items.length && !state.purchaseOrders.length && !state.grns.length) {
+    canvas.innerHTML = `
+      <div class="dashboard-empty-state">
+        <span class="dashboard-empty-icon"><i data-lucide="triangle-alert"></i></span>
+        <strong>Unable to load dashboard data</strong>
+        <p>${escapeHtml(businessDataError)}</p>
+      </div>
+    `;
+    return;
+  }
+  renderDashboardWidgetCanvas();
+  // Re-hydrate freshly injected dashboard icons after reload and direct widget renders.
+  if (window.lucide) requestAnimationFrame(() => window.lucide.createIcons());
 }
 
 function renderRequests() {
@@ -3663,6 +3946,14 @@ async function savePendingPO() {
   if (!pendingPurchaseOrder) return;
   try {
     await apiRequest("/purchase-orders", { method: "POST", body: JSON.stringify(pendingPurchaseOrder) });
+    recordAuditEvent({
+      action: "create",
+      entityType: "procurement.purchase_orders",
+      entityId: pendingPurchaseOrder.poNumber,
+      summary: `${currentUser.name || "IMS User"} created PO ${pendingPurchaseOrder.poNumber}`,
+      section: "procurement",
+      details: { vendorId: pendingPurchaseOrder.vendorId, amount: pendingPurchaseOrder.poAmount }
+    });
     resetPoForm();
     pendingPurchaseOrder = null;
     await loadBusinessData({ silent: true });
@@ -4510,33 +4801,83 @@ function historyDetailGrid(entry) {
   `).join("")}</div>`;
 }
 
-function renderHistoryPage() {
-  const titles = {
-    requests: "Requests history",
-    transport: "Transport history",
-    approvals: "Approvals history",
-    stockOut: "Stock out history"
-  };
-  setText("historyTitle", titles[activeHistorySection] || titles.requests);
-  const list = document.getElementById("historyList");
-  if (!list) return;
-  const auditEntries = historyRows(activeHistorySection)
-    .map((log) => ({ log, ...historySummary(log) }));
-  const entries = [...recordHistoryEntries(activeHistorySection), ...auditEntries]
-    .sort((a, b) => new Date(b.log?.date || 0) - new Date(a.log?.date || 0));
-  list.innerHTML = entries.map((entry) => {
-    const [icon, tone] = historyIcon(entry);
-    const open = expandedHistoryIds.has(entry.id);
-    return `<article class="history-entry ${open ? "open" : ""}" data-history-entry="${escapeHtml(entry.id)}">
-      <button class="history-entry-main" type="button">
-        <span class="history-icon ${tone}"><i data-lucide="${icon}"></i></span>
-        <span class="history-copy"><strong>${escapeHtml(entry.title)}</strong><span>${escapeHtml(entry.subtitle)}</span></span>
-        <span class="history-meta"><strong>${escapeHtml(compactDate(entry.log.date))}</strong><em>${escapeHtml(entry.ref)}</em></span>
-        <i class="history-chevron" data-lucide="chevron-down"></i>
-      </button>
-      ${historyDetailGrid(entry)}
-    </article>`;
-  }).join("") || `<div class="history-empty">No history yet</div>`;
+function auditSectionMatches(log, section = "all") {
+  if (!section || section === "all") return true;
+  const haystack = `${log.section || ""} ${log.entityType || ""} ${log.summary || ""}`.toLowerCase();
+  if (section === "requests") return haystack.includes("request") && !haystack.includes("transport");
+  if (section === "transport") return haystack.includes("transport");
+  if (section === "approvals") return haystack.includes("approval");
+  if (section === "stockOut") return haystack.includes("stock") || haystack.includes("issue");
+  return haystack.includes(String(section).toLowerCase());
+}
+
+function filteredAuditLogs() {
+  return [...(state.auditLogs || [])]
+    .filter((log) => !["audit", "navigation"].includes(String(log.section || "").toLowerCase()))
+    .filter((log) => {
+      const entityType = String(log.entityType || "").toLowerCase();
+      return !entityType.startsWith("audit.") && !entityType.startsWith("navigation.");
+    })
+    .filter((log) => !isAdminAuditActor(log))
+    .filter((log) => auditSectionMatches(log, activeAuditSection))
+    .filter((log) => auditActionFilter === "all" || String(log.action || "").toLowerCase() === auditActionFilter)
+    .filter((log) => auditActorFilter === "all" || String(log.actorName || "").toLowerCase() === auditActorFilter)
+    .filter((log) => !auditEntityFilter.trim() || auditEntityText(log).toLowerCase().includes(auditEntityFilter.trim().toLowerCase()))
+    .filter((log) => {
+      const term = auditSearchTerm.trim().toLowerCase();
+      if (!term) return true;
+      return [
+        log.summary,
+        log.entityType,
+        log.entityId,
+        log.actorName,
+        log.actorEmail,
+        ...Object.values(detailsObject(log.details))
+      ].some((value) => String(value || "").toLowerCase().includes(term));
+    })
+    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+}
+
+function renderAuditPage() {
+  const tbody = document.getElementById("auditLogTable");
+  const actionSelect = document.getElementById("auditActionFilter");
+  const actorSelect = document.getElementById("auditActorFilter");
+  const verifiedCount = document.getElementById("auditVerifiedCount");
+  const backButton = document.getElementById("auditBackBtn");
+  const searchInput = document.getElementById("auditSearchInput");
+  const entityInput = document.getElementById("auditEntityFilter");
+  if (!tbody || !actionSelect || !actorSelect) return;
+
+  const logs = [...(state.auditLogs || [])]
+    .filter((log) => !isAdminAuditActor(log))
+    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  const actionOptions = [...new Set(logs.map((log) => String(log.action || "").toLowerCase()).filter(Boolean))];
+  const actorOptions = [...new Set(logs.map((log) => String(log.actorName || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  actionSelect.innerHTML = `<option value="all">All actions</option>${actionOptions.map((action) => `<option value="${escapeHtml(action)}">${escapeHtml(auditActionLabel(action))}</option>`).join("")}`;
+  actorSelect.innerHTML = `<option value="all">Actors</option>${actorOptions.map((actor) => `<option value="${escapeHtml(actor.toLowerCase())}">${escapeHtml(actor)}</option>`).join("")}`;
+  actionSelect.value = actionOptions.includes(auditActionFilter) ? auditActionFilter : "all";
+  actorSelect.value = actorOptions.map((actor) => actor.toLowerCase()).includes(auditActorFilter) ? auditActorFilter : "all";
+  auditActionFilter = actionSelect.value;
+  auditActorFilter = actorSelect.value;
+  if (searchInput && searchInput.value !== auditSearchTerm) searchInput.value = auditSearchTerm;
+  if (entityInput && entityInput.value !== auditEntityFilter) entityInput.value = auditEntityFilter;
+
+  const filtered = filteredAuditLogs();
+  if (verifiedCount) verifiedCount.innerHTML = `<i data-lucide="shield-check"></i>Verified - ${filtered.length} ${filtered.length === 1 ? "entry" : "entries"}`;
+  if (backButton) backButton.hidden = activeAuditSection === "all";
+
+  tbody.innerHTML = filtered.map((log) => `
+    <tr>
+      <td>${escapeHtml(compactDate(log.date))}</td>
+      <td>
+        <strong>${escapeHtml(log.actorName || "IMS User")}</strong>
+        <div class="audit-log-subtle">${escapeHtml(log.actorEmail || "")}</div>
+      </td>
+      <td><span class="audit-log-badge ${auditActionTone(log.action)}">${escapeHtml(auditActionLabel(log.action))}</span></td>
+      <td>${escapeHtml(auditEntityText(log) || "-")}</td>
+      <td>${escapeHtml(sanitizeAuditSummary(log.summary, "Activity recorded"))}</td>
+    </tr>
+  `).join("") || emptyStateRow(5, "No audit records found", "Try another search term or filter.");
 }
 
 function emptyRow(cols) {
@@ -4654,7 +4995,7 @@ function render() {
   renderTransport();
   renderApprovals();
   renderVendors();
-  renderHistoryPage();
+  renderAuditPage();
   if (document.getElementById("settingsView").classList.contains("active")) renderSettings();
   if (document.getElementById("notificationCenter").classList.contains("show")) renderNotificationCenter();
   updateNotificationBadge();
@@ -4682,6 +5023,14 @@ window.issueItem = async function (requestId, itemId) {
     });
     await loadBusinessData({ silent: true });
     render();
+    recordAuditEvent({
+      action: "issue",
+      entityType: "requests.issue",
+      entityId: `${requestId}:${itemId}`,
+      summary: `${currentUser.name || "IMS User"} issued stock for request ${requestId}`,
+      section: "requests",
+      details: { requestId, itemId, quantityIssued: qty, issuedBy }
+    });
     showToast("Stock issued and request status updated.");
   } catch (error) {
     showToast(error.message, "error");
@@ -4699,6 +5048,14 @@ window.setTransport = async function (id, status) {
     await loadBusinessData({ silent: true });
     render();
     closeApprovalDetailModal();
+    recordAuditEvent({
+      action: status === "Arranged" ? "update" : "cancel",
+      entityType: "transport.arrangement",
+      entityId: row.requestId || id,
+      summary: `${currentUser.name || "IMS User"} ${status.toLowerCase()} transport ${row.requestId || id}`,
+      section: "transport",
+      details: { transportId: id, status }
+    });
     showToast(`Transport ${status.toLowerCase()}.`);
   } catch (error) {
     showToast(error.message, "error");
@@ -4817,6 +5174,14 @@ window.setRequestApproval = async function (requestId, itemId, status) {
     await loadBusinessData({ silent: true });
     render();
     closeApprovalDetailModal();
+    recordAuditEvent({
+      action: status === "Approved" ? "approve" : "reject",
+      entityType: "requests.approval",
+      entityId: `${requestId}:${itemId}`,
+      summary: `${currentUser.name || "IMS User"} ${status.toLowerCase()} request ${requestId}`,
+      section: "approvals",
+      details: { requestId, itemId, status }
+    });
     showToast(`Request ${status.toLowerCase()}.`);
   } catch (error) {
     showToast(error.message, "error");
@@ -4834,6 +5199,14 @@ window.setTransportApproval = async function (id, status) {
     });
     await loadBusinessData({ silent: true });
     render();
+    recordAuditEvent({
+      action: status === "Approved" ? "approve" : "reject",
+      entityType: "transport.approval",
+      entityId: id,
+      summary: `${currentUser.name || "IMS User"} ${status.toLowerCase()} transport request ${row.requestId || id}`,
+      section: "approvals",
+      details: { transportId: id, status }
+    });
     showToast(`Transport request ${status.toLowerCase()}.`);
   } catch (error) {
     showToast(error.message, "error");
@@ -4880,6 +5253,14 @@ async function submitPoCancellation(event) {
     await loadBusinessData({ silent: true });
     render();
     closePoCancelModal();
+    recordAuditEvent({
+      action: "cancel",
+      entityType: "procurement.purchase_orders",
+      entityId: poNumber,
+      summary: `${currentUser.name || "IMS User"} cancelled PO ${poNumber}`,
+      section: "procurement",
+      details: { reason }
+    });
     showToast(`${poNumber} cancelled.`);
   } catch (error) {
     showToast(error.message, "error");
@@ -4961,10 +5342,41 @@ document.querySelector(".sidebar")?.addEventListener("click", (event) => {
   if (item.dataset.view === "procurement") {
     procurementModuleTab = "po";
   }
+  if (item.dataset.view === "audit") {
+    activeAuditSection = "all";
+    auditSearchTerm = "";
+    auditActionFilter = "all";
+    auditActorFilter = "all";
+    auditEntityFilter = "";
+  }
   setView(item.dataset.view);
 });
 
 document.getElementById("dashboardView").addEventListener("click", (event) => {
+  const pickerOpenTrigger = event.target.closest("[data-dashboard-picker-open]");
+  if (pickerOpenTrigger) {
+    event.stopPropagation();
+    openDashboardWidgetPicker();
+    return;
+  }
+  const pickerCloseTrigger = event.target.closest("[data-dashboard-picker-close]");
+  if (pickerCloseTrigger) {
+    event.stopPropagation();
+    closeDashboardWidgetPicker();
+    return;
+  }
+  const widgetAddTrigger = event.target.closest("[data-dashboard-widget-add]");
+  if (widgetAddTrigger) {
+    event.stopPropagation();
+    addDashboardWidget(widgetAddTrigger.dataset.dashboardWidgetAdd);
+    return;
+  }
+  const widgetRemoveTrigger = event.target.closest("[data-dashboard-widget-remove]");
+  if (widgetRemoveTrigger) {
+    event.stopPropagation();
+    removeDashboardWidget(widgetRemoveTrigger.dataset.dashboardWidgetRemove);
+    return;
+  }
   const menuButton = event.target.closest("[data-menu-toggle]");
   if (menuButton) {
     event.stopPropagation();
@@ -4998,16 +5410,26 @@ document.addEventListener("click", (event) => {
   openHistoryPage(button.dataset.historyPage);
 });
 
-document.getElementById("historyView").addEventListener("click", (event) => {
-  const entry = event.target.closest("[data-history-entry]");
-  if (!entry) return;
-  const id = entry.dataset.historyEntry;
-  expandedHistoryIds.has(id) ? expandedHistoryIds.delete(id) : expandedHistoryIds.add(id);
-  renderHistoryPage();
-  if (window.lucide) window.lucide.createIcons();
+document.getElementById("auditBackBtn")?.addEventListener("click", () => {
+  activeAuditSection = "all";
+  setView(previousHistoryView || "dashboard");
 });
-
-document.getElementById("historyBackBtn")?.addEventListener("click", () => setView(previousHistoryView || "dashboard"));
+document.getElementById("auditSearchInput")?.addEventListener("input", (event) => {
+  auditSearchTerm = event.target.value || "";
+  renderAuditPage();
+});
+document.getElementById("auditActionFilter")?.addEventListener("change", (event) => {
+  auditActionFilter = event.target.value || "all";
+  renderAuditPage();
+});
+document.getElementById("auditActorFilter")?.addEventListener("change", (event) => {
+  auditActorFilter = event.target.value || "all";
+  renderAuditPage();
+});
+document.getElementById("auditEntityFilter")?.addEventListener("input", (event) => {
+  auditEntityFilter = event.target.value || "";
+  renderAuditPage();
+});
 
 document.getElementById("notificationBtn").addEventListener("click", (event) => {
   event.stopPropagation();
@@ -5121,6 +5543,14 @@ document.getElementById("profileBtn")?.addEventListener("click", (event) => {
 });
 
 document.getElementById("logoutBtn")?.addEventListener("click", async () => {
+  recordAuditEvent({
+    action: "logout",
+    entityType: "auth.logout",
+    entityId: currentUser.uid || currentUser.id,
+    summary: `${currentUser.name || currentUser.email || "IMS User"} logged out`,
+    section: "auth"
+  });
+  sessionStorage.removeItem(AUDIT_LOGIN_SESSION_KEY);
   localStorage.removeItem("firebase_token");
   if (window.imsFirebaseSignOut) await window.imsFirebaseSignOut();
   window.location.replace("login.html");
@@ -5155,6 +5585,13 @@ document.getElementById("settingsForm").addEventListener("click", (event) => {
   if (statusButton) toggleUserStatus(statusButton.dataset.userId, statusButton.dataset.nextActive === "true");
   const deleteButton = event.target.closest(".delete-user");
   if (deleteButton) deleteUser(deleteButton.dataset.userId);
+  const roleAccessButton = event.target.closest(".view-role-access");
+  if (roleAccessButton) {
+    activeRoleAccessPreviewRole = activeRoleAccessPreviewRole === roleAccessButton.dataset.roleAccessPreview
+      ? ""
+      : roleAccessButton.dataset.roleAccessPreview;
+    renderSettings();
+  }
 });
 
 document.addEventListener("click", (event) => {
@@ -5539,6 +5976,14 @@ document.getElementById("requestForm").addEventListener("submit", async (event) 
     requestsPage = 1;
     await loadBusinessData({ silent: true });
     render();
+    recordAuditEvent({
+      action: "create",
+      entityType: "requests.request",
+      entityId: result.requestId,
+      summary: `${currentUser.name || "IMS User"} created request ${result.requestId}`,
+      section: "requests",
+      details: { location: form.get("location"), itemCount: rows.length }
+    });
     showToast(`${result.requestId} created.`);
   } catch (error) {
     showToast(error.message, "error");
@@ -5566,6 +6011,14 @@ document.getElementById("manualStockOutForm").addEventListener("submit", async (
     closeManualStockIssue();
     await loadBusinessData({ silent: true });
     render();
+    recordAuditEvent({
+      action: "issue",
+      entityType: "inventory.stock_out",
+      entityId: itemCode,
+      summary: `${currentUser.name || "IMS User"} recorded a manual stock issue for ${itemCode}`,
+      section: "inventory",
+      details: { location, quantity, issuedTo }
+    });
     showToast("Manual stock-out saved.");
   } catch (error) {
     showToast(error.message, "error");
@@ -5596,6 +6049,14 @@ document.getElementById("itemForm").addEventListener("submit", async (event) => 
     closeItemModal();
     await loadBusinessData({ silent: true });
     render();
+    recordAuditEvent({
+      action: "create",
+      entityType: "inventory.items",
+      entityId: name,
+      summary: `${currentUser.name || "IMS User"} added inventory item ${name}`,
+      section: "inventory",
+      details: { category, typeCount: rows.length }
+    });
     showToast("Inventory item added.");
   } catch (error) {
     showToast(error.message, "error");
@@ -5617,6 +6078,14 @@ document.getElementById("categoryForm")?.addEventListener("submit", async (event
     await loadBusinessData({ silent: true });
     inventoryModuleTab = "categories";
     render();
+    recordAuditEvent({
+      action: "create",
+      entityType: "inventory.categories",
+      entityId: name,
+      summary: `${currentUser.name || "IMS User"} added category ${name}`,
+      section: "inventory",
+      details: { name }
+    });
     showToast("Category added.");
   } catch (error) {
     showToast(error.message || "Unable to add category.", "error");
@@ -5658,6 +6127,14 @@ document.getElementById("grnForm").addEventListener("submit", async (event) => {
     resetGrnForm();
     render();
     closeGrnDrawer();
+    recordAuditEvent({
+      action: "receive",
+      entityType: "inventory.grn",
+      entityId: result.grnNumber,
+      summary: `${currentUser.name || "IMS User"} created GRN ${result.grnNumber}`,
+      section: "inventory",
+      details: { poNumber: po?.poNumber || "", accepted, received }
+    });
     showToast(`${result.grnNumber} saved and stock ledger updated.`);
   } catch (error) {
     showToast(error.message, "error");
@@ -5712,6 +6189,14 @@ document.getElementById("vendorForm").addEventListener("submit", async (event) =
     state.vendors = state.vendors.map(normalizeVendorRecord);
     render();
     closeVendorDrawer();
+    recordAuditEvent({
+      action: vendorId ? "update" : "create",
+      entityType: "procurement.vendors",
+      entityId: savedVendor.id || savedVendor.name,
+      summary: `${currentUser.name || "IMS User"} ${vendorId ? "updated" : "added"} vendor ${savedVendor.name || payload.name}`,
+      section: "procurement",
+      details: { vendorId: savedVendor.id || "", vendorName: savedVendor.name || payload.name }
+    });
     showToast(vendorId ? "Vendor updated." : "Vendor added.");
   } catch (error) {
     showToast(error.message, "error");
@@ -5735,6 +6220,7 @@ const GLOBAL_SEARCH_ITEMS = [
   { group: "Navigation", title: "Requests › Transport Requests", subtitle: "Go to page", view: "transport", icon: "route", terms: "vehicle transport travel" },
   { group: "Navigation", title: "Requests", subtitle: "Go to page", view: "requests", icon: "list-checks", terms: "submitted approvals request list" },
   { group: "Navigation", title: "Approvals", subtitle: "Go to page", view: "approvals", icon: "shield-check", terms: "approve reject managers" },
+  { group: "Navigation", title: "Audit Logs", subtitle: "Go to page", view: "audit", icon: "scroll-text", terms: "audit logs activity history actions users" },
   { group: "Navigation", title: "Reports", subtitle: "Visible in sidebar", icon: "bar-chart-3", terms: "insights analytics report" },
   { group: "Navigation", title: "Settings", subtitle: "Go to page", view: "settings", icon: "settings", terms: "admin users roles configuration" },
   { group: "Actions", title: "Add inventory item", subtitle: "Open Inventory", view: "inventory", icon: "plus", terms: "new add item inventory" },
