@@ -1,8 +1,12 @@
 const STORAGE_KEY = "imsPortalStateV4";
+const BACKEND_ORIGIN = "http://localhost:3000";
+const IS_FILE_PROTOCOL = window.location.protocol === "file:";
+const PORTAL_HOME_URL = IS_FILE_PROTOCOL ? `${BACKEND_ORIGIN}/index.html` : "index.html";
+const LOGIN_PAGE_URL = IS_FILE_PROTOCOL ? `${BACKEND_ORIGIN}/login.html` : "login.html";
 const SETTINGS_CACHE_KEY = "imsSystemSettingsDraft";
-const SETTINGS_API_BASE = "/api/settings";
+const SETTINGS_API_BASE = IS_FILE_PROTOCOL ? `${BACKEND_ORIGIN}/api/settings` : "/api/settings";
 const THEME_STORAGE_KEY = "imsTheme";
-const BUSINESS_DATA_API_BASE = "/api";
+const BUSINESS_DATA_API_BASE = IS_FILE_PROTOCOL ? `${BACKEND_ORIGIN}/api` : "/api";
 const AUTO_REFRESH_INTERVAL_MS = 10000;
 const CHAT_POLL_INTERVAL_MS = 5000;
 const OFFICIAL_EMAIL_DOMAIN = "@shehersaaz.org.pk";
@@ -31,16 +35,16 @@ const VIEW_ROLE_ACCESS = {
 };
 let seedTxCounter = 0;
 let currentUser = {
-  id: 1,
-  uid: "local-admin",
-  name: "Inventory Manager",
+  id: "",
+  uid: "",
+  name: "IMS User",
   email: "",
-  role: "admin",
-  roles: ["admin"],
+  role: "requestor",
+  roles: [],
   permissions: [],
-  status: "active"
+  status: ""
 };
-let isAdmin = true;
+let isAdmin = false;
 let settingsLoadedForUser = "";
 let businessDataLoadedForUser = "";
 let autoRefreshTimer = null;
@@ -58,6 +62,7 @@ const APPROVED_LOCATION_LOOKUP = new Map(APPROVED_LOCATIONS.map((location) => [
 
 const seedState = {
   locations: [],
+  categories: [],
   items: [],
   vendors: [],
   requests: [],
@@ -96,6 +101,7 @@ const INVENTORY_VIEW_TABS = {
 const INVENTORY_TAB_LABELS = {
   items: "Items",
   warehouses: "Warehouses",
+  categories: "Categories",
   issue: "Stock Issue",
   grn: "GRN"
 };
@@ -126,6 +132,10 @@ let settingsState = {};
 let userManagementUsers = [];
 let userManagementLoaded = false;
 let lastUserInviteLink = "";
+let lastInvitedUserEmail = "";
+let lastInvitedUserName = "";
+let copiedInviteMessageTimer = null;
+let isAddingUser = false;
 let activeEditPermissionsUserId = "";
 let activeSettingsGroup = "team";
 let activeNotificationTab = "direct";
@@ -150,11 +160,11 @@ let previousHistoryView = "dashboard";
 const expandedHistoryIds = new Set();
 
 function redirectToLogin() {
-  const target = window.location.protocol === "file:"
-    ? "index.html"
+  const target = IS_FILE_PROTOCOL
+    ? PORTAL_HOME_URL
     : `${window.location.pathname}${window.location.search}${window.location.hash}`;
   const returnTo = encodeURIComponent(target);
-  window.location.replace(`login.html?returnTo=${returnTo}`);
+  window.location.replace(`${LOGIN_PAGE_URL}?returnTo=${returnTo}`);
 }
 
 function normalizeRoleKey(role) {
@@ -219,11 +229,17 @@ async function ensureFirebaseReady() {
 }
 
 async function requirePortalSession() {
+  // #region debug-point A:portal-session-start
+  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"A",location:"script.js:requirePortalSession:start",msg:"[DEBUG] requirePortalSession started",data:{seedUser:currentUser?.name||"",seedUid:currentUser?.uid||"",cachedToken:Boolean(localStorage.getItem("firebase_token")),path:window.location.pathname},ts:Date.now()})}).catch(()=>{});
+  // #endregion
   if (!window.IMS_FIREBASE_CONFIG) {
     redirectToLogin();
     return null;
   }
   const user = await ensureFirebaseReady();
+  // #region debug-point B:firebase-auth-state
+  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"B",location:"script.js:requirePortalSession:firebaseUser",msg:"[DEBUG] firebase auth state resolved",data:{hasUser:Boolean(user),email:user?.email||"",uid:user?.uid||""},ts:Date.now()})}).catch(()=>{});
+  // #endregion
   if (!user) {
     localStorage.removeItem("firebase_token");
     redirectToLogin();
@@ -239,6 +255,9 @@ async function requirePortalSession() {
   const token = await user.getIdToken();
   localStorage.setItem("firebase_token", token);
   try {
+    // #region debug-point C:auth-me-request
+    fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"C",location:"script.js:requirePortalSession:authMe:start",msg:"[DEBUG] requesting /api/auth/me",data:{email:user?.email||"",uid:user?.uid||"",tokenLength:String(token||"").length},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     const response = await fetch("/api/auth/me", {
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -250,6 +269,9 @@ async function requirePortalSession() {
     }
     const session = await response.json();
     const authUser = session.user || {};
+    // #region debug-point D:auth-me-success
+    fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"D",location:"script.js:requirePortalSession:authMe:success",msg:"[DEBUG] /api/auth/me succeeded",data:{sessionUserName:authUser?.name||"",sessionUserEmail:authUser?.email||"",roles:session?.roles||[],permissionsCount:Array.isArray(session?.permissions)?session.permissions.length:0},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     currentUser = {
       ...currentUser,
       id: authUser.id || user.uid,
@@ -262,12 +284,18 @@ async function requirePortalSession() {
     };
     currentUser.role = currentUser.roles[0] || "requestor";
   } catch (error) {
+    // #region debug-point E:auth-me-error
+    fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"E",location:"script.js:requirePortalSession:authMe:error",msg:"[DEBUG] /api/auth/me failed",data:{message:error?.message||""},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     localStorage.removeItem("firebase_token");
     if (window.imsFirebaseSignOut) await window.imsFirebaseSignOut();
     redirectToLogin();
     return null;
   }
   isAdmin = hasRole("admin");
+  // #region debug-point F:portal-session-ready
+  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"F",location:"script.js:requirePortalSession:ready",msg:"[DEBUG] portal session established",data:{currentUserName:currentUser?.name||"",currentUserEmail:currentUser?.email||"",currentUserId:currentUser?.id||"",isAdmin},ts:Date.now()})}).catch(()=>{});
+  // #endregion
   return { user, access_token: token };
 }
 
@@ -466,7 +494,11 @@ function findItemBySelection(name, typeOrCode, category = "") {
 }
 
 function categories() {
-  return [...new Set(state.items.map((item) => item.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const categoryNames = [
+    ...(Array.isArray(state.categories) ? state.categories.map((category) => category?.name || category) : []),
+    ...state.items.map((item) => item.category)
+  ];
+  return [...new Set(categoryNames.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
 function itemLabel(item) {
@@ -669,6 +701,9 @@ async function syncImportedInventoryToDatabase() {
 }
 
 async function refreshVerifiedUserShell() {
+  // #region debug-point I:refresh-shell-start
+  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"I",location:"script.js:refreshVerifiedUserShell:start",msg:"[DEBUG] refreshVerifiedUserShell started",data:{currentUserId:currentUser?.id||"",currentUserName:currentUser?.name||"",settingsLoadedForUser,businessDataLoadedForUser},ts:Date.now()})}).catch(()=>{});
+  // #endregion
   applyAdminVisibility();
   if (isAdmin && settingsLoadedForUser !== currentUser.id) {
     settingsLoadedForUser = currentUser.id;
@@ -685,6 +720,9 @@ async function refreshVerifiedUserShell() {
     await loadBusinessData({ silent: true });
     lastBusinessDataSignature = businessDataSignature();
   }
+  // #region debug-point J:refresh-shell-finish
+  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"J",location:"script.js:refreshVerifiedUserShell:finish",msg:"[DEBUG] refreshVerifiedUserShell finished",data:{currentUserId:currentUser?.id||"",currentUserName:currentUser?.name||"",settingsLoadedForUser,businessDataLoadedForUser,businessDataError},ts:Date.now()})}).catch(()=>{});
+  // #endregion
   render();
   startAutoRefresh();
   startChatPolling();
@@ -814,10 +852,19 @@ function renderSettings() {
   }
 }
 
+function removeDetachedManagementDrawers() {
+  const form = document.getElementById("settingsForm");
+  ["teamUserDrawer", "teamPermissionsDrawer"].forEach((id) => {
+    const node = document.getElementById(id);
+    if (node && node.parentElement !== form) node.remove();
+  });
+}
+
 function renderUserManagement(section) {
   document.getElementById("settingsSectionTitle").textContent = section.title;
   document.getElementById("settingsSectionDescription").textContent = section.description;
   const form = document.getElementById("settingsForm");
+  removeDetachedManagementDrawers();
 
   if (!userManagementLoaded) {
     form.innerHTML = `
@@ -906,10 +953,31 @@ function renderUserManagement(section) {
               </label>
             `).join("")}
           </fieldset>
-          <button class="primary" id="addUserInlineBtn" type="button"><i data-lucide="user-plus"></i>Add user</button>
+          <button class="primary team-user-submit-btn" id="addUserInlineBtn" type="button">
+            <span class="team-user-submit-spinner" aria-hidden="true"></span>
+            <span class="team-user-submit-label"><i data-lucide="user-plus"></i>Add user</span>
+            <span class="team-user-submit-loading-label">Creating user...</span>
+          </button>
           <div class="team-user-invite-link" id="teamUserInviteLink" ${lastUserInviteLink ? "" : "hidden"}>
-            <label>Setup link<textarea id="newUserInviteLink" readonly>${escapeHtml(lastUserInviteLink)}</textarea></label>
-            <button class="secondary" id="copyUserInviteLinkBtn" type="button"><i data-lucide="copy"></i>Copy setup link</button>
+            <div class="team-user-invite-head">
+              <span class="team-user-invite-icon"><i data-lucide="link-2"></i></span>
+              <div>
+                <strong>Setup link</strong>
+                <p>The user will create a password from this link and be signed in automatically.</p>
+              </div>
+            </div>
+            <div class="team-user-invite-body">
+              <label for="newUserInviteLink">Link</label>
+              <div class="team-user-invite-input-wrap">
+                <input id="newUserInviteLink" type="text" readonly value="${escapeHtml(lastUserInviteLink)}">
+                <button class="icon-btn" id="copyInviteIconBtn" type="button" aria-label="Copy setup link"><i data-lucide="copy"></i></button>
+              </div>
+              <span class="team-user-invite-copied" id="userInviteCopiedMessage" hidden>Copied</span>
+            </div>
+            <div class="team-user-invite-actions">
+              <button class="secondary" id="copyUserInviteLinkBtn" type="button"><i data-lucide="copy"></i>Copy link</button>
+              <button class="primary" id="sendUserInviteLinkBtn" type="button"><i data-lucide="send"></i>Send setup link</button>
+            </div>
           </div>
         </div>
       </section>
@@ -1046,12 +1114,20 @@ function closePermissionsDrawer() {
 }
 
 function bindTeamDrawerActions(scope = document) {
+  const openAddButton = scope.querySelector?.("#openAddUserDrawerBtn");
   const addButton = scope.querySelector?.("#addUserInlineBtn");
   const copyButton = scope.querySelector?.("#copyUserInviteLinkBtn");
+  const copyIconButton = scope.querySelector?.("#copyInviteIconBtn");
+  const sendButton = scope.querySelector?.("#sendUserInviteLinkBtn");
   const savePermissionsButton = scope.querySelector?.("#savePermissionsDrawerBtn");
   const closeAddButton = scope.querySelector?.("#closeAddUserDrawerBtn");
   const closePermissionsButton = scope.querySelector?.("#closePermissionsDrawerBtn");
 
+  if (openAddButton) openAddButton.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openAddUserDrawer();
+  };
   if (addButton) addButton.onclick = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1062,6 +1138,16 @@ function bindTeamDrawerActions(scope = document) {
     event.stopPropagation();
     copyUserInviteLink();
   };
+  if (copyIconButton) copyIconButton.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    copyUserInviteLink();
+  };
+  if (sendButton) sendButton.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    sendUserInviteLink();
+  };
   if (savePermissionsButton) savePermissionsButton.onclick = (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1071,12 +1157,42 @@ function bindTeamDrawerActions(scope = document) {
   if (closePermissionsButton) closePermissionsButton.onclick = closePermissionsDrawer;
 }
 
-function setUserInviteLink(inviteLink = "") {
+function setUserInviteLink(inviteLink = "", details = {}) {
   lastUserInviteLink = String(inviteLink || "");
+  lastInvitedUserEmail = lastUserInviteLink ? String(details.email || lastInvitedUserEmail || "").trim() : "";
+  lastInvitedUserName = lastUserInviteLink ? String(details.name || lastInvitedUserName || "").trim() : "";
   const wrap = document.getElementById("teamUserInviteLink");
   const field = document.getElementById("newUserInviteLink");
+  const sendButton = document.getElementById("sendUserInviteLinkBtn");
+  const copiedMessage = document.getElementById("userInviteCopiedMessage");
   if (field) field.value = lastUserInviteLink;
   if (wrap) wrap.hidden = !lastUserInviteLink;
+  if (sendButton) sendButton.disabled = !(lastUserInviteLink && lastInvitedUserEmail);
+  if (copiedMessage) copiedMessage.hidden = true;
+  if (copiedInviteMessageTimer) {
+    clearTimeout(copiedInviteMessageTimer);
+    copiedInviteMessageTimer = null;
+  }
+}
+
+function showInviteCopiedMessage() {
+  const copiedMessage = document.getElementById("userInviteCopiedMessage");
+  if (!copiedMessage) return;
+  copiedMessage.hidden = false;
+  if (copiedInviteMessageTimer) clearTimeout(copiedInviteMessageTimer);
+  copiedInviteMessageTimer = setTimeout(() => {
+    const latestCopiedMessage = document.getElementById("userInviteCopiedMessage");
+    if (latestCopiedMessage) latestCopiedMessage.hidden = true;
+    copiedInviteMessageTimer = null;
+  }, 1800);
+}
+
+function setAddUserLoading(isLoading) {
+  isAddingUser = Boolean(isLoading);
+  const addButton = document.getElementById("addUserInlineBtn");
+  if (!addButton) return;
+  addButton.disabled = isAddingUser;
+  addButton.dataset.loading = isAddingUser ? "true" : "false";
 }
 
 async function copyUserInviteLink() {
@@ -1084,6 +1200,7 @@ async function copyUserInviteLink() {
   if (!link) return showToast("No setup link to copy.", "error");
   try {
     await navigator.clipboard.writeText(link);
+    showInviteCopiedMessage();
     showToast("Setup link copied.");
   } catch (error) {
     const field = document.getElementById("newUserInviteLink");
@@ -1091,6 +1208,20 @@ async function copyUserInviteLink() {
     field?.select();
     showToast("Select and copy the setup link.", "error");
   }
+}
+
+function sendUserInviteLink() {
+  const link = document.getElementById("newUserInviteLink")?.value || lastUserInviteLink;
+  const email = lastInvitedUserEmail;
+  const name = lastInvitedUserName || "there";
+  if (!link) return showToast("No setup link to send.", "error");
+  if (!email) return showToast("No invite email address is available.", "error");
+  const subject = encodeURIComponent("Set up your IMS Portal account");
+  const body = encodeURIComponent(
+    `Hello ${name},\n\nYour IMS Portal account has been created. Use the link below to create your password:\n\n${link}\n\nAfter setting your password, you will be signed in automatically.\n\nThanks.`
+  );
+  window.location.href = `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${body}`;
+  showToast("Invite email draft opened.");
 }
 
 async function saveUserRoles(userId, rolesOverride = null) {
@@ -1122,6 +1253,7 @@ async function saveUserRoles(userId, rolesOverride = null) {
 
 async function addUserFromManagement() {
   if (!isAdmin) return showToast("Admin access is required.", "error");
+  if (isAddingUser) return;
   const nameField = document.getElementById("newUserName");
   const emailField = document.getElementById("newUserEmail");
   const roles = Array.from(document.querySelectorAll("input[name='newUserRoles']:checked")).map((input) => input.value);
@@ -1131,6 +1263,7 @@ async function addUserFromManagement() {
   if (!email) return showToast("Enter the user's email.", "error");
   if (!roles.length) return showToast("Select at least one role.", "error");
 
+  setAddUserLoading(true);
   try {
     const data = await apiRequest("/auth/users", {
       method: "POST",
@@ -1138,6 +1271,10 @@ async function addUserFromManagement() {
     });
     const createdUser = data.user;
     const inviteLink = createdUser?.inviteLink || data.inviteLink || "";
+    const inviteRecipient = {
+      email: createdUser?.email || email,
+      name: createdUser?.name || name
+    };
     if (createdUser) {
       userManagementUsers = [
         { ...createdUser, roles: (createdUser.roles || []).map(normalizeRoleKey) },
@@ -1150,10 +1287,10 @@ async function addUserFromManagement() {
     emailField.value = "";
     renderSettings();
     if (inviteLink) {
-      setUserInviteLink(inviteLink);
+      setUserInviteLink(inviteLink, inviteRecipient);
       openAddUserDrawer();
       await copyUserInviteLink();
-      showToast("User added. Setup link copied.");
+      showToast("User added. Setup link copied and ready to send.");
     } else {
       setUserInviteLink("");
       openAddUserDrawer();
@@ -1161,6 +1298,8 @@ async function addUserFromManagement() {
     }
   } catch (error) {
     showToast(error.message || "Unable to add user.", "error");
+  } finally {
+    setAddUserLoading(false);
   }
 }
 
@@ -1256,15 +1395,19 @@ async function loadBusinessData({ silent = false } = {}) {
     Object.keys(businessDataErrors).forEach((key) => delete businessDataErrors[key]);
     render();
   }
+  // #region debug-point G:business-data-start
+  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"G",location:"script.js:loadBusinessData:start",msg:"[DEBUG] loadBusinessData started",data:{silent,currentUserId:currentUser?.id||"",currentUserName:currentUser?.name||""},ts:Date.now()})}).catch(()=>{});
+  // #endregion
   const endpoints = [
-    ["items", "/items"],
-    ["vendors", "/vendors"],
-    ["requests", "/requests"],
-    ["transportRequests", "/transport-requests"],
-    ["purchaseOrders", "/purchase-orders"],
-    ["grns", "/grn"],
-    ["inventory", "/inventory"]
-  ];
+    canAccessView("inventory") ? ["items", "/items"] : null,
+    canAccessView("inventory") ? ["categories", "/categories"] : null,
+    canAccessView("vendors") ? ["vendors", "/vendors"] : null,
+    canAccessView("requests") ? ["requests", "/requests"] : null,
+    canAccessView("transport") ? ["transportRequests", "/transport-requests"] : null,
+    canAccessView("po") ? ["purchaseOrders", "/purchase-orders"] : null,
+    canAccessView("grn") ? ["grns", "/grn"] : null,
+    canAccessView("inventory") ? ["inventory", "/inventory"] : null
+  ].filter(Boolean);
   const results = await Promise.allSettled(endpoints.map(([, path]) => apiRequest(path)));
   const failed = [];
   results.forEach((result, index) => {
@@ -1280,12 +1423,18 @@ async function loadBusinessData({ silent = false } = {}) {
       state.inventoryRows = result.value.inventory || [];
       return;
     }
-    if (key === "items") return;
+    if (key === "items") {
+      state.items = result.value.items || state.items || [];
+      return;
+    }
     state[key] = result.value[key] || state[key] || [];
     if (key === "vendors") state.vendors = state.vendors.map(normalizeVendorRecord);
   });
   state = applyImportedInventoryBase(state);
   enforceApprovedLocations();
+  // #region debug-point H:business-data-finish
+  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"H",location:"script.js:loadBusinessData:finish",msg:"[DEBUG] loadBusinessData completed",data:{failed,items:state.items?.length||0,categories:state.categories?.length||0,inventoryRows:state.inventoryRows?.length||0,requests:state.requests?.length||0},ts:Date.now()})}).catch(()=>{});
+  // #endregion
   if (!silent) showToast("IMS data refreshed from database.");
   businessDataError = failed.length ? `Unable to load ${failed.join(", ")} data.` : "";
   businessDataLoading = false;
@@ -2703,6 +2852,7 @@ function renderInventory() {
   if (inventoryCategoryCount) inventoryCategoryCount.textContent = String(categories().length);
   renderInventoryModuleTabs(allStockRows, lowOrOutRows);
   renderInventoryWarehouses(allStockRows);
+  renderInventoryCategories(allStockRows);
   const pageCount = Math.max(1, Math.ceil(rows.length / INVENTORY_PAGE_SIZE));
   inventoryPage = Math.min(Math.max(1, inventoryPage), pageCount);
   const start = (inventoryPage - 1) * INVENTORY_PAGE_SIZE;
@@ -2941,6 +3091,7 @@ async function confirmDeleteInventoryDetailItem() {
 }
 
 function renderInventoryModuleTabs(allStockRows = stockRows()) {
+  const activeView = document.querySelector(".app-shell")?.getAttribute("data-active-view") || "";
   document.querySelectorAll("[data-inventory-tab]").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.inventoryTab === inventoryModuleTab);
   });
@@ -2952,8 +3103,14 @@ function renderInventoryModuleTabs(allStockRows = stockRows()) {
   document.querySelectorAll("[data-inventory-items-only]").forEach((element) => {
     element.hidden = inventoryModuleTab !== "items";
   });
+  document.querySelectorAll("[data-inventory-warehouses-only]").forEach((element) => {
+    element.hidden = activeView !== "inventory" || inventoryModuleTab !== "warehouses";
+  });
   document.querySelectorAll("[data-inventory-issue-only]").forEach((element) => {
     element.hidden = inventoryModuleTab !== "issue";
+  });
+  document.querySelectorAll("[data-inventory-categories-only]").forEach((element) => {
+    element.hidden = activeView !== "inventory" || inventoryModuleTab !== "categories";
   });
   document.querySelectorAll("[data-inventory-grn-only]").forEach((element) => {
     element.hidden = inventoryModuleTab !== "grn";
@@ -2965,6 +3122,7 @@ function renderInventoryModuleTabs(allStockRows = stockRows()) {
   };
   setText("inventoryItemsTabCount", itemCount || state.items.length);
   setText("inventoryWarehousesTabCount", state.locations.length);
+  setText("inventoryCategoriesTabCount", categories().length);
 }
 
 function isLowOrOutStock(row) {
@@ -2982,6 +3140,35 @@ function renderInventoryWarehouses(allStockRows = stockRows()) {
     const code = location === "I9 warehouse" ? "I9" : location.replace(/\s*CC$/i, "").slice(0, 3).toUpperCase();
     return `<tr><td>${escapeHtml(location)}</td><td>${escapeHtml(code)}</td><td>${rows.length}</td><td>${quantityValue(totalStock)}</td><td>${lowCount}</td></tr>`;
   }).join("") || emptyStateRow(5, "No warehouses found", "Approved locations will appear here.");
+}
+
+function categoryCode(categoryName = "") {
+  const words = String(categoryName || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "---";
+  if (words.length === 1) return words[0].replace(/[^A-Za-z0-9]/g, "").slice(0, 3).toUpperCase().padEnd(3, "-");
+  return words.slice(0, 3).map((word) => word[0]).join("").toUpperCase();
+}
+
+function renderInventoryCategories(allStockRows = stockRows()) {
+  const tbody = document.getElementById("inventoryCategoriesTable");
+  if (!tbody) return;
+  tbody.innerHTML = categories().map((category) => {
+    const rows = allStockRows.filter((row) => row.category === category);
+    const uniqueItems = new Set(rows.map((row) => row.code).filter(Boolean)).size;
+    const totalStock = rows.reduce((sum, row) => sum + (Number(row.stock) || 0), 0);
+    const lowCount = rows.filter(isLowOrOutStock).length;
+    return `<tr><td>${escapeHtml(category)}</td><td>${escapeHtml(categoryCode(category))}</td><td>${uniqueItems}</td><td>${quantityValue(totalStock)}</td><td>${lowCount}</td></tr>`;
+  }).join("") || emptyStateRow(5, "No categories found", "Inventory categories will appear here.");
+}
+
+function openCategoryModal() {
+  document.getElementById("categoryModal").classList.add("show");
+  document.getElementById("categoryModal").setAttribute("aria-hidden", "false");
+}
+
+function closeCategoryModal() {
+  document.getElementById("categoryModal").classList.remove("show");
+  document.getElementById("categoryModal").setAttribute("aria-hidden", "true");
 }
 
 function renderProcurement() {
@@ -3061,12 +3248,12 @@ function renderIssue() {
 
 function renderPO() {
   if (businessDataLoading) {
-    showTableSkeleton("poTable", 8, 7);
+    showTableSkeleton("poTable", 6, 7);
     return;
   }
   const poError = sourceError("purchaseOrders", "vendors");
   if (poError) {
-    setTableContent("poTable", errorStateRow(8, poError));
+    setTableContent("poTable", errorStateRow(6, poError));
     return;
   }
   renderPoVendorFilter();
@@ -3080,7 +3267,7 @@ function renderPO() {
       .some((value) => String(value || "").toLowerCase().includes(searchTerm));
     return matchesStatus && matchesVendor && matchesSearch;
   });
-  setTableContent("poTable", rows.map(renderPoRecordRow).join("") || emptyStateRow(8, "No matching purchase orders", "Try another PO number, vendor, or status filter."));
+  setTableContent("poTable", rows.map(renderPoRecordRow).join("") || emptyStateRow(6, "No matching purchase orders", "Try another PO number, vendor, or status filter."));
   if (window.lucide) lucide.createIcons();
 }
 
@@ -3167,8 +3354,6 @@ function renderPoRecordRow(po) {
       <td><strong>${escapeHtml(po.poNumber)}</strong></td>
       <td>${escapeHtml(poVendorName(po))}</td>
       <td>${formatDate(po.issueDate || po.date)}</td>
-      <td>${formatDate(poExpectedDate(po)) || "-"}</td>
-      <td>${escapeHtml(poSourceReference(po))}</td>
       <td><span class="po-status-select">${escapeHtml(status)}<i data-lucide="chevron-down"></i></span></td>
       <td><strong>$${money(po.poAmount ?? po.total)}</strong></td>
       <td class="button-cell">
@@ -5143,6 +5328,10 @@ document.getElementById("openRequisitionForm")?.addEventListener("click", () => 
 document.getElementById("addRequestItem").addEventListener("click", addRequestLine);
 document.getElementById("addItemType").addEventListener("click", addItemTypeLine);
 document.getElementById("openItemModal").addEventListener("click", openItemModal);
+document.getElementById("openCategoryModal")?.addEventListener("click", openCategoryModal);
+document.getElementById("openWarehouseModal")?.addEventListener("click", () => {
+  showToast("Add warehouse will be wired to warehouse creation next.", "error");
+});
 document.getElementById("openManualStockIssue")?.addEventListener("click", openManualStockIssue);
 document.getElementById("closeManualStockIssue")?.addEventListener("click", closeManualStockIssue);
 document.getElementById("openPoDrawer")?.addEventListener("click", openPoDrawer);
@@ -5154,8 +5343,13 @@ document.getElementById("openVendorDrawer")?.addEventListener("click", () => {
 document.getElementById("closeVendorDrawer")?.addEventListener("click", closeVendorDrawer);
 document.getElementById("closeItemModal").addEventListener("click", closeItemModal);
 document.getElementById("cancelItemModal").addEventListener("click", closeItemModal);
+document.getElementById("closeCategoryModal")?.addEventListener("click", closeCategoryModal);
+document.getElementById("cancelCategoryModal")?.addEventListener("click", closeCategoryModal);
 document.getElementById("itemModal").addEventListener("click", (event) => {
   if (event.target.id === "itemModal") closeItemModal();
+});
+document.getElementById("categoryModal")?.addEventListener("click", (event) => {
+  if (event.target.id === "categoryModal") closeCategoryModal();
 });
 document.getElementById("manualStockIssueDrawer")?.addEventListener("click", (event) => {
   if (event.target.id === "manualStockIssueDrawer") closeManualStockIssue();
@@ -5185,16 +5379,16 @@ document.getElementById("confirmDeleteInventoryItem")?.addEventListener("click",
 document.getElementById("deleteInventoryItemModal")?.addEventListener("click", (event) => {
   if (event.target.id === "deleteInventoryItemModal") closeDeleteInventoryItemModal();
 });
-document.getElementById("closePoPreview").addEventListener("click", closePoPreview);
-document.getElementById("editPoPreview").addEventListener("click", closePoPreview);
-document.getElementById("savePoPreview").addEventListener("click", savePendingPO);
-document.getElementById("poPreviewModal").addEventListener("click", (event) => {
+document.getElementById("closePoPreview")?.addEventListener("click", closePoPreview);
+document.getElementById("editPoPreview")?.addEventListener("click", closePoPreview);
+document.getElementById("savePoPreview")?.addEventListener("click", savePendingPO);
+document.getElementById("poPreviewModal")?.addEventListener("click", (event) => {
   if (event.target.id === "poPreviewModal") closePoPreview();
 });
-document.getElementById("closePoCancel").addEventListener("click", closePoCancelModal);
-document.getElementById("dismissPoCancel").addEventListener("click", closePoCancelModal);
-document.getElementById("poCancelForm").addEventListener("submit", submitPoCancellation);
-document.getElementById("poCancelModal").addEventListener("click", (event) => {
+document.getElementById("closePoCancel")?.addEventListener("click", closePoCancelModal);
+document.getElementById("dismissPoCancel")?.addEventListener("click", closePoCancelModal);
+document.getElementById("poCancelForm")?.addEventListener("submit", submitPoCancellation);
+document.getElementById("poCancelModal")?.addEventListener("click", (event) => {
   if (event.target.id === "poCancelModal") closePoCancelModal();
 });
 document.getElementById("closeDeleteUserModal")?.addEventListener("click", closeDeleteUserModal);
@@ -5381,13 +5575,13 @@ document.getElementById("manualStockOutForm").addEventListener("submit", async (
 document.getElementById("itemForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  const category = String(form.get("newCategory") || form.get("category") || "").trim();
+  const category = String(form.get("category") || "").trim();
   const name = String(form.get("name")).trim();
   const rows = [...document.querySelectorAll("#itemTypeRows .item-type-row")].map((row) => ({
     type: row.querySelector("[name='type']").value.trim(),
     code: row.querySelector("[name='code']").value.trim()
   }));
-  if (!category) return showToast("Choose a category or enter a new category.", "error");
+  if (!category) return showToast("Choose a category.", "error");
   if (!rows.length) return showToast("Add at least one item type.", "error");
   if (rows.some((row) => !row.type || !row.code)) return showToast("Each type needs an Item ID.", "error");
   const submittedCodes = rows.map((row) => row.code.toLowerCase());
@@ -5405,6 +5599,27 @@ document.getElementById("itemForm").addEventListener("submit", async (event) => 
     showToast("Inventory item added.");
   } catch (error) {
     showToast(error.message, "error");
+  }
+});
+
+document.getElementById("categoryForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const name = String(form.get("name") || "").trim();
+  if (!name) return showToast("Enter a category name.", "error");
+  if (categories().some((category) => category.toLowerCase() === name.toLowerCase())) {
+    return showToast("This category already exists.", "error");
+  }
+  try {
+    await apiRequest("/categories", { method: "POST", body: JSON.stringify({ name }) });
+    event.currentTarget.reset();
+    closeCategoryModal();
+    await loadBusinessData({ silent: true });
+    inventoryModuleTab = "categories";
+    render();
+    showToast("Category added.");
+  } catch (error) {
+    showToast(error.message || "Unable to add category.", "error");
   }
 });
 
@@ -5610,6 +5825,9 @@ document.addEventListener("keydown", (event) => {
 });
 
 async function initializePortal() {
+  // #region debug-point K:initialize-portal-start
+  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"K",location:"script.js:initializePortal:start",msg:"[DEBUG] initializePortal started",data:{seedUser:currentUser?.name||"",seedUid:currentUser?.uid||"",theme:localStorage.getItem(THEME_STORAGE_KEY)||""},ts:Date.now()})}).catch(()=>{});
+  // #endregion
   applyTheme(localStorage.getItem(THEME_STORAGE_KEY));
   const session = await requirePortalSession();
   if (!session) return;
@@ -5618,12 +5836,16 @@ async function initializePortal() {
   mountRequestSubsections();
   enableDatalistRefocusOptions();
   applyAdminVisibility();
+  setView(document.querySelector(".app-shell")?.getAttribute("data-active-view") || "dashboard");
   addRequestLine();
   addItemTypeLine();
   addPoItemLine();
   render();
   await loadNotifications({ silent: true });
   syncAuthState();
+  // #region debug-point L:initialize-portal-finish
+  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"L",location:"script.js:initializePortal:finish",msg:"[DEBUG] initializePortal finished",data:{currentUserName:currentUser?.name||"",currentUserEmail:currentUser?.email||"",businessDataLoadedForUser,settingsLoadedForUser},ts:Date.now()})}).catch(()=>{});
+  // #endregion
 }
 
 initializePortal();

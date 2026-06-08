@@ -139,7 +139,10 @@ async function ensureUserExists(email, fallbackName) {
   await pool.execute(
     `INSERT INTO users (full_name, email, is_active)
      VALUES (?, ?, 1)
-     ON DUPLICATE KEY UPDATE deleted_at = NULL`,
+     ON DUPLICATE KEY UPDATE
+       full_name = VALUES(full_name),
+       is_active = 1,
+       deleted_at = NULL`,
     [name, email]
   );
 
@@ -261,11 +264,12 @@ async function createPasswordSetupLink(email, inviteBaseUrl = "") {
   const adminAuth = getFirebaseAdminAuth();
   if (!adminAuth) throw firebaseAuthUnavailableError();
 
+  let userRecord = null;
   try {
-    await adminAuth.getUserByEmail(cleanEmail);
+    userRecord = await adminAuth.getUserByEmail(cleanEmail);
   } catch (error) {
     if (error.code !== "auth/user-not-found") throw error;
-    await adminAuth.createUser({
+    userRecord = await adminAuth.createUser({
       email: cleanEmail,
       emailVerified: true,
       disabled: false
@@ -273,10 +277,21 @@ async function createPasswordSetupLink(email, inviteBaseUrl = "") {
   }
 
   const cleanBaseUrl = String(inviteBaseUrl || "").trim().replace(/\/+$/, "");
-  const actionCodeSettings = cleanBaseUrl
-    ? { url: `${cleanBaseUrl}/setup-password.html?email=${encodeURIComponent(cleanEmail)}`, handleCodeInApp: true }
-    : undefined;
-  return adminAuth.generatePasswordResetLink(cleanEmail, actionCodeSettings);
+  if (!cleanBaseUrl) {
+    return adminAuth.generatePasswordResetLink(cleanEmail);
+  }
+
+  const inviteToken = await adminAuth.createCustomToken(userRecord.uid, { inviteSetup: true });
+  const setupUrl = new URL(`${cleanBaseUrl}/setup-password.html`);
+  setupUrl.searchParams.set("email", cleanEmail);
+  setupUrl.searchParams.set("inviteToken", inviteToken);
+  setupUrl.searchParams.set("mode", "createPassword");
+
+  if (!setupUrl.searchParams.get("continueUrl")) {
+    setupUrl.searchParams.set("continueUrl", `${cleanBaseUrl}/index.html`);
+  }
+
+  return setupUrl.toString();
 }
 
 async function assignRoleToUser(userId, roleName, assignedBy) {

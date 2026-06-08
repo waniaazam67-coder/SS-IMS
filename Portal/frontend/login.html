@@ -37,15 +37,27 @@
   <script src="js/firebase-config.js?v=firebase-1"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+    import { browserLocalPersistence, getAuth, GoogleAuthProvider, onAuthStateChanged, setPersistence, signInWithEmailAndPassword, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
     const app = initializeApp(window.IMS_FIREBASE_CONFIG);
     const auth = getAuth(app);
+    await setPersistence(auth, browserLocalPersistence);
+    const initialUser = await new Promise((resolve) => {
+      const unsubscribe = onAuthStateChanged(auth, (user) => {
+        unsubscribe();
+        resolve(user);
+      });
+    });
+    if (initialUser) {
+      localStorage.removeItem('firebase_token');
+      await signOut(auth);
+    }
     const googleProvider = new GoogleAuthProvider();
     const OFFICIAL_EMAIL_MESSAGE = 'Only Shehersaaz official email addresses are allowed.';
+    const portalHomeUrl = window.location.protocol === 'file:' ? 'http://localhost:3000/index.html' : 'index.html';
     const params = new URLSearchParams(window.location.search);
-    const requestedReturnTo = params.get('returnTo') || 'index.html';
-    const returnTo = /(^|\/)(login|signup)\.html/i.test(requestedReturnTo) ? 'index.html' : requestedReturnTo;
+    const requestedReturnTo = params.get('returnTo') || portalHomeUrl;
+    const returnTo = /(^|\/)(login|signup)\.html/i.test(requestedReturnTo) ? portalHomeUrl : requestedReturnTo;
     let hasRedirected = false;
 
     const pendingAuthError = sessionStorage.getItem('imsAuthError');
@@ -79,13 +91,6 @@
       showError(OFFICIAL_EMAIL_MESSAGE);
       return true;
     }
-
-    onAuthStateChanged(auth, async (user) => {
-      if (!user) return;
-      if (await rejectUnauthorizedUser(user)) return;
-      localStorage.setItem('firebase_token', await user.getIdToken());
-      goToPortal();
-    });
 
     window.handleGoogleLogin = async function handleGoogleLogin() {
       const errorMsg = document.getElementById('errorMsg');

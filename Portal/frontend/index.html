@@ -46,7 +46,7 @@
       </nav>
       <div class="sidebar-footer">
         <div class="profile-wrap sidebar-profile-wrap">
-          <button class="profile sidebar-profile" id="profileBtn" type="button" aria-label="Inventory Manager" data-profile-name="Inventory Manager"><span class="avatar">IM</span><span class="profile-copy"><span class="profile-name">Inventory Manager</span><small>Member</small></span><i data-lucide="log-out"></i></button>
+          <button class="profile sidebar-profile" id="profileBtn" type="button" aria-label="IMS User" data-profile-name="IMS User"><span class="avatar">IU</span><span class="profile-copy"><span class="profile-name">IMS User</span><small>Member</small></span><i data-lucide="log-out"></i></button>
           <div class="profile-menu sidebar-profile-menu" id="profileMenu" aria-hidden="true">
             <button class="profile-menu-item" id="logoutBtn" type="button">Logout</button>
           </div>
@@ -129,7 +129,7 @@
       <section class="view active empty-dashboard" id="dashboardView">
         <div class="dashboard-hero">
           <div>
-            <h1>Welcome back, Wania</h1>
+            <h1>Welcome back</h1>
             <p>NGO · Main · June 5</p>
           </div>
           <div class="dashboard-actions">
@@ -210,6 +210,8 @@
           </div>
           <div class="inventory-page-actions">
             <button class="primary" id="openItemModal" type="button" data-inventory-items-only><i data-lucide="plus"></i>Add item</button>
+            <button class="primary" id="openWarehouseModal" type="button" data-inventory-warehouses-only hidden><i data-lucide="plus"></i>Add warehouse</button>
+            <button class="primary" id="openCategoryModal" type="button" data-inventory-categories-only hidden><i data-lucide="plus"></i>Add category</button>
             <button class="primary" id="openManualStockIssue" type="button" data-inventory-issue-only hidden><i data-lucide="package-minus"></i>Manual stock issue</button>
             <button class="primary" id="openGrnDrawer" type="button" data-inventory-grn-only hidden><i data-lucide="package-check"></i>Create GRN</button>
           </div>
@@ -217,6 +219,7 @@
         <div class="inventory-module-tabs" id="inventoryModuleTabs">
           <button class="inventory-module-tab active" type="button" data-inventory-tab="items"><i data-lucide="package"></i>Items <span id="inventoryItemsTabCount">0</span></button>
           <button class="inventory-module-tab" type="button" data-inventory-tab="warehouses"><i data-lucide="warehouse"></i>Warehouses <span id="inventoryWarehousesTabCount">0</span></button>
+          <button class="inventory-module-tab" type="button" data-inventory-tab="categories"><i data-lucide="layers-3"></i>Categories <span id="inventoryCategoriesTabCount">0</span></button>
           <button class="inventory-module-tab inventory-action-tab" type="button" data-inventory-tab="issue"><i data-lucide="package-minus"></i>Stock Issue</button>
           <button class="inventory-module-tab inventory-action-tab" type="button" data-inventory-tab="grn"><i data-lucide="truck"></i>GRN</button>
         </div>
@@ -254,6 +257,9 @@
         </div>
         <div class="card table-card inventory-lumen-card inventory-panel" id="inventoryWarehousesPanel">
           <div class="table-wrap"><table><thead><tr><th>Location</th><th>Code</th><th>Item rows</th><th>Total stock</th><th>Low / out stock</th></tr></thead><tbody id="inventoryWarehousesTable"></tbody></table></div>
+        </div>
+        <div class="card table-card inventory-lumen-card inventory-panel" id="inventoryCategoriesPanel">
+          <div class="table-wrap"><table><thead><tr><th>Category</th><th>Code</th><th>Item rows</th><th>Total stock</th><th>Low / out stock</th></tr></thead><tbody id="inventoryCategoriesTable"></tbody></table></div>
         </div>
         <div class="inventory-panel inventory-form-panel" id="inventoryIssuePanel"></div>
         <div class="inventory-panel inventory-form-panel" id="inventoryGrnPanel"></div>
@@ -303,7 +309,7 @@
             <div class="po-status-filters" id="poStatusFilters" aria-label="PO status filters"></div>
           </div>
           <div class="po-records-card">
-            <div class="table-wrap"><table><thead><tr><th>PO</th><th>Vendor</th><th>Ordered</th><th>Expected</th><th>From RFQ</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody id="poTable"></tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>PO</th><th>Vendor</th><th>Ordered</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody id="poTable"></tbody></table></div>
           </div>
         </div>
         <div class="po-drawer" id="poDrawer" aria-hidden="true">
@@ -540,26 +546,40 @@
     </div>
   </template>
   <div class="modal-backdrop" id="itemModal" aria-hidden="true">
-    <form id="itemForm" class="card form-card modal-card">
+    <form id="itemForm" class="card form-card modal-card inventory-item-modal-card">
       <div class="modal-head">
-        <div class="section-title"><h2>Add Inventory Item</h2><p>Create item types with unique Item IDs.</p></div>
+        <div class="section-title inventory-item-modal-title"><h2>Add Inventory Item</h2><p>Create item types with unique Item IDs.</p></div>
         <button class="icon-btn" id="closeItemModal" type="button" aria-label="Close add item"><i data-lucide="x"></i></button>
       </div>
+      <div class="inventory-item-modal-body">
+        <div class="inventory-item-modal-section">
+          <div class="form-grid inventory-item-modal-grid">
+            <label>Category<input required name="category" data-categories list="itemCategoryOptions" placeholder="Select category"></label>
+            <label class="span-2">Item name<input required name="name" placeholder="Enter item name"></label>
+          </div>
+        </div>
+        <div class="line-builder inventory-item-types-builder">
+          <h3>Item Types</h3>
+          <div id="itemTypeRows"></div>
+          <button class="secondary inventory-item-add-type" id="addItemType" type="button"><i data-lucide="plus"></i>Add type</button>
+        </div>
+      </div>
+      <div class="form-actions inventory-item-modal-actions"><button class="secondary" id="cancelItemModal" type="button">Cancel</button><button class="primary" type="submit"><i data-lucide="plus"></i>Add Item</button></div>
+    </form>
+  </div>
+  <div class="modal-backdrop" id="categoryModal" aria-hidden="true">
+    <form id="categoryForm" class="card form-card modal-card">
+      <div class="modal-head">
+        <div class="section-title"><h2>Add Category</h2><p>Create a new inventory category for IMS.</p></div>
+        <button class="icon-btn" id="closeCategoryModal" type="button" aria-label="Close add category"><i data-lucide="x"></i></button>
+      </div>
       <div class="form-grid">
-        <label>Category<input name="category" id="itemCategorySelect" data-categories list="itemCategoryOptions" placeholder="Select category"></label>
-        <label>New category<input name="newCategory" placeholder="Only fill this to create a new category"></label>
-        <label class="span-2">Item name<input required name="name" placeholder="Enter item name"></label>
+        <label class="span-2">Category name<input required name="name" placeholder="Enter category name"></label>
       </div>
-      <div class="line-builder">
-        <h3>Item Types</h3>
-        <div id="itemTypeRows"></div>
-        <button class="secondary" id="addItemType" type="button"><i data-lucide="plus"></i>Add type</button>
-      </div>
-      <div class="form-actions"><button class="secondary" id="cancelItemModal" type="button">Cancel</button><button class="primary" type="submit"><i data-lucide="plus"></i>Add Item</button></div>
+      <div class="form-actions"><button class="secondary" id="cancelCategoryModal" type="button">Cancel</button><button class="primary" type="submit"><i data-lucide="plus"></i>Add Category</button></div>
     </form>
   </div>
 
-  <div class="modal-backdrop" id="poPreviewModal" aria-hidden="true">
     <div class="card modal-card po-modal-card">
       <div class="modal-head">
         <div class="section-title"><h2>Purchase Order Preview</h2><p>Review the generated PO before saving.</p></div>
@@ -642,6 +662,6 @@
   <script src="js/inventory data/progressive.js?v=inventory-split-1"></script>
   <script src="js/inventory data/rwhu.js?v=inventory-split-1"></script>
   <script src="js/inventory data/stationary.js?v=inventory-split-1"></script>
-  <script src="js/script.js?v=user-drawer-actions-20260608-1"></script>
+  <script src="js/script.js?v=signin-fix-20260608-2"></script>
 </body>
 </html>

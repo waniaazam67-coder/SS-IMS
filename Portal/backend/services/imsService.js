@@ -303,6 +303,55 @@ async function createItems(input, userId) {
   }
 }
 
+async function listCategories() {
+  const [rows] = await pool.execute(
+    `SELECT c.id, c.name,
+            COUNT(DISTINCT i.id) AS itemRows,
+            COALESCE(SUM(ib.on_hand_qty), 0) AS totalStock,
+            SUM(
+              CASE
+                WHEN COALESCE(ib.available_qty, ib.on_hand_qty, 0) <= 0 THEN 1
+                WHEN COALESCE(ib.available_qty, ib.on_hand_qty, 0) < 10 THEN 1
+                ELSE 0
+              END
+            ) AS lowOrOutStock
+     FROM item_categories c
+     LEFT JOIN items i ON i.category_id = c.id AND i.deleted_at IS NULL
+     LEFT JOIN inventory_balances ib ON ib.item_id = i.id
+     GROUP BY c.id, c.name
+     ORDER BY c.name ASC`
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    itemRows: Number(row.itemRows || 0),
+    totalStock: Number(row.totalStock || 0),
+    lowOrOutStock: Number(row.lowOrOutStock || 0)
+  }));
+}
+
+async function createCategory(input, userId) {
+  const name = required(input?.name, "Category name");
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [result] = await connection.execute(
+      `INSERT INTO item_categories (name, created_by, updated_by)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), updated_by = VALUES(updated_by)`,
+      [name, userId || null, userId || null]
+    );
+    await audit("item_categories", result.insertId, "INSERT", userId, { name }, connection);
+    await connection.commit();
+    return { id: result.insertId, name };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 async function deleteItem(itemCode, userId) {
   const connection = await pool.getConnection();
   try {
@@ -1657,8 +1706,10 @@ module.exports = {
   postStockMovement,
   postStockAdjustment,
   listItems,
+  listCategories,
   syncImportedInventory,
   createItems,
+  createCategory,
   deleteItem,
   listVendors,
   createVendor,

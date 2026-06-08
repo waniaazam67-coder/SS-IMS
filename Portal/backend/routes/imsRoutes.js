@@ -36,8 +36,16 @@ router.get("/items", requirePermission(PERMISSIONS.VIEW_INVENTORY), async (req, 
   try { ok(res, { items: await imsService.listItems() }); } catch (error) { next(error); }
 });
 
+router.get("/categories", requirePermission(PERMISSIONS.VIEW_INVENTORY), async (req, res, next) => {
+  try { ok(res, { categories: await imsService.listCategories() }); } catch (error) { next(error); }
+});
+
 router.post("/items", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {
   try { ok(res, { items: await imsService.createItems(req.body, req.auth.user.id) }, 201); } catch (error) { next(error); }
+});
+
+router.post("/categories", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {
+  try { ok(res, { category: await imsService.createCategory(req.body, req.auth.user.id) }, 201); } catch (error) { next(error); }
 });
 
 router.delete("/items/:itemCode", requirePermission(PERMISSIONS.MANAGE_INVENTORY), async (req, res, next) => {
