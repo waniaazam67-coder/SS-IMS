@@ -29,13 +29,8 @@
           <div class="nav-section single">
             <button class="nav-item" data-view="procurement"><span class="nav-icon"><i data-lucide="shopping-cart"></i></span><span>Procurement</span></button>
           </div>
-          <div class="nav-section collapsed">
-            <button class="nav-section-toggle" type="button" aria-expanded="false"><span class="nav-section-icon"><i data-lucide="clipboard-list"></i></span><span>Requests</span><i data-lucide="chevron-down"></i></button>
-            <div class="nav-section-items">
-            <button class="nav-item" data-view="requisition"><span class="nav-icon"><i data-lucide="file-plus-2"></i></span><span>Requisition Form</span></button>
-            <button class="nav-item" data-view="transport"><span class="nav-icon"><i data-lucide="route"></i></span><span>Transport Requests</span></button>
-            <button class="nav-item" data-view="requests"><span class="nav-icon"><i data-lucide="list-checks"></i></span><span>Requests</span></button>
-            </div>
+          <div class="nav-section single">
+            <button class="nav-item" data-view="requests"><span class="nav-icon"><i data-lucide="clipboard-list"></i></span><span>Requests</span></button>
           </div>
           <div class="nav-section single">
             <button class="nav-item" data-view="approvals"><span class="nav-icon"><i data-lucide="shield-check"></i></span><span>Approvals</span></button>
@@ -170,13 +165,28 @@
       </section>
 
       <section class="view" id="requestsView">
-        <div class="card table-card">
-          <div class="section-title"><p>Review submitted request lines, approval decisions, issuance status, and request dates in one place.</p><button class="secondary" type="button" data-history-page="requests">History</button></div>
-          <div class="table-wrap requests-scroll"><table><thead><tr><th>ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Approval</th><th>Issue</th><th>Date</th></tr></thead><tbody id="requestsTable"></tbody></table></div>
-          <div class="pagination" id="requestsPagination">
-            <button class="page-btn" id="requestsPrev" type="button"><i data-lucide="chevron-left"></i>Prev</button>
-            <span id="requestsPageInfo">Page 1 of 1</span>
-            <button class="page-btn" id="requestsNext" type="button">Next<i data-lucide="chevron-right"></i></button>
+        <div class="inventory-page-header">
+          <div>
+            <h1>Requests</h1>
+            <p>Requisition forms, transport requests, and item request tracking.</p>
+          </div>
+        </div>
+        <div class="inventory-module-tabs" id="requestModuleTabs">
+          <button class="inventory-module-tab active" type="button" data-request-tab="requisition"><i data-lucide="file-plus-2"></i>Requisition Form <span id="requestRequisitionTabCount">0</span></button>
+          <button class="inventory-module-tab" type="button" data-request-tab="transport"><i data-lucide="route"></i>Transport Requests <span id="requestTransportTabCount">0</span></button>
+          <button class="inventory-module-tab" type="button" data-request-tab="items"><i data-lucide="list-checks"></i>Item Requests <span id="requestItemsTabCount">0</span></button>
+        </div>
+        <div class="request-panel active" id="requestsRequisitionPanel"></div>
+        <div class="request-panel" id="requestsTransportPanel"></div>
+        <div class="request-panel" id="requestsItemsPanel">
+          <div class="card table-card">
+            <div class="section-title"><p>Review submitted request lines, approval decisions, issuance status, and request dates in one place.</p><button class="secondary" type="button" data-history-page="requests">History</button></div>
+            <div class="table-wrap requests-scroll"><table><thead><tr><th>ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Approval</th><th>Issue</th><th>Date</th></tr></thead><tbody id="requestsTable"></tbody></table></div>
+            <div class="pagination" id="requestsPagination">
+              <button class="page-btn" id="requestsPrev" type="button"><i data-lucide="chevron-left"></i>Prev</button>
+              <span id="requestsPageInfo">Page 1 of 1</span>
+              <button class="page-btn" id="requestsNext" type="button">Next<i data-lucide="chevron-right"></i></button>
+            </div>
           </div>
         </div>
       </section>
@@ -285,11 +295,11 @@
               <h2>Purchase Orders</h2>
               <p>Confirmed POs. Convert RFQs or create directly.</p>
             </div>
-            <button class="primary po-new-button" id="openPoDrawer" type="button"><i data-lucide="plus"></i>Generate PO</button>
           </div>
           <div class="po-records-toolbar">
             <label class="po-search-filter"><i data-lucide="search"></i><input id="poSearchInput" type="search" placeholder="Search by ID or vendor..."></label>
             <label class="po-vendor-filter"><select id="poVendorFilter"><option value="">All vendors</option></select></label>
+            <button class="filter-clear-button" id="clearPoVendorFilter" type="button" aria-label="Clear PO vendor filter" title="Clear vendor filter" disabled><i data-lucide="x"></i></button>
             <div class="po-status-filters" id="poStatusFilters" aria-label="PO status filters"></div>
           </div>
           <div class="po-records-card">
@@ -375,6 +385,10 @@
             <h1>Procurement</h1>
             <p>Purchase orders, vendor records, and procurement-ready supplier details.</p>
           </div>
+          <div class="inventory-page-actions">
+            <button class="primary po-new-button" id="openPoDrawer" type="button" data-procurement-po-only><i data-lucide="plus"></i>Generate PO</button>
+            <button class="primary vendor-new-button" id="openVendorDrawer" type="button" data-procurement-vendors-only hidden><i data-lucide="plus"></i>Add vendor</button>
+          </div>
         </div>
         <div class="inventory-module-tabs" id="procurementModuleTabs">
           <button class="inventory-module-tab active" type="button" data-procurement-tab="po"><i data-lucide="file-pen-line"></i>PO</button>
@@ -406,7 +420,8 @@
         <div class="grn-screen-shell">
           <div class="stock-issue-toolbar grn-records-toolbar">
             <label class="stock-issue-search grn-record-search"><i data-lucide="search"></i><input id="grnSearchInput" type="search" placeholder="Search by GRN, PO, or vendor."></label>
-            <label class="stock-issue-location-filter grn-filter-field"><span>Vendor</span><select id="grnVendorFilter"><option>All vendors</option></select></label>
+            <label class="stock-issue-location-filter grn-filter-field"><span>Vendor</span><select id="grnVendorFilter"><option value="">All vendors</option></select></label>
+            <button class="filter-clear-button" id="clearGrnVendorFilter" type="button" aria-label="Clear GRN vendor filter" title="Clear vendor filter" disabled><i data-lucide="x"></i></button>
           </div>
           <div class="grn-records-card">
             <div class="table-wrap"><table><thead><tr><th>GRN</th><th>Linked PO</th><th>Vendor</th><th>Received</th><th>Into</th><th>Units</th><th>Status</th><th></th></tr></thead><tbody id="grnTable"></tbody></table></div>
@@ -458,21 +473,29 @@
       </section>
 
       <section class="view" id="vendorsView">
-        <form id="vendorForm" class="card form-card">
-          <div class="section-title"><p>Maintain vendor contact, address, and bank information used during purchase order creation.</p></div>
-          <div class="form-grid">
-            <input type="hidden" name="id">
-            <label>Name<input required name="name"></label>
-            <label>Phone<input name="phone"></label>
-            <label>Contact person<input name="contact"></label>
-            <label>Bank<input name="bankName"></label>
-            <label>A/C title<input name="accountTitle"></label>
-            <label>A/C no.<input name="accountNo"></label>
-            <label class="span-2">Address<input name="address"></label>
+        <div class="vendors-records-screen">
+          <div class="po-records-toolbar vendors-records-toolbar">
+            <label class="po-search-filter vendors-search-filter"><i data-lucide="search"></i><input id="vendorSearchInput" type="search" placeholder="Search vendors..."></label>
           </div>
-          <div class="form-actions"><button class="secondary" id="cancelVendorEdit" type="button" hidden>Cancel edit</button><button class="primary" id="saveVendorButton" type="submit"><i data-lucide="building-2"></i>Add Vendor</button></div>
-        </form>
-        <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Contact</th><th>Bank</th><th>A/C Title</th><th>A/C No.</th><th>Address</th><th>Actions</th></tr></thead><tbody id="vendorsTable"></tbody></table></div></div>
+          <div class="vendors-records-card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone number</th><th>Contact person</th><th>Bank</th><th>A/C Title</th><th>A/C No.</th><th>Address</th><th>Actions</th></tr></thead><tbody id="vendorsTable"></tbody></table></div></div>
+        </div>
+        <div class="vendor-drawer" id="vendorDrawer" aria-hidden="true">
+          <form id="vendorForm" class="card form-card vendor-drawer-card">
+            <button class="icon-btn vendor-drawer-close" id="closeVendorDrawer" type="button" aria-label="Close vendor form"><i data-lucide="x"></i></button>
+            <div class="section-title"><h2 id="vendorDrawerTitle">Add Vendor</h2><p>Maintain vendor contact, address, and bank information used during purchase order creation.</p></div>
+            <div class="form-grid">
+              <input type="hidden" name="id">
+              <label>Name<input required name="name"></label>
+              <label>Phone<input name="phone"></label>
+              <label>Contact person<input name="contact"></label>
+              <label>Bank<input name="bankName"></label>
+              <label>A/C title<input name="accountTitle"></label>
+              <label>A/C no.<input name="accountNo"></label>
+              <label class="span-2">Address<input name="address"></label>
+            </div>
+            <div class="form-actions"><button class="secondary" id="cancelVendorEdit" type="button" hidden>Cancel edit</button><button class="primary" id="saveVendorButton" type="submit"><i data-lucide="building-2"></i>Add Vendor</button></div>
+          </form>
+        </div>
       </section>
 
       <section class="view" id="settingsView">
@@ -619,6 +642,6 @@
   <script src="js/inventory data/progressive.js?v=inventory-split-1"></script>
   <script src="js/inventory data/rwhu.js?v=inventory-split-1"></script>
   <script src="js/inventory data/stationary.js?v=inventory-split-1"></script>
-  <script src="js/script.js?v=dashboard-search-20260605-5"></script>
+  <script src="js/script.js?v=user-drawer-actions-20260608-1"></script>
 </body>
 </html>

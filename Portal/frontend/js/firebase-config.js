@@ -1,9 +1,9 @@
 window.IMS_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyAZWlC3Om-zT6Ekgbu4jbGF4RTMvdBdPh0",
-  authDomain: "shehersaaz-ims.firebaseapp.com",
-  projectId: "shehersaaz-ims",
-  storageBucket: "shehersaaz-ims.firebasestorage.app",
-  messagingSenderId: "594008194328",
-  appId: "1:594008194328:web:628955770dd49b4298f26d",
-  measurementId: "G-XYLWC4M55D"
+  apiKey: "AIzaSyCc0CtTUoWKPmifb-A7gjBIjgiv43MVDNY",
+  authDomain: "ss-ims.firebaseapp.com",
+  projectId: "ss-ims",
+  storageBucket: "ss-ims.firebasestorage.app",
+  messagingSenderId: "1058895767200",
+  appId: "1:1058895767200:web:dc2f436d08e2007032cbc5",
+  measurementId: "G-TS7DJHXPG2"
 };

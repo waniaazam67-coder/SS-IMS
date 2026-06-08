@@ -1,5 +1,6 @@
 const { pool } = require("../config/database");
 const config = require("../config/env");
+const path = require("path");
 
 const DEFAULT_ROLE = "requestor";
 const ALLOWED_EMAIL_DOMAIN = "@shehersaaz.org.pk";
@@ -19,13 +20,28 @@ function getFirebaseAdminAuth() {
   try {
     const admin = require("firebase-admin");
     if (!admin.apps.length) {
-      admin.initializeApp({ projectId: config.firebase.projectId });
+      const serviceAccountPath = String(config.firebase.serviceAccountPath || "").trim();
+      if (!serviceAccountPath) return null;
+      const resolvedServiceAccountPath = path.isAbsolute(serviceAccountPath)
+        ? serviceAccountPath
+        : path.resolve(__dirname, "../..", serviceAccountPath);
+      const serviceAccount = require(resolvedServiceAccountPath);
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        projectId: config.firebase.projectId || serviceAccount.project_id
+      });
     }
     firebaseAdminAuth = admin.auth();
     return firebaseAdminAuth;
   } catch (error) {
     return null;
   }
+}
+
+function firebaseAuthUnavailableError() {
+  const error = new Error("Firebase Admin Auth is not configured. Configure Firebase service credentials before creating invite links.");
+  error.statusCode = 503;
+  return error;
 }
 
 function normalizeEmail(email) {
@@ -227,14 +243,40 @@ async function createUser(input = {}, createdBy) {
         [userId, createdBy || null, dbRoleName]
       );
     }
+    const inviteLink = await createPasswordSetupLink(email, input.inviteBaseUrl);
     await connection.commit();
-    return getUserById(userId);
+    const user = await getUserById(userId);
+    return { ...user, inviteLink };
   } catch (error) {
     await connection.rollback();
     throw error;
   } finally {
     connection.release();
   }
+}
+
+async function createPasswordSetupLink(email, inviteBaseUrl = "") {
+  const cleanEmail = normalizeEmail(email);
+  assertAllowedOfficialEmail(cleanEmail);
+  const adminAuth = getFirebaseAdminAuth();
+  if (!adminAuth) throw firebaseAuthUnavailableError();
+
+  try {
+    await adminAuth.getUserByEmail(cleanEmail);
+  } catch (error) {
+    if (error.code !== "auth/user-not-found") throw error;
+    await adminAuth.createUser({
+      email: cleanEmail,
+      emailVerified: true,
+      disabled: false
+    });
+  }
+
+  const cleanBaseUrl = String(inviteBaseUrl || "").trim().replace(/\/+$/, "");
+  const actionCodeSettings = cleanBaseUrl
+    ? { url: `${cleanBaseUrl}/setup-password.html?email=${encodeURIComponent(cleanEmail)}`, handleCodeInApp: true }
+    : undefined;
+  return adminAuth.generatePasswordResetLink(cleanEmail, actionCodeSettings);
 }
 
 async function assignRoleToUser(userId, roleName, assignedBy) {
@@ -391,6 +433,7 @@ async function assertUserAndRole(userId, roleName) {
 module.exports = {
   assignRoleToUser,
   createUser,
+  createPasswordSetupLink,
   deleteUser,
   getUserById,
   listRoles,

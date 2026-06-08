@@ -20,7 +20,8 @@ router.get("/users", requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), a
 
 router.post("/users", requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), async (req, res, next) => {
   try {
-    const user = await authService.createUser(req.body, req.auth.user.id);
+    const origin = `${req.protocol}://${req.get("host")}`;
+    const user = await authService.createUser({ ...req.body, inviteBaseUrl: origin }, req.auth.user.id);
     ok(res, { user, message: "User added." }, 201);
   } catch (error) {
     next(error);

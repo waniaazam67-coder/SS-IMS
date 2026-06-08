@@ -7065,6 +7065,58 @@ body.grn-drawer-open::before {
   -webkit-backdrop-filter: blur(2px);
 }
 
+.vendor-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: none;
+  justify-content: flex-end;
+  padding: 18px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.vendor-drawer.show {
+  display: flex;
+}
+
+.vendor-drawer-card {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 100%);
+  height: 100%;
+  max-height: calc(100vh - 36px);
+  margin: 0;
+  overflow: auto;
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(15, 23, 18, .22);
+}
+
+.vendor-drawer-card .section-title {
+  padding-right: 46px;
+}
+
+.vendor-drawer-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+}
+
+body.vendor-drawer-open .sidebar {
+  pointer-events: none;
+}
+
+body.vendor-drawer-open::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 54;
+  background: rgba(15, 23, 18, .42);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
 /* Sidebar hover/active icons stay green, never blue. */
 .sidebar .nav-item:hover,
 .sidebar .nav-section-toggle:hover,
@@ -7569,7 +7621,7 @@ body.grn-drawer-open::before {
   padding: 10px 7px 9px;
   border: 1px solid #d9dde3;
   border-radius: 10px;
-  background: #eceef2;
+  background: #f4f4f4;
   overflow: hidden;
 }
 
@@ -8266,6 +8318,172 @@ body[data-theme="dark"] .skeleton::after {
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
 }
 
+/* Professional portal motion */
+@keyframes imsFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes imsScaleIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes imsSlideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes imsRowIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+:where(.nav-item, .nav-section-toggle, button, .primary, .secondary, .tiny, .page-btn, input, select, textarea, .card, .table-card, .form-card, .table-wrap, .inventory-module-tab, .category-tab, .po-status-filter, .filter-clear-button) {
+  transition:
+    color .16s ease,
+    background-color .16s ease,
+    border-color .16s ease,
+    box-shadow .18s ease,
+    transform .18s ease,
+    opacity .18s ease;
+}
+
+.brand,
+.topbar,
+.page-head {
+  animation: imsFadeUp .34s ease both;
+}
+
+.sidebar .nav-group {
+  animation: imsSlideInLeft .34s ease both;
+}
+
+.sidebar .nav-group:nth-child(2) {
+  animation-delay: .05s;
+}
+
+.view.active {
+  animation: imsFadeUp .28s ease both;
+}
+
+.view.active :where(.inventory-page-header, .section-title, .history-heading, .po-records-head) {
+  animation: imsFadeUp .3s ease both;
+}
+
+.view.active :where(.inventory-module-tabs, .po-records-toolbar, .vendors-records-toolbar, .stock-issue-toolbar, .requisition-actions) {
+  animation: imsFadeUp .34s ease .04s both;
+}
+
+.view.active :where(.card, .table-card, .form-card, .inventory-lumen-card, .po-records-card, .vendors-records-card, .grn-records-card, .transport-board-card, .approvals-board-card, .settings-panel, .settings-tabs, .history-entry) {
+  animation: imsScaleIn .32s ease both;
+}
+
+.view.active :where(.card, .table-card, .form-card, .inventory-lumen-card, .po-records-card, .vendors-records-card, .grn-records-card):nth-of-type(2) {
+  animation-delay: .04s;
+}
+
+.view.active :where(.card, .table-card, .form-card, .inventory-lumen-card, .po-records-card, .vendors-records-card, .grn-records-card):nth-of-type(3) {
+  animation-delay: .08s;
+}
+
+.view.active tbody tr,
+.view.active .inventory-item-card,
+.view.active .approval-kanban-column,
+.view.active .approval-kanban-card,
+.view.active .transport-kanban-card,
+.view.active .dashboard-feed-row,
+.view.active .settings-tab {
+  animation: imsRowIn .26s ease both;
+}
+
+.view.active tbody tr:nth-child(2),
+.view.active .inventory-item-card:nth-child(2),
+.view.active .approval-kanban-column:nth-child(2),
+.view.active .settings-tab:nth-child(2) {
+  animation-delay: .025s;
+}
+
+.view.active tbody tr:nth-child(3),
+.view.active .inventory-item-card:nth-child(3),
+.view.active .approval-kanban-column:nth-child(3),
+.view.active .settings-tab:nth-child(3) {
+  animation-delay: .05s;
+}
+
+.view.active tbody tr:nth-child(4),
+.view.active .inventory-item-card:nth-child(4),
+.view.active .approval-kanban-column:nth-child(4),
+.view.active .settings-tab:nth-child(4) {
+  animation-delay: .075s;
+}
+
+.view.active tbody tr:nth-child(n+5),
+.view.active .inventory-item-card:nth-child(n+5),
+.view.active .approval-kanban-column:nth-child(n+5),
+.view.active .settings-tab:nth-child(n+5) {
+  animation-delay: .1s;
+}
+
+:where(button, .primary, .secondary, .tiny, .page-btn, .nav-item, .inventory-module-tab, .category-tab, .po-status-filter):hover {
+  transform: translateY(-1px);
+}
+
+:where(button, .primary, .secondary, .tiny, .page-btn):active {
+  transform: translateY(0) scale(.99);
+}
+
+:where(input, select, textarea):focus {
+  border-color: rgba(29, 175, 82, .55);
+  box-shadow: 0 0 0 3px rgba(29, 175, 82, .12);
+}
+
+.modal-backdrop.show,
+.po-drawer.show,
+.grn-drawer.show,
+.vendor-drawer.show,
+.stock-issue-drawer.show,
+.search-overlay.show,
+.notification-center.show,
+.chat-panel.show {
+  animation: imsFadeUp .22s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .001ms !important;
+  }
+}
+
 /* Internal chat */
 #chatBtn.icon-btn {
   position: relative;
@@ -8672,6 +8890,349 @@ body[data-theme="dark"] .skeleton::after {
 
   .chat-bubble {
     max-width: 86%;
+  }
+}
+
+/* Lumen-style Settings refresh */
+#settingsView {
+  --settings-green: #16a34a;
+  --settings-green-dark: #087239;
+  --settings-soft: #f7faf7;
+  --settings-line: #dfe7dd;
+  --settings-muted: #647067;
+  --settings-ink: #06140c;
+  background: var(--settings-soft);
+}
+
+#settingsView .settings-layout {
+  display: block;
+  padding: 30px 32px 44px;
+  max-width: 100%;
+}
+
+#settingsView .settings-page-heading {
+  margin-bottom: 18px;
+}
+
+#settingsView .settings-page-heading h1 {
+  margin: 0 0 6px;
+  color: var(--settings-ink);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+#settingsView .settings-page-heading p,
+#settingsView #settingsSectionDescription {
+  margin: 0;
+  color: var(--settings-muted);
+  font-size: 14px;
+}
+
+#settingsView .settings-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 16px;
+  padding: 0 0 14px;
+  border: 0;
+  border-bottom: 1px solid var(--settings-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow-x: auto;
+}
+
+#settingsView .settings-tab {
+  position: relative;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--settings-line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--settings-ink);
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+#settingsView .settings-tab::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -15px;
+  height: 3px;
+  border-radius: 999px 999px 0 0;
+  background: var(--settings-green);
+  opacity: 0;
+  transform: scaleX(.45);
+  transition: opacity .2s ease, transform .2s ease;
+}
+
+#settingsView .settings-tab svg {
+  width: 15px;
+  height: 15px;
+}
+
+#settingsView .settings-tab.active {
+  border-color: var(--settings-green-dark);
+  background: var(--settings-green-dark);
+  color: #ffffff;
+}
+
+#settingsView .settings-tab.active::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+#settingsView .settings-panel,
+#settingsView:has(.user-management-list) .settings-panel {
+  width: 100% !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+#settingsView .settings-title {
+  margin: 0 0 18px;
+  padding: 0;
+  border: 0;
+}
+
+#settingsView .settings-title h2 {
+  margin: 0 0 6px;
+  color: var(--settings-ink);
+  font-size: 28px;
+  line-height: 1.1;
+  font-weight: 800;
+}
+
+#settingsView .settings-form {
+  display: block;
+  max-width: none;
+}
+
+#settingsView .user-management-list,
+#settingsView .settings-role-card {
+  border: 1px solid var(--settings-line);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+#settingsView .setting-field {
+  display: grid;
+  gap: 8px;
+  color: #7a847d;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+#settingsView .setting-field.full {
+  grid-column: 1 / -1;
+}
+
+#settingsView input,
+#settingsView textarea {
+  border: 1px solid var(--settings-line);
+  border-radius: 8px;
+  color: var(--settings-ink);
+  background: #ffffff;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+#settingsView textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+
+#settingsView .settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+#settingsView .primary {
+  min-height: 38px;
+  border-radius: 10px;
+  background: var(--settings-green);
+  color: #ffffff;
+  box-shadow: 0 10px 18px rgba(22, 163, 74, .16);
+}
+
+#settingsView .secondary,
+#settingsView .user-save-btn,
+#settingsView .user-status-btn {
+  border: 1px solid var(--settings-line);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--settings-ink);
+}
+
+#settingsView .user-management-page-head {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  margin-bottom: 18px;
+}
+
+#settingsView .user-management-page-head h2 {
+  margin: 0 0 6px;
+  color: var(--settings-ink);
+  font-size: 28px;
+}
+
+#settingsView .settings-team-actions,
+#settingsView .settings-roles-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+#settingsView .settings-team-actions span,
+#settingsView .settings-roles-head span {
+  color: var(--settings-ink);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+#settingsView .add-user-panel {
+  margin: 0 0 18px;
+  border: 1px solid var(--settings-line);
+  border-radius: 18px;
+  background: #ffffff;
+}
+
+#settingsView .settings-team-table .user-management-header,
+#settingsView .settings-team-table .user-management-card {
+  grid-template-columns: minmax(180px, 1.1fr) minmax(220px, 1fr) 120px minmax(170px, .9fr) 120px minmax(220px, auto);
+}
+
+#settingsView .settings-team-table .user-management-header {
+  color: #667067;
+  background: #fbfdfb;
+  border-bottom: 1px solid var(--settings-line);
+}
+
+#settingsView .settings-team-table .user-management-card {
+  min-height: 72px;
+  border: 0;
+  border-bottom: 1px solid #eef3ee;
+  border-radius: 0;
+}
+
+#settingsView .settings-team-table .user-management-card:last-child {
+  border-bottom: 0;
+}
+
+#settingsView .settings-team-email,
+#settingsView .settings-team-login,
+#settingsView .role-checkbox-grid span {
+  color: var(--settings-muted);
+  font-size: 13px;
+}
+
+#settingsView .settings-owner-pill {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  min-height: 20px;
+  margin-top: 3px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #d9fbe7;
+  color: var(--settings-green-dark);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+#settingsView .user-management-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+#settingsView .settings-roles-head {
+  margin: -58px 0 22px;
+}
+
+#settingsView .settings-role-list {
+  display: grid;
+  gap: 14px;
+}
+
+#settingsView .settings-role-card {
+  min-height: 108px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px;
+}
+
+#settingsView .settings-role-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  color: var(--settings-ink);
+  font-size: 17px;
+  text-transform: capitalize;
+}
+
+#settingsView .settings-role-card h3 span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eef4ef;
+  color: #4f5f54;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+#settingsView .settings-role-card p {
+  margin: 0 0 6px;
+  color: #536158;
+  font-size: 13px;
+}
+
+#settingsView .settings-role-card small {
+  color: var(--settings-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 920px) {
+  #settingsView .settings-layout {
+    padding: 20px 14px 32px;
+  }
+
+  #settingsView .settings-team-table .user-management-header,
+  #settingsView .settings-team-table .user-management-card {
+    grid-template-columns: 1fr;
+  }
+
+  #settingsView .settings-team-table .user-management-header {
+    display: none;
+  }
+
+  #settingsView .settings-team-actions,
+  #settingsView .settings-roles-head,
+  #settingsView .settings-role-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #settingsView .settings-roles-head {
+    margin: 0 0 16px;
   }
 }
 
@@ -9731,6 +10292,24 @@ body[data-theme="dark"] .skeleton::after {
   font-family: "Plus Jakarta Sans", "Inter", Arial, sans-serif;
 }
 
+#requestsView {
+  --lm-bg: #f6f7f3;
+  --lm-surface: #fff;
+  --lm-surface-2: #f8faf7;
+  --lm-surface-3: #eef2ec;
+  --lm-ink: #0a1410;
+  --lm-muted: #5e6863;
+  --lm-line: #e6e9e1;
+  --lm-brand-50: #eafbec;
+  --lm-brand-100: #d2f4d4;
+  --lm-brand-500: #1daf52;
+  --lm-brand-700: #0b6a36;
+  padding: 24px 26px 44px;
+  background: var(--lm-bg);
+  color: var(--lm-ink);
+  font-family: "Plus Jakarta Sans", "Inter", Arial, sans-serif;
+}
+
 #inventoryView.lumen-inventory.active {
   display: block;
 }
@@ -9743,8 +10322,13 @@ body[data-theme="dark"] .skeleton::after {
   display: none;
 }
 
+.app-shell[data-active-view="requests"] .page-head {
+  display: none;
+}
+
 #inventoryView .inventory-page-header,
-#procurementView .inventory-page-header {
+#procurementView .inventory-page-header,
+#requestsView .inventory-page-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -9753,7 +10337,8 @@ body[data-theme="dark"] .skeleton::after {
 }
 
 #inventoryView .inventory-page-header h1,
-#procurementView .inventory-page-header h1 {
+#procurementView .inventory-page-header h1,
+#requestsView .inventory-page-header h1 {
   margin: 0;
   color: var(--lm-ink);
   font-size: 20px;
@@ -9763,14 +10348,16 @@ body[data-theme="dark"] .skeleton::after {
 }
 
 #inventoryView .inventory-page-header p,
-#procurementView .inventory-page-header p {
+#procurementView .inventory-page-header p,
+#requestsView .inventory-page-header p {
   margin-top: 5px;
   color: var(--lm-muted);
   font-size: 12px;
   line-height: 1.45;
 }
 
-#inventoryView .inventory-page-actions {
+#inventoryView .inventory-page-actions,
+#procurementView .inventory-page-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -9778,7 +10365,12 @@ body[data-theme="dark"] .skeleton::after {
   gap: 8px;
 }
 
-#inventoryView [data-inventory-items-only][hidden] {
+#inventoryView [data-inventory-items-only][hidden],
+#procurementView [data-procurement-po-only][hidden] {
+  display: none !important;
+}
+
+#procurementView [data-procurement-vendors-only][hidden] {
   display: none !important;
 }
 
@@ -9791,6 +10383,7 @@ body[data-theme="dark"] .skeleton::after {
 }
 
 #inventoryView .inventory-page-actions button,
+#procurementView .inventory-page-actions button,
 #inventoryView .inventory-toolbar button,
 #inventoryView .pagination button {
   min-height: 32px;
@@ -9799,10 +10392,68 @@ body[data-theme="dark"] .skeleton::after {
   font-weight: 800;
 }
 
-#inventoryView .inventory-page-actions .primary {
+#inventoryView .inventory-page-actions .primary,
+#procurementView .inventory-page-actions .primary {
   color: #fff;
   background: linear-gradient(135deg, #1daf52, #0b6a36);
   box-shadow: 0 10px 24px rgba(29, 175, 82, .24);
+}
+
+#vendorsView .vendors-records-screen,
+#procurementVendorsPanel .vendors-records-screen {
+  display: grid;
+  gap: 24px;
+}
+
+#vendorsView .vendors-records-toolbar,
+#procurementVendorsPanel .vendors-records-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px);
+  align-items: center;
+  gap: 10px;
+}
+
+#vendorsView .vendors-records-card {
+  overflow: hidden;
+  border: 1px solid var(--lm-line, #e1e7df);
+  border-radius: 18px;
+  background: var(--lm-surface, #fff);
+}
+
+#vendorsView .vendors-records-card .table-wrap {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+#vendorsView .vendors-records-card table {
+  min-width: 980px !important;
+}
+
+#vendorsView .vendors-records-card th,
+#vendorsView .vendors-records-card td {
+  padding: 14px 18px !important;
+  border-bottom: 1px solid var(--lm-line, #e1e7df);
+  font-size: 13px !important;
+}
+
+#vendorsView .vendors-records-card th {
+  color: var(--lm-muted, #66716b);
+  background: var(--lm-bg, #f7f8f4);
+  font-size: 11px !important;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+#vendorsView .vendors-records-card tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+#vendorsView .tiny {
+  min-height: 30px;
+  border-radius: 8px;
 }
 
 #inventoryView .inventory-page-actions .secondary {
@@ -9966,7 +10617,8 @@ body.manual-stock-issue-open .stock-issue-drawer {
 }
 
 #inventoryView .inventory-module-tabs,
-#procurementView .inventory-module-tabs {
+#procurementView .inventory-module-tabs,
+#requestsView .inventory-module-tabs {
   display: flex;
   align-items: center;
   gap: 18px;
@@ -9975,7 +10627,9 @@ body.manual-stock-issue-open .stock-issue-drawer {
 }
 
 #inventoryView .inventory-module-tab,
-#procurementView .inventory-module-tab {
+#procurementView .inventory-module-tab,
+#requestsView .inventory-module-tab {
+  position: relative;
   min-height: 38px;
   display: inline-flex;
   align-items: center;
@@ -9987,15 +10641,18 @@ body.manual-stock-issue-open .stock-issue-drawer {
   cursor: pointer;
   font-size: 13px;
   font-weight: 700;
+  transition: color .16s ease, border-color .16s ease, background .16s ease;
 }
 
 #inventoryView .inventory-module-tab svg,
-#procurementView .inventory-module-tab svg {
+#procurementView .inventory-module-tab svg,
+#requestsView .inventory-module-tab svg {
   width: 15px;
   height: 15px;
 }
 
-#inventoryView .inventory-module-tab span {
+#inventoryView .inventory-module-tab span,
+#requestsView .inventory-module-tab span {
   min-width: 18px;
   height: 18px;
   display: inline-grid;
@@ -10009,13 +10666,29 @@ body.manual-stock-issue-open .stock-issue-drawer {
 }
 
 #inventoryView .inventory-module-tab.active,
-#procurementView .inventory-module-tab.active {
+#procurementView .inventory-module-tab.active,
+#requestsView .inventory-module-tab.active {
   color: var(--lm-brand-700);
-  border-bottom-color: var(--lm-brand-500);
+  border-bottom-color: transparent;
   font-weight: 800;
 }
 
-#inventoryView .inventory-action-tab:hover {
+#inventoryView .inventory-module-tab.active::after,
+#procurementView .inventory-module-tab.active::after,
+#requestsView .inventory-module-tab.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--lm-brand-500);
+}
+
+#inventoryView .inventory-action-tab:hover,
+#procurementView .inventory-module-tab:hover,
+#requestsView .inventory-module-tab:hover {
   color: var(--lm-brand-700);
   background: transparent;
 }
@@ -10526,6 +11199,45 @@ body.manual-stock-issue-open .stock-issue-drawer {
   display: block;
 }
 
+#requestsView .request-panel {
+  display: none;
+}
+
+#requestsView .request-panel.active {
+  display: block;
+}
+
+#requestsView .inventory-module-tab {
+  min-height: 38px;
+  padding: 0 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--lm-muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+#requestsView .inventory-module-tab.active {
+  color: var(--lm-brand-700);
+  border-bottom-color: transparent;
+  font-weight: 800;
+}
+
+#requestsView .inventory-module-tab:focus,
+#requestsView .inventory-module-tab:focus-visible {
+  outline: 0;
+  box-shadow: none !important;
+}
+
+#requestsRequisitionPanel > .card.table-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 #inventoryView .inventory-form-panel {
   padding-top: 4px;
 }
@@ -10728,12 +11440,21 @@ body.manual-stock-issue-open .stock-issue-drawer {
     padding: 10px;
   }
 
+  .vendor-drawer {
+    padding: 10px;
+  }
+
   .stock-issue-drawer-card {
     max-height: calc(100vh - 20px);
     border-radius: 10px;
   }
 
   .grn-drawer-card {
+    max-height: calc(100vh - 20px);
+    border-radius: 10px;
+  }
+
+  .vendor-drawer-card {
     max-height: calc(100vh - 20px);
     border-radius: 10px;
   }
@@ -10895,7 +11616,9 @@ button.icon-btn > svg,
 }
 
 #poView .po-new-button,
-#procurementPoPanel .po-new-button {
+#procurementPoPanel .po-new-button,
+#procurementView .po-new-button,
+#procurementView .vendor-new-button {
   min-height: 38px;
   border-radius: 10px;
   padding: 0 16px;
@@ -10908,13 +11631,46 @@ button.icon-btn > svg,
 #poView .po-records-toolbar,
 #procurementPoPanel .po-records-toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 320px) minmax(170px, 220px) minmax(420px, 1fr);
+  grid-template-columns: minmax(220px, 320px) minmax(170px, 220px) 38px minmax(420px, 1fr);
   align-items: center;
   gap: 10px;
 }
 
+.filter-clear-button {
+  width: 38px;
+  height: 38px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--lm-line, #e1e7df);
+  border-radius: 9px;
+  color: var(--lm-muted, #66716b);
+  background: var(--lm-surface, #fff);
+  cursor: pointer;
+}
+
+.filter-clear-button:hover {
+  color: var(--lm-ink, #17221d);
+  border-color: var(--brand);
+}
+
+.filter-clear-button:disabled {
+  opacity: .42;
+  cursor: default;
+}
+
+.filter-clear-button:disabled:hover {
+  color: var(--lm-muted, #66716b);
+  border-color: var(--lm-line, #e1e7df);
+}
+
+.filter-clear-button svg {
+  width: 16px;
+  height: 16px;
+}
+
 #poView .po-search-filter,
-#procurementPoPanel .po-search-filter {
+#procurementPoPanel .po-search-filter,
+#procurementVendorsPanel .po-search-filter {
   height: 38px;
   display: flex;
   align-items: center;
@@ -10927,13 +11683,15 @@ button.icon-btn > svg,
 }
 
 #poView .po-search-filter svg,
-#procurementPoPanel .po-search-filter svg {
+#procurementPoPanel .po-search-filter svg,
+#procurementVendorsPanel .po-search-filter svg {
   width: 15px;
   height: 15px;
 }
 
 #poView .po-search-filter input,
-#procurementPoPanel .po-search-filter input {
+#procurementPoPanel .po-search-filter input,
+#procurementVendorsPanel .po-search-filter input {
   width: 100%;
   min-width: 0;
   border: 0;
@@ -11186,7 +11944,7 @@ body.po-drawer-open .po-drawer {
 @media (max-width: 1100px) {
   #poView .po-records-toolbar,
   #procurementPoPanel .po-records-toolbar {
-    grid-template-columns: 1fr 220px;
+    grid-template-columns: 1fr 220px 38px;
   }
 
   #poView .po-status-filters,
@@ -11207,7 +11965,9 @@ body.po-drawer-open .po-drawer {
   }
 
   #poView .po-new-button,
-  #procurementPoPanel .po-new-button {
+  #procurementPoPanel .po-new-button,
+  #procurementView .po-new-button,
+  #procurementView .vendor-new-button {
     width: 100%;
   }
 
@@ -11217,6 +11977,1153 @@ body.po-drawer-open .po-drawer {
 
   .po-drawer-card {
     max-height: calc(100vh - 20px);
+  }
+}
+
+/* Final Settings conflict overrides: keep the new three-tab layout above legacy user-management rules. */
+#settingsView:has(.user-management-list) {
+  max-width: none !important;
+  margin: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .settings-layout {
+  display: block !important;
+  padding: 30px 32px 44px !important;
+}
+
+#settingsView:has(.user-management-list) .settings-tabs,
+#settingsView:has(.user-management-list) #settingsSectionTitle,
+#settingsView:has(.user-management-list) #settingsSectionDescription {
+  display: flex !important;
+}
+
+#settingsView:has(.user-management-list) #settingsSectionTitle,
+#settingsView:has(.user-management-list) #settingsSectionDescription {
+  display: block !important;
+}
+
+#settingsView:has(.user-management-list) .settings-tabs {
+  margin: 0 0 16px !important;
+  padding: 0 0 14px !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--settings-line, #dfe7dd) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+#settingsView:has(.user-management-list) .settings-panel,
+#settingsView:has(.user-management-list) .settings-form {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow: visible !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-page-head {
+  grid-template-columns: 34px minmax(0, 1fr) auto !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-list {
+  overflow: auto !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .user-management-header,
+#settingsView:has(.user-management-list) .settings-team-table .user-management-card {
+  grid-template-columns: minmax(180px, 1.1fr) minmax(220px, 1fr) 120px minmax(170px, .9fr) 120px minmax(220px, auto) !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .role-checkbox-grid {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 2px !important;
+}
+
+#settingsView .settings-inline-role-editor {
+  grid-column: 1 / -1;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 0 0;
+  border-top: 1px solid #eef3ee;
+}
+
+#settingsView .user-management-card.editing .settings-inline-role-editor {
+  display: flex;
+}
+
+#settingsView .settings-inline-role-editor .role-checkbox-grid {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(110px, 1fr)) !important;
+  gap: 8px !important;
+  width: 100%;
+}
+
+@media (max-width: 920px) {
+  #settingsView:has(.user-management-list) .settings-layout {
+    padding: 20px 14px 32px !important;
+  }
+
+  #settingsView:has(.user-management-list) .settings-team-table .user-management-header,
+  #settingsView:has(.user-management-list) .settings-team-table .user-management-card {
+    grid-template-columns: 1fr !important;
+  }
+
+  #settingsView:has(.user-management-list) .settings-team-table .user-management-header {
+    display: none !important;
+  }
+
+  #settingsView .settings-inline-role-editor,
+  #settingsView .user-management-card.editing .settings-inline-role-editor {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #settingsView .settings-inline-role-editor .role-checkbox-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Clean Team settings layout */
+#settingsView .settings-team-summary {
+  display: flex;
+  justify-content: flex-end;
+  margin: -52px 0 18px;
+}
+
+#settingsView .settings-team-count {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border: 1px solid var(--settings-line, #dfe7dd);
+  border-radius: 14px;
+  background: #ffffff;
+  color: var(--settings-ink, #06140c);
+}
+
+#settingsView .settings-team-count svg {
+  width: 17px;
+  height: 17px;
+  color: var(--settings-green-dark, #087239);
+}
+
+#settingsView .settings-team-count span {
+  color: var(--settings-green-dark, #087239);
+  font-size: 20px;
+  font-weight: 900;
+}
+
+#settingsView .settings-team-count strong {
+  font-size: 13px;
+  font-weight: 850;
+}
+
+#settingsView:has(.user-management-list) .add-user-panel {
+  display: grid !important;
+  grid-template-columns: minmax(160px, .8fr) minmax(260px, 1.2fr) minmax(300px, 1.25fr) auto !important;
+  align-items: end !important;
+  gap: 18px !important;
+  padding: 18px !important;
+  margin-bottom: 18px !important;
+  overflow: visible !important;
+}
+
+#settingsView .add-user-copy {
+  display: grid;
+  gap: 6px;
+  align-self: center;
+}
+
+#settingsView .add-user-copy strong {
+  color: var(--settings-ink, #06140c);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+#settingsView .add-user-copy span,
+#settingsView .add-user-role-block > span {
+  color: var(--settings-muted, #647067);
+  font-size: 12px;
+}
+
+#settingsView:has(.user-management-list) .add-user-fields {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+}
+
+#settingsView .add-user-role-block {
+  display: grid;
+  gap: 8px;
+}
+
+#settingsView:has(.user-management-list) .add-user-roles,
+#settingsView:has(.user-management-list) .role-checkbox-grid.add-user-roles {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(128px, 1fr)) !important;
+  gap: 8px !important;
+}
+
+#settingsView .add-user-role-block .role-pill {
+  justify-content: center;
+  height: 34px !important;
+  min-height: 34px !important;
+  border-radius: 999px !important;
+  padding: 0 12px !important;
+  font-size: 11px !important;
+  text-transform: capitalize;
+}
+
+#settingsView #addUserInlineBtn {
+  height: 38px !important;
+  min-height: 38px !important;
+  padding: 0 16px !important;
+  color: #ffffff !important;
+  border-color: var(--settings-green, #16a34a) !important;
+  background: var(--settings-green, #16a34a) !important;
+  white-space: nowrap;
+}
+
+@media (max-width: 1120px) {
+  #settingsView:has(.user-management-list) .add-user-panel {
+    grid-template-columns: 1fr !important;
+    align-items: stretch !important;
+  }
+
+  #settingsView .settings-team-summary {
+    justify-content: flex-start;
+    margin: 0 0 18px;
+  }
+}
+
+/* Reference-matched Team and Roles settings tabs. */
+#settingsView {
+  --settings-green: #15803d;
+  --settings-green-soft: #e8f7ef;
+  --settings-ink: #202020;
+  --settings-muted: #3f3f3f;
+  --settings-soft-muted: #6a6863;
+  --settings-line: #d9d7d1;
+  background: #fbfbf9 !important;
+}
+
+#settingsView .settings-layout,
+#settingsView:has(.user-management-list) .settings-layout {
+  display: block !important;
+  max-width: 860px !important;
+  margin: 0 auto !important;
+  padding: 18px 14px 24px !important;
+}
+
+#settingsView .settings-tabs,
+#settingsView:has(.user-management-list) .settings-tabs {
+  display: flex !important;
+  align-items: flex-end !important;
+  gap: 18px !important;
+  margin: 0 0 28px !important;
+  padding: 0 0 0 6px !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--settings-line) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+  scrollbar-width: none !important;
+}
+
+#settingsView .settings-tabs::-webkit-scrollbar,
+#settingsView:has(.user-management-list) .settings-tabs::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+#settingsView .settings-tab {
+  position: relative;
+  min-height: 44px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  padding: 0 18px 13px !important;
+  color: #3f3f3f !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 16px !important;
+  font-weight: 760 !important;
+}
+
+#settingsView .settings-tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 0;
+  background: transparent;
+}
+
+#settingsView .settings-tab.active {
+  color: var(--settings-green) !important;
+}
+
+#settingsView .settings-tab.active::after {
+  background: var(--settings-green);
+}
+
+#settingsView .settings-tab svg {
+  width: 17px !important;
+  height: 17px !important;
+  color: currentColor !important;
+}
+
+#settingsView .settings-panel,
+#settingsView:has(.user-management-list) .settings-panel,
+#settingsView .settings-form,
+#settingsView:has(.user-management-list) .settings-form {
+  width: 100% !important;
+  max-width: none !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+#settingsView .settings-title {
+  margin: 0 0 22px !important;
+}
+
+#settingsView .settings-title h2 {
+  color: var(--settings-ink) !important;
+  font-size: 27px !important;
+  line-height: 1.05 !important;
+  font-weight: 780 !important;
+  letter-spacing: 0 !important;
+}
+
+#settingsView .settings-title p {
+  margin-top: 5px !important;
+  color: #383632 !important;
+  font-size: 16px !important;
+  line-height: 1.25 !important;
+}
+
+#settingsView .settings-team-summary {
+  display: flex !important;
+  justify-content: flex-end !important;
+  margin: -60px 0 36px !important;
+}
+
+#settingsView .settings-team-count,
+#settingsView .settings-roles-head > span {
+  min-height: 28px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  padding: 0 12px !important;
+  border: 1px solid #d8d5cf !important;
+  border-radius: 8px !important;
+  background: #fdfdfb !important;
+  color: #393833 !important;
+  font-size: 14px !important;
+  font-weight: 760 !important;
+  box-shadow: none !important;
+}
+
+#settingsView .settings-team-count svg {
+  width: 15px !important;
+  height: 15px !important;
+  color: #393833 !important;
+}
+
+#settingsView .settings-team-count strong {
+  font-size: 14px !important;
+  font-weight: 760 !important;
+  text-transform: none !important;
+}
+
+#settingsView:has(.user-management-list) .add-user-panel {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(128px, auto) !important;
+  gap: 16px 14px !important;
+  align-items: end !important;
+  margin: 0 !important;
+  padding: 23px 27px 24px !important;
+  border: 1px solid var(--settings-line) !important;
+  border-radius: 10px !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+#settingsView .add-user-copy {
+  grid-column: 1 / -1;
+  gap: 2px !important;
+}
+
+#settingsView .add-user-copy strong {
+  color: #1f1e1b !important;
+  font-size: 18px !important;
+  line-height: 1.2 !important;
+  font-weight: 780 !important;
+}
+
+#settingsView .add-user-copy span {
+  color: #2f2e2a !important;
+  font-size: 16px !important;
+  line-height: 1.25 !important;
+}
+
+#settingsView:has(.user-management-list) .add-user-fields {
+  display: grid !important;
+  grid-template-columns: minmax(0, 300px) minmax(0, 300px) !important;
+  gap: 14px !important;
+}
+
+#settingsView .add-user-fields label,
+#settingsView .add-user-role-block > span {
+  display: grid !important;
+  gap: 8px !important;
+  color: #55524d !important;
+  font-size: 13px !important;
+  font-weight: 820 !important;
+  letter-spacing: .035em !important;
+  text-transform: uppercase !important;
+}
+
+#settingsView .add-user-fields input {
+  width: 100% !important;
+  height: 41px !important;
+  border: 1px solid #d8d5cf !important;
+  border-radius: 7px !important;
+  padding: 0 13px !important;
+  color: #24231f !important;
+  background: #fff !important;
+  font-size: 18px !important;
+  font-weight: 650 !important;
+}
+
+#settingsView .add-user-fields input::placeholder {
+  color: #75716b !important;
+}
+
+#settingsView #addUserInlineBtn {
+  height: 40px !important;
+  min-height: 40px !important;
+  align-self: end !important;
+  justify-content: center !important;
+  border: 1px solid #bdbab3 !important;
+  border-radius: 8px !important;
+  padding: 0 20px !important;
+  color: #1f1e1b !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+  font-size: 15px !important;
+  font-weight: 820 !important;
+}
+
+#settingsView #addUserInlineBtn svg {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+#settingsView .add-user-role-block {
+  grid-column: 1 / -1;
+  display: grid !important;
+  gap: 18px !important;
+  padding-top: 18px !important;
+  border-top: 1px solid var(--settings-line) !important;
+}
+
+#settingsView:has(.user-management-list) .add-user-roles,
+#settingsView:has(.user-management-list) .role-checkbox-grid.add-user-roles {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+}
+
+#settingsView .add-user-role-block .role-pill,
+#settingsView .role-pill {
+  width: auto !important;
+  min-width: 0 !important;
+  height: 35px !important;
+  min-height: 35px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 1px solid #c8c5bd !important;
+  border-radius: 999px !important;
+  padding: 0 16px !important;
+  color: #3f3d38 !important;
+  background: #fff !important;
+  font-size: 14px !important;
+  font-weight: 720 !important;
+  text-transform: none !important;
+}
+
+#settingsView .role-pill.selected {
+  border-color: #16855a !important;
+  color: #16855a !important;
+  background: #e9f8ef !important;
+}
+
+#settingsView .role-pill.selected::before {
+  color: #16855a !important;
+  font-size: 13px !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-list,
+#settingsView:has(.user-management-list) .user-management-footer {
+  display: none !important;
+}
+
+#settingsView .settings-roles-head {
+  display: flex !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  gap: 11px !important;
+  margin: -62px 0 34px !important;
+}
+
+#settingsView .settings-roles-head .primary {
+  min-height: 40px !important;
+  border: 1px solid #bdbab3 !important;
+  border-radius: 8px !important;
+  padding: 0 19px !important;
+  color: #1f1e1b !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+  font-size: 15px !important;
+  font-weight: 820 !important;
+}
+
+#settingsView .settings-role-list {
+  display: grid !important;
+  gap: 14px !important;
+}
+
+#settingsView .settings-role-card {
+  min-height: 107px !important;
+  display: grid !important;
+  grid-template-columns: 44px minmax(0, 1fr) auto 98px !important;
+  align-items: center !important;
+  gap: 15px !important;
+  padding: 20px 24px !important;
+  border: 1px solid var(--settings-line) !important;
+  border-radius: 10px !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+#settingsView .settings-role-icon {
+  width: 43px !important;
+  height: 43px !important;
+  display: grid !important;
+  place-items: center !important;
+  border-radius: 8px !important;
+  color: #6857d9 !important;
+  background: #eeebff !important;
+}
+
+#settingsView .settings-role-icon svg {
+  width: 20px !important;
+  height: 20px !important;
+}
+
+#settingsView .settings-role-requestor .settings-role-icon,
+#settingsView .settings-role-inventory_manager .settings-role-icon {
+  color: #16855a !important;
+  background: #e3f5ee !important;
+}
+
+#settingsView .settings-role-approver .settings-role-icon {
+  color: #9a691e !important;
+  background: #fff0d9 !important;
+}
+
+#settingsView .settings-role-copy h3 {
+  display: flex !important;
+  align-items: center !important;
+  gap: 9px !important;
+  margin: 0 0 4px !important;
+  color: #1f1e1b !important;
+  font-size: 18px !important;
+  line-height: 1.1 !important;
+  font-weight: 820 !important;
+}
+
+#settingsView .settings-role-copy h3 span {
+  min-height: 22px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  border: 1px solid #d4d1c9 !important;
+  border-radius: 4px !important;
+  padding: 0 8px !important;
+  color: #6d6962 !important;
+  background: #f6f5f1 !important;
+  font-size: 11px !important;
+  font-weight: 850 !important;
+  text-transform: uppercase !important;
+}
+
+#settingsView .settings-role-copy p {
+  margin: 0 0 7px !important;
+  color: #302f2b !important;
+  font-size: 16px !important;
+  line-height: 1.2 !important;
+}
+
+#settingsView .settings-role-copy small {
+  color: #6f6b64 !important;
+  font-size: 14px !important;
+  font-weight: 720 !important;
+}
+
+#settingsView .settings-role-member-pill {
+  min-height: 24px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 999px !important;
+  padding: 0 11px !important;
+  color: #4d4a43 !important;
+  background: #f4f3ef !important;
+  font-size: 14px !important;
+  font-weight: 800 !important;
+  white-space: nowrap !important;
+}
+
+#settingsView .settings-role-card .secondary {
+  min-height: 40px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  border: 1px solid #bdbab3 !important;
+  border-radius: 8px !important;
+  padding: 0 19px !important;
+  color: #1f1e1b !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+  font-size: 16px !important;
+  font-weight: 760 !important;
+}
+
+#settingsView .settings-role-card .secondary svg {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+@media (max-width: 760px) {
+  #settingsView .settings-layout,
+  #settingsView:has(.user-management-list) .settings-layout {
+    padding: 16px 12px 24px !important;
+  }
+
+  #settingsView .settings-team-summary,
+  #settingsView .settings-roles-head {
+    justify-content: flex-start !important;
+    margin: 0 0 16px !important;
+  }
+
+  #settingsView:has(.user-management-list) .add-user-panel,
+  #settingsView:has(.user-management-list) .add-user-fields,
+  #settingsView .settings-role-card {
+    grid-template-columns: 1fr !important;
+  }
+
+  #settingsView .settings-role-member-pill,
+  #settingsView .settings-role-card .secondary {
+    justify-self: start !important;
+  }
+}
+
+/* Full-width Team/Roles settings surface. */
+#settingsView .settings-layout,
+#settingsView:has(.user-management-list) .settings-layout {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 18px 28px 36px !important;
+}
+
+#settingsView:has(.user-management-list) .add-user-panel {
+  width: 100% !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  justify-items: stretch !important;
+  margin: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .add-user-fields {
+  width: min(100%, 680px) !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
+#settingsView .add-user-role-block {
+  justify-items: center !important;
+}
+
+#settingsView .add-user-role-block > span {
+  justify-self: stretch !important;
+}
+
+#settingsView:has(.user-management-list) .add-user-roles,
+#settingsView:has(.user-management-list) .role-checkbox-grid.add-user-roles {
+  justify-content: center !important;
+  width: 100% !important;
+}
+
+#settingsView #addUserInlineBtn {
+  width: min(100%, 690px) !important;
+  justify-self: center !important;
+}
+
+#settingsView .settings-role-list,
+#settingsView .settings-role-card {
+  width: 100% !important;
+}
+
+@media (max-width: 760px) {
+  #settingsView .settings-layout,
+  #settingsView:has(.user-management-list) .settings-layout {
+    padding: 16px 12px 24px !important;
+  }
+
+  #settingsView:has(.user-management-list) .add-user-fields {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Light Team access table below Add user. */
+#settingsView:has(.user-management-list) .user-management-list.settings-team-table {
+  width: 100% !important;
+  display: grid !important;
+  margin-top: 18px !important;
+  overflow: hidden !important;
+  border: 1px solid var(--settings-line) !important;
+  border-radius: 10px !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .user-management-header,
+#settingsView:has(.user-management-list) .settings-team-table .user-management-card {
+  display: grid !important;
+  grid-template-columns: minmax(180px, 1.25fr) minmax(220px, 1.15fr) minmax(120px, .7fr) minmax(180px, 1fr) minmax(170px, .9fr) minmax(250px, 1.25fr) !important;
+  align-items: center !important;
+  gap: 0 !important;
+  min-height: 46px !important;
+  padding: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .user-management-header {
+  border-bottom: 1px solid var(--settings-line) !important;
+  background: #f7faf7 !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .user-management-header span {
+  height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  padding: 0 14px !important;
+  border-right: 1px solid var(--settings-line) !important;
+  color: #536158 !important;
+  font-size: 13px !important;
+  font-weight: 820 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .user-management-header span:last-child {
+  border-right: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .user-management-card {
+  border: 0 !important;
+  border-bottom: 1px solid #e7ece4 !important;
+  border-radius: 0 !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .user-management-card:last-child {
+  border-bottom: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .user-management-card > div:not(.settings-inline-role-editor) {
+  min-height: 46px !important;
+  height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  padding: 8px 14px !important;
+  border-right: 1px solid #e7ece4 !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .user-management-card > div:not(.settings-inline-role-editor):last-of-type {
+  border-right: 0 !important;
+}
+
+#settingsView:has(.user-management-list) .settings-team-table .user-management-actions {
+  border-right: 0 !important;
+}
+
+#settingsView .settings-team-table .user-management-person {
+  gap: 10px !important;
+}
+
+#settingsView .settings-team-table .user-management-avatar {
+  width: 30px !important;
+  height: 30px !important;
+  flex: 0 0 30px !important;
+  border-radius: 999px !important;
+  background: var(--settings-green-soft) !important;
+  color: var(--settings-green) !important;
+  font-size: 11px !important;
+  font-weight: 850 !important;
+}
+
+#settingsView .settings-team-table .user-management-identity strong,
+#settingsView .settings-team-table .settings-team-email,
+#settingsView .settings-team-table .settings-team-login,
+#settingsView .settings-team-table .role-checkbox-grid strong {
+  color: #24231f !important;
+  font-size: 14px !important;
+  font-weight: 720 !important;
+  line-height: 1.2 !important;
+}
+
+#settingsView .settings-team-table .settings-team-email {
+  color: #536158 !important;
+  text-decoration: underline !important;
+  text-underline-offset: 2px !important;
+}
+
+#settingsView .settings-team-table .role-checkbox-grid {
+  display: grid !important;
+  gap: 3px !important;
+}
+
+#settingsView .settings-team-table .role-checkbox-grid span {
+  color: #6f786f !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+}
+
+#settingsView .settings-team-table .user-management-status .badge {
+  min-height: 27px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  border: 1px solid #cfe5d5 !important;
+  border-radius: 7px !important;
+  padding: 0 10px !important;
+  background: #eaf7ee !important;
+  color: var(--settings-green) !important;
+  font-size: 13px !important;
+  font-weight: 780 !important;
+  text-transform: capitalize !important;
+}
+
+#settingsView .settings-team-table .user-management-status .badge::before {
+  content: "";
+  width: 7px !important;
+  height: 7px !important;
+  flex: 0 0 7px !important;
+  border-radius: 999px !important;
+  background: currentColor !important;
+}
+
+#settingsView .settings-team-table .user-management-status .badge.inactive,
+#settingsView .settings-team-table .user-management-status .badge.danger {
+  border-color: #f0cfc9 !important;
+  background: #fff1ee !important;
+  color: #c2412f !important;
+}
+
+#settingsView .settings-team-table .user-management-actions {
+  justify-content: flex-start !important;
+  gap: 8px !important;
+}
+
+#settingsView .settings-team-table .user-management-actions button {
+  min-height: 32px !important;
+  width: auto !important;
+  padding: 0 10px !important;
+  border: 1px solid #d8d5cf !important;
+  border-radius: 7px !important;
+  background: #f7faf7 !important;
+  color: #343832 !important;
+  font-size: 13px !important;
+  font-weight: 760 !important;
+  white-space: nowrap !important;
+}
+
+#settingsView .settings-team-table .user-management-actions button svg {
+  width: 15px !important;
+  height: 15px !important;
+}
+
+#settingsView .settings-team-table .user-delete-btn {
+  color: #8b2f2f !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-footer {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 14px !important;
+  margin-top: 12px !important;
+  color: #536158 !important;
+  font-size: 13px !important;
+}
+
+@media (max-width: 1180px) {
+  #settingsView:has(.user-management-list) .user-management-list.settings-team-table {
+    overflow-x: auto !important;
+  }
+
+  #settingsView:has(.user-management-list) .settings-team-table .user-management-header,
+  #settingsView:has(.user-management-list) .settings-team-table .user-management-card {
+    min-width: 1080px !important;
+  }
+}
+
+/* Team add-user drawer flow. */
+#settingsView .settings-team-summary {
+  position: relative !important;
+  z-index: 4 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 10px !important;
+  margin: -60px 0 22px !important;
+}
+
+#settingsView .settings-add-user-btn {
+  position: relative !important;
+  z-index: 5 !important;
+  min-height: 31px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  border: 1px solid var(--settings-green) !important;
+  border-radius: 8px !important;
+  padding: 0 13px !important;
+  color: #ffffff !important;
+  background: var(--settings-green) !important;
+  box-shadow: 0 8px 18px rgba(21, 128, 61, .18) !important;
+  font-size: 13px !important;
+  font-weight: 820 !important;
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}
+
+#settingsView .settings-add-user-btn svg {
+  width: 15px !important;
+  height: 15px !important;
+}
+
+#settingsView:has(.user-management-list) .user-management-list.settings-team-table {
+  margin-top: 0 !important;
+}
+
+.team-user-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: none;
+  justify-content: flex-end;
+  padding: 18px;
+  background: transparent;
+}
+
+.team-user-drawer.show {
+  display: flex;
+}
+
+.team-user-drawer-card {
+  position: relative;
+  z-index: 1;
+  width: min(460px, 100%);
+  height: 100%;
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border: 1px solid var(--settings-line, #d9d7d1);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 24px 60px rgba(15, 23, 18, .22);
+  padding: 24px;
+}
+
+.team-user-drawer-card .section-title {
+  padding-right: 42px;
+  margin-bottom: 24px;
+}
+
+.team-user-drawer-card .section-title h2 {
+  margin: 0 0 6px;
+  color: var(--settings-ink, #202020);
+  font-size: 22px;
+  line-height: 1.15;
+  font-weight: 820;
+}
+
+.team-user-drawer-card .section-title p {
+  color: #536158;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.team-user-drawer-close {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+}
+
+.team-user-drawer-form {
+  display: grid;
+  gap: 16px;
+}
+
+.team-user-drawer-form label {
+  display: grid;
+  gap: 8px;
+  color: #55524d;
+  font-size: 12px;
+  font-weight: 820;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+}
+
+.team-user-drawer-form input[type="text"],
+.team-user-drawer-form input[type="email"],
+.team-user-drawer-form label > input:not([type]) {
+  width: 100%;
+  height: 42px;
+  border: 1px solid var(--settings-line, #d9d7d1);
+  border-radius: 8px;
+  padding: 0 13px;
+  color: #24231f;
+  background: #ffffff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.team-drawer-role-list {
+  display: grid;
+  gap: 9px;
+  margin: 4px 0 2px;
+  padding: 16px;
+  border: 1px solid var(--settings-line, #d9d7d1);
+  border-radius: 10px;
+  background: #f7faf7;
+}
+
+.team-drawer-role-list legend {
+  padding: 0 6px;
+  color: #55524d;
+  font-size: 12px;
+  font-weight: 820;
+  letter-spacing: .035em;
+  text-transform: uppercase;
+}
+
+.team-drawer-role-option {
+  min-height: 34px;
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 10px !important;
+  color: #24231f !important;
+  font-size: 14px !important;
+  font-weight: 720 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.team-drawer-role-option input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--settings-green, #15803d);
+}
+
+.team-user-drawer-form .primary {
+  width: 100%;
+  min-height: 42px !important;
+  justify-content: center !important;
+  margin-top: 4px;
+  border-radius: 8px !important;
+}
+
+.team-user-invite-link {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #cfe5d5;
+  border-radius: 10px;
+  background: #f0fbf4;
+}
+
+.team-user-invite-link[hidden] {
+  display: none !important;
+}
+
+.team-user-invite-link textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  border: 1px solid var(--settings-line, #d9d7d1);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #1f2a22;
+  background: #ffffff;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.team-user-invite-link .secondary {
+  min-height: 38px;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+body.team-user-drawer-open .sidebar {
+  pointer-events: none;
+}
+
+body.team-user-drawer-open::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 54;
+  background: rgba(15, 23, 18, .42);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+body.team-user-drawer-open .team-user-drawer {
+  background: transparent;
+}
+
+@media (max-width: 760px) {
+  #settingsView .settings-team-summary {
+    justify-content: flex-start !important;
+    flex-wrap: wrap !important;
+    margin: 0 0 16px !important;
+  }
+
+  .team-user-drawer {
+    padding: 10px;
+  }
+
+  .team-user-drawer-card {
+    max-height: calc(100vh - 20px);
+    padding: 22px 18px;
   }
 }
 

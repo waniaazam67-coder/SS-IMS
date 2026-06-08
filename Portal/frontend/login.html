@@ -21,11 +21,14 @@
         </div>
       </div>
 
-      <div class="auth-form google-only-auth">
+      <form class="auth-form" id="emailLoginForm">
         <p id="errorMsg" style="color:red; font-size:13px; display:none;"></p>
         <p id="successMsg" style="color:green; font-size:13px; display:none;"></p>
+        <label>Email Address<input id="loginEmail" type="email" autocomplete="email" required></label>
+        <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+        <button class="primary auth-submit" type="submit">Login</button>
         <button class="secondary auth-google" type="button" onclick="handleGoogleLogin()">Sign in with Google</button>
-      </div>
+      </form>
 
       <p class="auth-switch">Don't have an account? <a href="signup.html">Sign up</a></p>
     </section>
@@ -34,7 +37,7 @@
   <script src="js/firebase-config.js?v=firebase-1"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+    import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
     const app = initializeApp(window.IMS_FIREBASE_CONFIG);
     const auth = getAuth(app);
@@ -99,6 +102,25 @@
         errorMsg.style.display = 'block';
       }
     }
+
+    document.getElementById('emailLoginForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const errorMsg = document.getElementById('errorMsg');
+      const successMsg = document.getElementById('successMsg');
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      errorMsg.style.display = 'none';
+      successMsg.style.display = 'none';
+      try {
+        const { user } = await signInWithEmailAndPassword(auth, email, password);
+        if (await rejectUnauthorizedUser(user)) return;
+        localStorage.setItem('firebase_token', await user.getIdToken());
+        goToPortal();
+      } catch (error) {
+        errorMsg.textContent = error.message;
+        errorMsg.style.display = 'block';
+      }
+    });
   </script>
 </body>
 </html>

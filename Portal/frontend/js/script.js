@@ -16,7 +16,7 @@ const AVAILABLE_USER_ROLES = [
 const VIEW_ROLE_ACCESS = {
   dashboard: ["admin", "inventory_manager"],
   requisition: ["admin", "requestor", "approver", "inventory_manager"],
-  requests: ["admin"],
+  requests: ["admin", "requestor", "approver", "inventory_manager"],
   approvals: ["admin", "approver"],
   inventory: ["admin", "inventory_manager"],
   procurement: ["admin", "inventory_manager"],
@@ -24,6 +24,7 @@ const VIEW_ROLE_ACCESS = {
   grn: ["admin", "inventory_manager"],
   po: ["admin", "inventory_manager"],
   vendors: ["admin", "inventory_manager"],
+  itemRequests: ["admin"],
   transport: ["admin", "inventory_manager"],
   settings: ["admin"],
   history: ["admin"]
@@ -82,6 +83,7 @@ let grnVendorFilter = "All";
 let poSearchTerm = "";
 let poVendorFilter = "All";
 let poStatusFilter = "All";
+let vendorSearchTerm = "";
 let inventoryPage = 1;
 let inventoryModuleTab = "items";
 let procurementModuleTab = "po";
@@ -105,14 +107,27 @@ const PROCUREMENT_TAB_LABELS = {
   po: "PO",
   vendors: "Vendors"
 };
+const REQUEST_VIEW_TABS = {
+  requisition: "requisition",
+  transport: "transport",
+  itemRequests: "items"
+};
+const REQUEST_TAB_LABELS = {
+  requisition: "Requisition Form",
+  transport: "Transport Requests",
+  items: "Item Requests"
+};
 const INVENTORY_PAGE_SIZE = 18;
 let requestsPage = 1;
 let requestsFilter = "All";
+let requestModuleTab = "requisition";
 const REQUESTS_PAGE_SIZE = 10;
 let settingsState = {};
 let userManagementUsers = [];
 let userManagementLoaded = false;
-let activeSettingsGroup = "user_management";
+let lastUserInviteLink = "";
+let activeEditPermissionsUserId = "";
+let activeSettingsGroup = "team";
 let activeNotificationTab = "direct";
 let unreadOnly = false;
 let notifications = [];
@@ -166,6 +181,21 @@ function canAccessView(view) {
   if (view === "history") return canAccessView(previousHistoryView || "dashboard");
   const allowedRoles = VIEW_ROLE_ACCESS[view] || [];
   return allowedRoles.some((role) => hasRole(role));
+}
+
+function canAccessRequestTab(tab) {
+  const view = tab === "items" ? "itemRequests" : tab;
+  return canAccessView(view);
+}
+
+function firstAccessibleRequestTab() {
+  return Object.keys(REQUEST_TAB_LABELS).find(canAccessRequestTab) || "requisition";
+}
+
+function normalizeRequestModuleTab() {
+  if (!REQUEST_TAB_LABELS[requestModuleTab] || !canAccessRequestTab(requestModuleTab)) {
+    requestModuleTab = firstAccessibleRequestTab();
+  }
 }
 
 function firstAccessibleView() {
@@ -333,6 +363,21 @@ const removedSettingsGroups = new Set([
   "notifications",
   "print_templates"
 ]);
+
+const LUMEN_SETTINGS_SECTIONS = [
+  {
+    group: "team",
+    title: "Team",
+    icon: "users",
+    description: "People with access to this workspace."
+  },
+  {
+    group: "roles",
+    title: "Roles",
+    icon: "shield-check",
+    description: "Define roles and permission sets for your workspace."
+  }
+];
 
 function tx(itemCode, location, type, quantity, sourceId, notes) {
   return {
@@ -742,7 +787,7 @@ async function loadUserManagement({ silent = false } = {}) {
 
 function renderSettingsTabs() {
   const tabs = document.getElementById("settingsTabs");
-  const visibleSections = settingsSections.filter((section) => !removedSettingsGroups.has(section.group) && (!section.adminOnly || isAdmin));
+  const visibleSections = LUMEN_SETTINGS_SECTIONS;
   if (!visibleSections.some((section) => section.group === activeSettingsGroup)) {
     activeSettingsGroup = visibleSections[0]?.group || "";
   }
@@ -756,42 +801,17 @@ function renderSettingsTabs() {
 function renderSettings() {
   if (!isAdmin) return;
   renderSettingsTabs();
-  const visibleSections = settingsSections.filter((item) => !removedSettingsGroups.has(item.group) && (!item.adminOnly || isAdmin));
+  const visibleSections = LUMEN_SETTINGS_SECTIONS;
   const section = visibleSections.find((item) => item.group === activeSettingsGroup) || visibleSections[0];
   if (!section) return;
-  if (section.group === "user_management") {
+  if (section.group === "team") {
     renderUserManagement(section);
     return;
   }
-  const values = settingsState[section.group] || {};
-  document.getElementById("settingsSectionTitle").textContent = section.title;
-  document.getElementById("settingsSectionDescription").textContent = section.description;
-  document.getElementById("settingsForm").innerHTML = `
-    <div class="settings-group-grid">
-      ${section.fields.map(([key, label, type, required, options]) => {
-        if (type === "heading") {
-          return `<div class="settings-subhead">${label}</div>`;
-        }
-        const value = escapeHtml(values[key] ?? "");
-        if (type === "checkbox") {
-          return `<label class="setting-check"><input type="checkbox" name="${key}" ${value === true || value === "true" ? "checked" : ""}>${label}</label>`;
-        }
-        if (type === "select") {
-          const listId = `settings-${section.group}-${key}-options`;
-          return `<label class="setting-field">${label}<input ${required ? "required" : ""} name="${key}" value="${value}" list="${listId}" placeholder="Select ${escapeHtml(label)}"><datalist id="${listId}">${(options || []).map((option) => `<option value="${escapeHtml(option)}"></option>`).join("")}</datalist></label>`;
-        }
-        const requiredAttr = required ? "required" : "";
-        const fieldClass = type === "textarea" ? "setting-field full" : "setting-field";
-        const input = type === "textarea"
-          ? `<textarea ${requiredAttr} name="${key}">${value}</textarea>`
-          : `<input ${requiredAttr} type="${type}" name="${key}" value="${value}">`;
-        return `<label class="${fieldClass}">${label}${input}</label>`;
-      }).join("")}
-    </div>
-    <div class="settings-actions"><button class="secondary" type="button" id="reloadSettingsBtn">Reload</button><button class="primary" type="submit"><i data-lucide="save"></i>Save Settings</button></div>
-  `;
-  renderSettingsTabs();
-  if (window.lucide) window.lucide.createIcons();
+  if (section.group === "roles") {
+    renderRolesManagement(section);
+    return;
+  }
 }
 
 function renderUserManagement(section) {
@@ -810,84 +830,274 @@ function renderUserManagement(section) {
   }
 
   form.innerHTML = `
-    <div class="user-management-page-head">
-      <div class="user-management-title-icon"><i data-lucide="shield-user"></i></div>
-      <div>
-        <h2>User Management</h2>
-        <p>Manage user account roles and access.</p>
+    <div class="settings-team-summary">
+      <div class="settings-team-count">
+        <i data-lucide="users"></i>
+        <strong>${userManagementUsers.length} ${userManagementUsers.length === 1 ? "user" : "users"}</strong>
       </div>
-      <button class="secondary user-export-btn" type="button"><i data-lucide="download"></i>Export Users</button>
+      <button class="primary settings-add-user-btn" id="openAddUserDrawerBtn" type="button"><i data-lucide="user-plus"></i>Add user</button>
     </div>
-    <div class="add-user-panel">
-      <div>
-        <strong>Add User</strong>
-        <span>Create a portal user and assign roles manually.</span>
-      </div>
-      <div class="add-user-fields">
-        <label>Full Name<input id="newUserName" name="newUserName" placeholder="Enter full name" required></label>
-        <label>Email Address<input id="newUserEmail" name="newUserEmail" type="email" placeholder="Enter email address" required></label>
-      </div>
-      <div class="role-checkbox-grid add-user-roles">
-        ${AVAILABLE_USER_ROLES.map((role) => `
-          <label class="role-pill ${role.key === "requestor" ? "selected" : ""}">
-            <input type="checkbox" name="newUserRoles" value="${role.key}" ${role.key === "requestor" ? "checked" : ""}>
-            <span>${role.label}</span>
-          </label>
-        `).join("")}
-      </div>
-      <button class="user-save-btn" id="addUserBtn" type="button"><i data-lucide="user-plus"></i>Add User</button>
-    </div>
-    <div class="user-management-list" role="table" aria-label="User Management">
-      <div class="user-management-toolbar">
-        <label>Show <select aria-label="Entries per page"><option>10</option></select> entries</label>
-        <label class="user-management-search">Search users<input type="search" placeholder="Search by name or email..." aria-label="Search users"></label>
-      </div>
+    <div class="user-management-list settings-team-table" role="table" aria-label="Team">
       <div class="user-management-header" role="row">
-        <span>User</span>
+        <span>Name</span>
+        <span>Email</span>
         <span>Status</span>
-        <span>Roles</span>
+        <span>Role / Permissions</span>
+        <span>Last login</span>
         <span>Actions</span>
       </div>
       ${userManagementUsers.map((user) => {
         const roles = user.roles || [];
         const isSelf = String(user.id) === String(currentUser.id);
         const isActive = user.status ? String(user.status).toLowerCase() !== "inactive" : user.isActive !== false;
+        const primaryRole = roles[0] || "requestor";
         return `
           <article class="user-management-card" data-user-id="${escapeHtml(user.id)}" role="row">
             <div class="user-management-person">
               <span class="user-management-avatar">${escapeHtml(initialsFor(user.name || user.email || "U"))}</span>
-              <span class="user-management-identity"><strong>${escapeHtml(user.name || "Unnamed user")}</strong><span>${escapeHtml(user.email || "")}</span></span>
+              <span class="user-management-identity"><strong>${escapeHtml(user.name || "Unnamed user")}</strong>${isSelf ? `<span class="settings-owner-pill">Owner</span>` : ""}</span>
             </div>
+            <div class="settings-team-email">${escapeHtml(user.email || "")}</div>
             <div class="user-management-status">
               ${statusBadge(user.status || (user.isActive ? "active" : "inactive"))}
             </div>
             <div class="role-checkbox-grid">
-              ${AVAILABLE_USER_ROLES.map((role) => `
-                <label class="role-pill ${roles.includes(role.key) ? "selected" : ""}">
-                  <input type="checkbox" name="roles-${escapeHtml(user.id)}" value="${role.key}" ${roles.includes(role.key) ? "checked" : ""}>
-                  <span>${role.label}</span>
-                </label>
-              `).join("")}
+              <strong>${escapeHtml(primaryRole.replace(/_/g, " "))}</strong>
+              <span>${roles.length > 1 ? `+${roles.length - 1} overrides` : "Standard access"}</span>
             </div>
+            <div class="settings-team-login">${escapeHtml(formatDate(user.lastLogin || user.last_login || user.updatedAt || user.updated_at || "")) || "-"}</div>
             <div class="user-management-actions">
-              <button class="user-save-btn save-user-roles" type="button" data-user-id="${escapeHtml(user.id)}"><i data-lucide="save"></i>Save</button>
+              <button class="user-save-btn edit-user-roles" type="button" data-user-id="${escapeHtml(user.id)}"><i data-lucide="sliders-horizontal"></i>Edit permissions</button>
               <button class="user-status-btn toggle-user-status" type="button" data-user-id="${escapeHtml(user.id)}" data-next-active="${isActive ? "false" : "true"}" ${isSelf ? "disabled" : ""}>${isActive ? "Deactivate" : "Activate"}</button>
               ${isSelf ? `<button class="user-delete-btn" type="button" disabled aria-label="Cannot delete your own account"><i data-lucide="trash-2"></i></button>` : `<button class="user-delete-btn delete-user" type="button" data-user-id="${escapeHtml(user.id)}" aria-label="Delete ${escapeHtml(user.name || user.email || "user")}"><i data-lucide="trash-2"></i></button>`}
+            </div>
+            <div class="settings-inline-role-editor">
+              <div class="role-checkbox-grid">
+                ${AVAILABLE_USER_ROLES.map((role) => `
+                  <label class="role-pill ${roles.includes(role.key) ? "selected" : ""}">
+                    <input type="checkbox" name="roles-${escapeHtml(user.id)}" value="${role.key}" ${roles.includes(role.key) ? "checked" : ""}>
+                    <span>${role.label}</span>
+                  </label>
+                `).join("")}
+              </div>
+              <button class="user-save-btn save-user-roles" type="button" data-user-id="${escapeHtml(user.id)}"><i data-lucide="save"></i>Save permissions</button>
             </div>
           </article>
         `;
       }).join("") || `<div class="user-management-empty">No users found.</div>`}
     </div>
     <div class="user-management-footer"><span>Showing 1 to ${userManagementUsers.length} of ${userManagementUsers.length} entries</span><button class="secondary" type="button" id="reloadUsersBtn">Reload Users</button></div>
+    <div class="team-user-drawer" id="teamUserDrawer" aria-hidden="true">
+      <section class="team-user-drawer-card" aria-label="Add user">
+        <button class="icon-btn team-user-drawer-close" type="button" id="closeAddUserDrawerBtn" aria-label="Close add user"><i data-lucide="x"></i></button>
+        <div class="section-title">
+          <h2>Add user</h2>
+          <p>Create a portal user and assign workspace roles.</p>
+        </div>
+        <div class="team-user-drawer-form">
+          <label>Full Name<input id="newUserName" name="newUserName" placeholder="Enter full name" required></label>
+          <label>Email Address<input id="newUserEmail" name="newUserEmail" type="email" placeholder="Enter email address" required></label>
+          <fieldset class="team-drawer-role-list">
+            <legend>Assign role</legend>
+            ${AVAILABLE_USER_ROLES.map((role) => `
+              <label class="team-drawer-role-option">
+                <input type="checkbox" name="newUserRoles" value="${role.key}" ${role.key === "requestor" ? "checked" : ""}>
+                <span>${role.label.replace(/_/g, " ")}</span>
+              </label>
+            `).join("")}
+          </fieldset>
+          <button class="primary" id="addUserInlineBtn" type="button"><i data-lucide="user-plus"></i>Add user</button>
+          <div class="team-user-invite-link" id="teamUserInviteLink" ${lastUserInviteLink ? "" : "hidden"}>
+            <label>Setup link<textarea id="newUserInviteLink" readonly>${escapeHtml(lastUserInviteLink)}</textarea></label>
+            <button class="secondary" id="copyUserInviteLinkBtn" type="button"><i data-lucide="copy"></i>Copy setup link</button>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div class="team-user-drawer" id="teamPermissionsDrawer" aria-hidden="true">
+      <section class="team-user-drawer-card" aria-label="Edit permissions">
+        <button class="icon-btn team-user-drawer-close" type="button" id="closePermissionsDrawerBtn" aria-label="Close permissions"><i data-lucide="x"></i></button>
+        <div class="section-title">
+          <h2>Edit permissions</h2>
+          <p id="permissionsDrawerSubtitle">Update workspace roles for this user.</p>
+        </div>
+        <div class="team-user-drawer-form">
+          <fieldset class="team-drawer-role-list">
+            <legend>Assigned roles</legend>
+            ${AVAILABLE_USER_ROLES.map((role) => `
+              <label class="team-drawer-role-option">
+                <input type="checkbox" name="editUserRoles" value="${role.key}">
+                <span>${role.label.replace(/_/g, " ")}</span>
+              </label>
+            `).join("")}
+          </fieldset>
+          <button class="primary" id="savePermissionsDrawerBtn" type="button"><i data-lucide="save"></i>Save permissions</button>
+        </div>
+      </section>
+    </div>
+  `;
+  renderSettingsTabs();
+  bindTeamDrawerActions(form);
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function renderRolesManagement(section) {
+  if (!userManagementLoaded) {
+    document.getElementById("settingsSectionTitle").textContent = section.title;
+    document.getElementById("settingsSectionDescription").textContent = section.description;
+    document.getElementById("settingsForm").innerHTML = `
+      <div class="user-management-empty">Loading roles...</div>
+      <div class="settings-actions"><button class="secondary" type="button" id="reloadUsersBtn">Reload Roles</button></div>
+    `;
+    renderSettingsTabs();
+    loadUserManagement({ silent: true });
+    return;
+  }
+
+  const roleDescriptions = {
+    admin: "Full access to all enabled modules.",
+    requestor: "Submit requests and track personal request history.",
+    approver: "Review assigned requests and record approval decisions.",
+    inventory_manager: "Manage inventory, procurement, GRN, and stock issue flows."
+  };
+  const roleIcons = {
+    admin: "shield",
+    requestor: "send",
+    approver: "list-checks",
+    inventory_manager: "package"
+  };
+  document.getElementById("settingsSectionTitle").textContent = section.title;
+  document.getElementById("settingsSectionDescription").textContent = section.description;
+  document.getElementById("settingsForm").innerHTML = `
+    <div class="settings-roles-head">
+      <span>${AVAILABLE_USER_ROLES.length} roles</span>
+      <button class="primary" type="button"><i data-lucide="plus"></i>New role</button>
+    </div>
+    <div class="settings-role-list">
+      ${AVAILABLE_USER_ROLES.map((role) => {
+        const memberCount = userManagementUsers.filter((user) => (user.roles || []).includes(role.key)).length;
+        const permissionCount = role.key === "admin" ? "All" : role.key === "inventory_manager" ? "Procurement + inventory" : role.key === "approver" ? "Approvals" : "Requests";
+        return `
+          <article class="settings-role-card settings-role-${escapeHtml(role.key)}">
+            <div class="settings-role-icon"><i data-lucide="${roleIcons[role.key] || "shield"}"></i></div>
+            <div class="settings-role-copy">
+              <h3>${escapeHtml(role.label.replace(/_/g, " "))}<span>System</span></h3>
+              <p>${escapeHtml(roleDescriptions[role.key] || "Workspace access role.")}</p>
+              <small>${escapeHtml(permissionCount)} permissions · ${memberCount} ${memberCount === 1 ? "member" : "members"}</small>
+            </div>
+            <span class="settings-role-member-pill">${memberCount} ${memberCount === 1 ? "member" : "members"}</span>
+            <button class="secondary" type="button"><i data-lucide="eye"></i>View</button>
+          </article>
+        `;
+      }).join("")}
+    </div>
   `;
   renderSettingsTabs();
   if (window.lucide) window.lucide.createIcons();
 }
 
-async function saveUserRoles(userId) {
+function openAddUserDrawer() {
+  const drawer = document.getElementById("teamUserDrawer");
+  if (!drawer) return;
+  if (drawer.parentElement !== document.body) document.body.appendChild(drawer);
+  bindTeamDrawerActions(drawer);
+  drawer.classList.add("show");
+  drawer.setAttribute("aria-hidden", "false");
+  document.body.classList.add("team-user-drawer-open");
+  document.getElementById("newUserName")?.focus();
+}
+
+function closeAddUserDrawer() {
+  const drawer = document.getElementById("teamUserDrawer");
+  if (!drawer) return;
+  drawer.classList.remove("show");
+  drawer.setAttribute("aria-hidden", "true");
+  if (!document.querySelector(".team-user-drawer.show")) {
+    document.body.classList.remove("team-user-drawer-open");
+  }
+}
+
+function openPermissionsDrawer(userId) {
+  const drawer = document.getElementById("teamPermissionsDrawer");
+  const user = userManagementUsers.find((item) => String(item.id) === String(userId));
+  if (!drawer || !user) return showToast("User not found.", "error");
+  if (drawer.parentElement !== document.body) document.body.appendChild(drawer);
+  activeEditPermissionsUserId = String(user.id);
+  const roles = (user.roles || []).map(normalizeRoleKey);
+  const subtitle = document.getElementById("permissionsDrawerSubtitle");
+  if (subtitle) subtitle.textContent = `${user.name || "User"} - ${user.email || ""}`;
+  drawer.querySelectorAll("input[name='editUserRoles']").forEach((input) => {
+    input.checked = roles.includes(normalizeRoleKey(input.value));
+  });
+  drawer.classList.add("show");
+  drawer.setAttribute("aria-hidden", "false");
+  document.body.classList.add("team-user-drawer-open");
+}
+
+function closePermissionsDrawer() {
+  const drawer = document.getElementById("teamPermissionsDrawer");
+  if (!drawer) return;
+  drawer.classList.remove("show");
+  drawer.setAttribute("aria-hidden", "true");
+  activeEditPermissionsUserId = "";
+  if (!document.querySelector(".team-user-drawer.show")) {
+    document.body.classList.remove("team-user-drawer-open");
+  }
+}
+
+function bindTeamDrawerActions(scope = document) {
+  const addButton = scope.querySelector?.("#addUserInlineBtn");
+  const copyButton = scope.querySelector?.("#copyUserInviteLinkBtn");
+  const savePermissionsButton = scope.querySelector?.("#savePermissionsDrawerBtn");
+  const closeAddButton = scope.querySelector?.("#closeAddUserDrawerBtn");
+  const closePermissionsButton = scope.querySelector?.("#closePermissionsDrawerBtn");
+
+  if (addButton) addButton.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    addUserFromManagement();
+  };
+  if (copyButton) copyButton.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    copyUserInviteLink();
+  };
+  if (savePermissionsButton) savePermissionsButton.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    savePermissionsFromDrawer();
+  };
+  if (closeAddButton) closeAddButton.onclick = closeAddUserDrawer;
+  if (closePermissionsButton) closePermissionsButton.onclick = closePermissionsDrawer;
+}
+
+function setUserInviteLink(inviteLink = "") {
+  lastUserInviteLink = String(inviteLink || "");
+  const wrap = document.getElementById("teamUserInviteLink");
+  const field = document.getElementById("newUserInviteLink");
+  if (field) field.value = lastUserInviteLink;
+  if (wrap) wrap.hidden = !lastUserInviteLink;
+}
+
+async function copyUserInviteLink() {
+  const link = document.getElementById("newUserInviteLink")?.value || lastUserInviteLink;
+  if (!link) return showToast("No setup link to copy.", "error");
+  try {
+    await navigator.clipboard.writeText(link);
+    showToast("Setup link copied.");
+  } catch (error) {
+    const field = document.getElementById("newUserInviteLink");
+    field?.focus();
+    field?.select();
+    showToast("Select and copy the setup link.", "error");
+  }
+}
+
+async function saveUserRoles(userId, rolesOverride = null) {
   if (!isAdmin) return showToast("Admin access is required.", "error");
-  const checkedRoles = Array.from(document.querySelectorAll(`input[name="roles-${escapeCssIdentifier(userId)}"]:checked`))
-    .map((input) => input.value);
+  const checkedRoles = Array.isArray(rolesOverride)
+    ? rolesOverride
+    : Array.from(document.querySelectorAll(`input[name="roles-${escapeCssIdentifier(userId)}"]:checked`)).map((input) => input.value);
   if (!checkedRoles.length) return showToast("Select at least one role.", "error");
   if (String(userId) === String(currentUser.id) && !checkedRoles.includes("admin")) {
     return showToast("Keep admin selected for your own account.", "error");
@@ -902,6 +1112,7 @@ async function saveUserRoles(userId) {
     userManagementUsers = userManagementUsers.map((user) => String(user.id) === String(userId)
       ? { ...user, ...updatedUser, roles: (updatedUser.roles || []).map(normalizeRoleKey) }
       : user);
+    closePermissionsDrawer();
     renderSettings();
     showToast("User roles updated.");
   } catch (error) {
@@ -926,6 +1137,7 @@ async function addUserFromManagement() {
       body: JSON.stringify({ name, email, roles })
     });
     const createdUser = data.user;
+    const inviteLink = createdUser?.inviteLink || data.inviteLink || "";
     if (createdUser) {
       userManagementUsers = [
         { ...createdUser, roles: (createdUser.roles || []).map(normalizeRoleKey) },
@@ -934,8 +1146,19 @@ async function addUserFromManagement() {
     } else {
       await loadUserManagement({ silent: true });
     }
+    nameField.value = "";
+    emailField.value = "";
     renderSettings();
-    showToast("User added.");
+    if (inviteLink) {
+      setUserInviteLink(inviteLink);
+      openAddUserDrawer();
+      await copyUserInviteLink();
+      showToast("User added. Setup link copied.");
+    } else {
+      setUserInviteLink("");
+      openAddUserDrawer();
+      showToast("User added, but no setup link was returned.", "error");
+    }
   } catch (error) {
     showToast(error.message || "Unable to add user.", "error");
   }
@@ -1000,6 +1223,7 @@ async function confirmDeleteUser() {
 async function saveActiveSettings(event) {
   event.preventDefault();
   if (!isAdmin) return showToast("Admin access is required.", "error");
+  if (activeSettingsGroup === "team" || activeSettingsGroup === "roles") return;
   const section = settingsSections.find((item) => item.group === activeSettingsGroup && !removedSettingsGroups.has(item.group));
   if (!section) return showToast("This settings section is no longer available.", "error");
   const form = event.currentTarget;
@@ -1065,6 +1289,12 @@ async function loadBusinessData({ silent = false } = {}) {
   if (!silent) showToast("IMS data refreshed from database.");
   businessDataError = failed.length ? `Unable to load ${failed.join(", ")} data.` : "";
   businessDataLoading = false;
+}
+
+function savePermissionsFromDrawer() {
+  if (!activeEditPermissionsUserId) return showToast("Choose a user first.", "error");
+  const roles = Array.from(document.querySelectorAll("#teamPermissionsDrawer input[name='editUserRoles']:checked")).map((input) => input.value);
+  saveUserRoles(activeEditPermissionsUserId, roles);
 }
 
 function businessDataSignature() {
@@ -1686,6 +1916,7 @@ function syncSelectOptions(scope = document) {
     grnVendorFilter = "All";
     if (grnVendorSelect) grnVendorSelect.value = "";
   }
+  syncVendorFilterClearButton("grn");
   scope.querySelectorAll("[data-items]").forEach((field) => {
     const selected = field.value;
     const categorySourceId = field.dataset.categorySource;
@@ -1818,6 +2049,24 @@ function closePoDrawer() {
   document.body.classList.remove("po-drawer-open");
 }
 
+function openVendorDrawer() {
+  const drawer = document.getElementById("vendorDrawer");
+  if (!drawer) return;
+  if (drawer.parentElement !== document.body) document.body.appendChild(drawer);
+  drawer.classList.add("show");
+  drawer.setAttribute("aria-hidden", "false");
+  document.body.classList.add("vendor-drawer-open");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function closeVendorDrawer() {
+  const drawer = document.getElementById("vendorDrawer");
+  if (!drawer) return;
+  drawer.classList.remove("show");
+  drawer.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("vendor-drawer-open");
+}
+
 function mountInventorySubsections() {
   [
     ["issueView", "inventoryIssuePanel"],
@@ -1836,6 +2085,20 @@ function mountProcurementSubsections() {
   [
     ["poView", "procurementPoPanel"],
     ["vendorsView", "procurementVendorsPanel"]
+  ].forEach(([sourceId, targetId]) => {
+    const source = document.getElementById(sourceId);
+    const target = document.getElementById(targetId);
+    if (!source || !target || target.childElementCount) return;
+    while (source.firstElementChild) {
+      target.appendChild(source.firstElementChild);
+    }
+  });
+}
+
+function mountRequestSubsections() {
+  [
+    ["requisitionView", "requestsRequisitionPanel"],
+    ["transportView", "requestsTransportPanel"]
   ].forEach(([sourceId, targetId]) => {
     const source = document.getElementById(sourceId);
     const target = document.getElementById(targetId);
@@ -1869,6 +2132,8 @@ function updateTopbarBreadcrumb(view) {
     ? ["Inventory", INVENTORY_TAB_LABELS[inventoryModuleTab] || "Items"]
     : view === "procurement"
       ? ["Procurement", PROCUREMENT_TAB_LABELS[procurementModuleTab] || "PO"]
+    : view === "requests"
+      ? ["Requests", REQUEST_TAB_LABELS[requestModuleTab] || "Requisition Form"]
     : breadcrumbByView[view] || ["Dashboard"];
   breadcrumb.innerHTML = `<span>Workspace</span>${parts.map((part, index) => `
     <i data-lucide="chevron-right"></i>
@@ -1886,8 +2151,26 @@ function setView(view) {
     procurementModuleTab = PROCUREMENT_VIEW_TABS[view];
     view = "procurement";
   }
+  if (REQUEST_VIEW_TABS[view]) {
+    requestModuleTab = REQUEST_VIEW_TABS[view];
+    view = "requests";
+  }
+  if (view === "requests") normalizeRequestModuleTab();
   if (!canAccessView(view)) {
     view = firstAccessibleView();
+    if (INVENTORY_VIEW_TABS[view]) {
+      inventoryModuleTab = INVENTORY_VIEW_TABS[view];
+      view = "inventory";
+    }
+    if (PROCUREMENT_VIEW_TABS[view]) {
+      procurementModuleTab = PROCUREMENT_VIEW_TABS[view];
+      view = "procurement";
+    }
+    if (REQUEST_VIEW_TABS[view]) {
+      requestModuleTab = REQUEST_VIEW_TABS[view];
+      view = "requests";
+    }
+    if (view === "requests") normalizeRequestModuleTab();
   }
   if (!document.getElementById(`${view}View`)) view = firstAccessibleView();
   document.querySelector(".app-shell")?.setAttribute("data-active-view", view);
@@ -2710,6 +2993,32 @@ function renderProcurement() {
     const panelTab = panel.id === "procurementVendorsPanel" ? "vendors" : "po";
     panel.classList.toggle("active", panelTab === procurementModuleTab);
   });
+  document.querySelectorAll("[data-procurement-po-only]").forEach((element) => {
+    element.hidden = procurementModuleTab !== "po";
+  });
+  document.querySelectorAll("[data-procurement-vendors-only]").forEach((element) => {
+    element.hidden = procurementModuleTab !== "vendors";
+  });
+}
+
+function renderRequestSection() {
+  normalizeRequestModuleTab();
+  const requestCount = state.requests.reduce((sum, request) => sum + (request.items?.length || 0), 0);
+  setText("requestRequisitionTabCount", requestLineRows(state.requests.filter(requesterMatchesCurrentUser)).length);
+  setText("requestTransportTabCount", state.transportRequests.length);
+  setText("requestItemsTabCount", requestCount);
+  document.querySelectorAll("#requestsView [data-request-tab]").forEach((tab) => {
+    tab.hidden = !canAccessRequestTab(tab.dataset.requestTab);
+    tab.classList.toggle("active", tab.dataset.requestTab === requestModuleTab);
+  });
+  document.querySelectorAll("#requestsView .request-panel").forEach((panel) => {
+    const panelTab = panel.id === "requestsTransportPanel"
+      ? "transport"
+      : panel.id === "requestsItemsPanel"
+        ? "items"
+        : "requisition";
+    panel.classList.toggle("active", panelTab === requestModuleTab);
+  });
 }
 
 
@@ -2826,6 +3135,29 @@ function renderPoVendorFilter() {
   select.innerHTML = `<option value="">All vendors</option>${vendors.map((vendor) => `<option value="${escapeHtml(vendor)}">${escapeHtml(vendor)}</option>`).join("")}`;
   select.value = vendors.includes(selected) ? selected : "";
   poVendorFilter = select.value || "All";
+  syncVendorFilterClearButton("po");
+}
+
+function syncVendorFilterClearButton(type) {
+  const isPo = type === "po";
+  const button = document.getElementById(isPo ? "clearPoVendorFilter" : "clearGrnVendorFilter");
+  const filterValue = isPo ? poVendorFilter : grnVendorFilter;
+  if (button) button.disabled = filterValue === "All";
+}
+
+function clearVendorFilter(type) {
+  const isPo = type === "po";
+  const select = document.getElementById(isPo ? "poVendorFilter" : "grnVendorFilter");
+  if (isPo) {
+    poVendorFilter = "All";
+    if (select) select.value = "";
+    renderPO();
+    return;
+  }
+  grnVendorFilter = "All";
+  if (select) select.value = "";
+  renderGRN();
+  syncVendorFilterClearButton("grn");
 }
 
 function renderPoRecordRow(po) {
@@ -3688,7 +4020,13 @@ function renderVendors() {
     setTableContent("vendorsTable", errorStateRow(8, vendorsError));
     return;
   }
-  setTableContent("vendorsTable", state.vendors.map((vendor) => `
+  const searchTerm = vendorSearchTerm.trim().toLowerCase();
+  const rows = state.vendors.filter((vendor) => {
+    if (!searchTerm) return true;
+    return [vendor.name, vendor.phone, vendor.contact, vendor.bankName, vendor.accountTitle, vendor.accountNo, vendor.address]
+      .some((value) => String(value || "").toLowerCase().includes(searchTerm));
+  });
+  setTableContent("vendorsTable", rows.map((vendor) => `
     <tr>
       <td>${escapeHtml(vendor.name)}</td>
       <td>${escapeHtml(vendor.phone || "")}</td>
@@ -3699,7 +4037,7 @@ function renderVendors() {
       <td>${escapeHtml(vendor.address || "")}</td>
       <td><button class="tiny" type="button" onclick="editVendor('${escapeHtml(vendor.id)}')">Edit</button></td>
     </tr>
-  `).join("") || emptyStateRow(8, "No vendors added yet", "Vendor records used by purchase orders will appear here."));
+  `).join("") || emptyStateRow(8, searchTerm ? "No matching vendors" : "No vendors added yet", searchTerm ? "Try another name, phone, contact, bank, account, or address." : "Vendor records used by purchase orders will appear here."));
 }
 
 function resetVendorForm() {
@@ -3707,6 +4045,8 @@ function resetVendorForm() {
   form.reset();
   form.elements.id.value = "";
   document.getElementById("saveVendorButton").innerHTML = `<i data-lucide="building-2"></i>Add Vendor`;
+  const title = document.getElementById("vendorDrawerTitle");
+  if (title) title.textContent = "Add Vendor";
   document.getElementById("cancelVendorEdit").hidden = true;
   if (window.lucide) window.lucide.createIcons();
 }
@@ -3724,8 +4064,10 @@ window.editVendor = function (vendorId) {
   form.elements.accountNo.value = vendor.accountNo || "";
   form.elements.address.value = vendor.address || "";
   document.getElementById("saveVendorButton").innerHTML = `<i data-lucide="save"></i>Update Vendor`;
+  const title = document.getElementById("vendorDrawerTitle");
+  if (title) title.textContent = "Edit Vendor";
   document.getElementById("cancelVendorEdit").hidden = false;
-  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  openVendorDrawer();
   if (window.lucide) window.lucide.createIcons();
 };
 
@@ -4119,6 +4461,7 @@ function render() {
   renderRequests();
   renderRequisition();
   renderInventory();
+  renderRequestSection();
   renderProcurement();
   renderIssue();
   renderPO();
@@ -4421,6 +4764,7 @@ document.querySelector(".sidebar")?.addEventListener("click", (event) => {
   const item = event.target.closest("[data-view]");
   if (!item) return;
   if (item.dataset.view === "requests") {
+    requestModuleTab = "requisition";
     requestsFilter = "All";
     requestsPage = 1;
   }
@@ -4578,6 +4922,8 @@ document.addEventListener("keydown", (event) => {
     closePoCancelModal();
     closeDeleteUserModal();
     closeApprovalDetailModal();
+    closeAddUserDrawer();
+    closePermissionsDrawer();
   }
 });
 
@@ -4600,7 +4946,7 @@ document.getElementById("settingsTabs").addEventListener("click", (event) => {
   if (!button) return;
   activeSettingsGroup = button.dataset.settingsGroup;
   renderSettings();
-  if (activeSettingsGroup === "user_management") loadUserManagement({ silent: true });
+  if (activeSettingsGroup === "team" || activeSettingsGroup === "roles") loadUserManagement({ silent: true });
 });
 
 document.getElementById("settingsForm").addEventListener("submit", saveActiveSettings);
@@ -4608,13 +4954,33 @@ document.getElementById("settingsForm").addEventListener("submit", saveActiveSet
 document.getElementById("settingsForm").addEventListener("click", (event) => {
   if (event.target.id === "reloadSettingsBtn") loadSettings({ silent: false });
   if (event.target.id === "reloadUsersBtn") loadUserManagement({ silent: false });
-  if (event.target.id === "addUserBtn") addUserFromManagement();
+  if (event.target.closest("#openAddUserDrawerBtn")) openAddUserDrawer();
+  if (event.target.closest("#closeAddUserDrawerBtn")) closeAddUserDrawer();
+  if (event.target.closest("#closePermissionsDrawerBtn")) closePermissionsDrawer();
+  if (event.target.id === "teamUserDrawer") closeAddUserDrawer();
+  if (event.target.id === "teamPermissionsDrawer") closePermissionsDrawer();
+  if (event.target.closest("#addUserInlineBtn")) addUserFromManagement();
+  if (event.target.closest("#copyUserInviteLinkBtn")) copyUserInviteLink();
+  if (event.target.closest("#savePermissionsDrawerBtn")) savePermissionsFromDrawer();
+  const editButton = event.target.closest(".edit-user-roles");
+  if (editButton) openPermissionsDrawer(editButton.dataset.userId);
   const saveButton = event.target.closest(".save-user-roles");
   if (saveButton) saveUserRoles(saveButton.dataset.userId);
   const statusButton = event.target.closest(".toggle-user-status");
   if (statusButton) toggleUserStatus(statusButton.dataset.userId, statusButton.dataset.nextActive === "true");
   const deleteButton = event.target.closest(".delete-user");
   if (deleteButton) deleteUser(deleteButton.dataset.userId);
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("#openAddUserDrawerBtn")) openAddUserDrawer();
+  if (event.target.closest("#closeAddUserDrawerBtn")) closeAddUserDrawer();
+  if (event.target.closest("#closePermissionsDrawerBtn")) closePermissionsDrawer();
+  if (event.target.closest("#addUserInlineBtn")) addUserFromManagement();
+  if (event.target.closest("#copyUserInviteLinkBtn")) copyUserInviteLink();
+  if (event.target.closest("#savePermissionsDrawerBtn")) savePermissionsFromDrawer();
+  const editButton = event.target.closest(".edit-user-roles");
+  if (editButton) openPermissionsDrawer(editButton.dataset.userId);
 });
 
 document.getElementById("settingsForm").addEventListener("change", (event) => {
@@ -4654,6 +5020,18 @@ document.getElementById("procurementModuleTabs")?.addEventListener("click", (eve
   procurementModuleTab = button.dataset.procurementTab;
   renderProcurement();
   updateTopbarBreadcrumb("procurement");
+});
+
+document.getElementById("requestModuleTabs")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-request-tab]");
+  if (!button) return;
+  requestModuleTab = button.dataset.requestTab;
+  if (requestModuleTab === "items") {
+    requestsFilter = "All";
+    requestsPage = 1;
+  }
+  renderRequestSection();
+  updateTopbarBreadcrumb("requests");
 });
 
 document.getElementById("inventoryCards")?.addEventListener("click", (event) => {
@@ -4697,7 +5075,12 @@ document.getElementById("grnSearchInput")?.addEventListener("input", (event) => 
 
 document.getElementById("grnVendorFilter")?.addEventListener("change", (event) => {
   grnVendorFilter = event.target.value || "All";
+  syncVendorFilterClearButton("grn");
   renderGRN();
+});
+
+document.getElementById("clearGrnVendorFilter")?.addEventListener("click", () => {
+  clearVendorFilter("grn");
 });
 
 document.getElementById("poSearchInput")?.addEventListener("input", (event) => {
@@ -4705,9 +5088,18 @@ document.getElementById("poSearchInput")?.addEventListener("input", (event) => {
   renderPO();
 });
 
+document.getElementById("vendorSearchInput")?.addEventListener("input", (event) => {
+  vendorSearchTerm = event.target.value || "";
+  renderVendors();
+});
+
 document.getElementById("poVendorFilter")?.addEventListener("change", (event) => {
   poVendorFilter = event.target.value || "All";
   renderPO();
+});
+
+document.getElementById("clearPoVendorFilter")?.addEventListener("click", () => {
+  clearVendorFilter("po");
 });
 
 document.getElementById("poStatusFilters")?.addEventListener("click", (event) => {
@@ -4755,6 +5147,11 @@ document.getElementById("openManualStockIssue")?.addEventListener("click", openM
 document.getElementById("closeManualStockIssue")?.addEventListener("click", closeManualStockIssue);
 document.getElementById("openPoDrawer")?.addEventListener("click", openPoDrawer);
 document.getElementById("closePoDrawer")?.addEventListener("click", closePoDrawer);
+document.getElementById("openVendorDrawer")?.addEventListener("click", () => {
+  resetVendorForm();
+  openVendorDrawer();
+});
+document.getElementById("closeVendorDrawer")?.addEventListener("click", closeVendorDrawer);
 document.getElementById("closeItemModal").addEventListener("click", closeItemModal);
 document.getElementById("cancelItemModal").addEventListener("click", closeItemModal);
 document.getElementById("itemModal").addEventListener("click", (event) => {
@@ -4766,9 +5163,13 @@ document.getElementById("manualStockIssueDrawer")?.addEventListener("click", (ev
 document.getElementById("poDrawer")?.addEventListener("click", (event) => {
   if (event.target.id === "poDrawer") closePoDrawer();
 });
+document.getElementById("vendorDrawer")?.addEventListener("click", (event) => {
+  if (event.target.id === "vendorDrawer") closeVendorDrawer();
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeManualStockIssue();
   if (event.key === "Escape") closePoDrawer();
+  if (event.key === "Escape") closeVendorDrawer();
 });
 
 document.getElementById("closeInventoryDetail")?.addEventListener("click", closeInventoryItemDetail);
@@ -5095,13 +5496,17 @@ document.getElementById("vendorForm").addEventListener("submit", async (event) =
     await loadBusinessData({ silent: true });
     state.vendors = state.vendors.map(normalizeVendorRecord);
     render();
+    closeVendorDrawer();
     showToast(vendorId ? "Vendor updated." : "Vendor added.");
   } catch (error) {
     showToast(error.message, "error");
   }
 });
 
-document.getElementById("cancelVendorEdit").addEventListener("click", resetVendorForm);
+document.getElementById("cancelVendorEdit").addEventListener("click", () => {
+  resetVendorForm();
+  closeVendorDrawer();
+});
 
 const GLOBAL_SEARCH_ITEMS = [
   { group: "Recent", title: "Inventory", subtitle: "Stock overview", view: "inventory", icon: "boxes", terms: "items stock warehouse locations" },
@@ -5210,6 +5615,7 @@ async function initializePortal() {
   if (!session) return;
   mountInventorySubsections();
   mountProcurementSubsections();
+  mountRequestSubsections();
   enableDatalistRefocusOptions();
   applyAdminVisibility();
   addRequestLine();
