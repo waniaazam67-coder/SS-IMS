@@ -36,6 +36,24 @@ router.get("/roles", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), a
   }
 });
 
+router.post("/roles", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), async (req, res, next) => {
+  try {
+    const role = await authService.createRole(req.body, req.auth.user.id);
+    ok(res, { role, message: "Role created." }, 201);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/roles/:role", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), async (req, res, next) => {
+  try {
+    await authService.deleteRole(req.params.role);
+    ok(res, { message: "Role deleted." });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/users/:userId/roles", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), async (req, res, next) => {
   try {
     await authService.assignRoleToUser(Number(req.params.userId), req.body.role, req.auth.user.id);

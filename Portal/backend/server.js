@@ -69,8 +69,17 @@ async function startServer() {
   try {
     await initializeDatabase();
     await testDatabaseConnection();
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`IMS server running at http://localhost:${PORT}`);
+    });
+    server.on("error", (error) => {
+      if (error?.code === "EADDRINUSE") {
+        console.error(`Port ${PORT} is already in use. Stop the existing IMS backend before starting a new one.`);
+        process.exit(1);
+      }
+      console.error("Failed to start IMS server.");
+      console.error(error.message);
+      process.exit(1);
     });
   } catch (error) {
     console.error("Failed to initialize IMS database connection.");

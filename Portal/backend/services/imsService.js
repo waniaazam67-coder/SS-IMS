@@ -376,21 +376,28 @@ async function deleteItem(itemCode, userId) {
 }
 
 async function listVendors() {
+  await ensureVendorNtnColumn(pool);
   const [rows] = await pool.execute(
     `SELECT id, CONCAT('VEN-', LPAD(id, 3, '0')) AS vendorId, name, phone, contact, email, address,
-            bank_name AS bankName, account_title AS accountTitle, account_no AS accountNo
+            bank_name AS bankName, account_title AS accountTitle, account_no AS accountNo,
+            COALESCE(ntn, '') AS ntn,
+            COALESCE(notes_remarks, '') AS notesRemarks
      FROM vendors
      WHERE deleted_at IS NULL
      ORDER BY name`
   );
-  return rows;
+  return rows.map((row) => ({
+    ...row,
+    ntn: String(row.ntn || "").trim() || extractVendorNtn(row.notesRemarks)
+  }));
 }
 
 async function createVendor(input, userId) {
   const vendor = vendorPayload(input);
+  await ensureVendorNtnColumn(pool);
   const [result] = await pool.execute(
-    `INSERT INTO vendors (name, phone, contact, address, bank_name, account_title, account_no, created_by, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO vendors (name, phone, contact, address, bank_name, account_title, account_no, ntn, created_by, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       required(vendor.name, "Vendor name"),
       vendor.phone || null,
@@ -399,6 +406,7 @@ async function createVendor(input, userId) {
       vendor.bankName || null,
       vendor.accountTitle || null,
       vendor.accountNo || null,
+      vendor.ntn || null,
       userId,
       userId
     ]
@@ -409,9 +417,10 @@ async function createVendor(input, userId) {
 
 async function updateVendor(vendorId, input, userId) {
   const vendor = vendorPayload(input);
+  await ensureVendorNtnColumn(pool);
   const [result] = await pool.execute(
     `UPDATE vendors
-        SET name = ?, phone = ?, contact = ?, address = ?, bank_name = ?, account_title = ?, account_no = ?, updated_by = ?
+        SET name = ?, phone = ?, contact = ?, address = ?, bank_name = ?, account_title = ?, account_no = ?, ntn = ?, updated_by = ?
       WHERE id = ? AND deleted_at IS NULL`,
     [
       required(vendor.name, "Vendor name"),
@@ -421,6 +430,7 @@ async function updateVendor(vendorId, input, userId) {
       vendor.bankName || null,
       vendor.accountTitle || null,
       vendor.accountNo || null,
+      vendor.ntn || null,
       userId,
       positive(vendorId, "Vendor")
     ]
@@ -430,16 +440,73 @@ async function updateVendor(vendorId, input, userId) {
   return { id: Number(vendorId), vendorId: `VEN-${String(vendorId).padStart(3, "0")}`, ...vendor };
 }
 
+async function deleteVendor(vendorId, userId) {
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const cleanVendorId = positive(vendorId, "Vendor");
+    const [rows] = await connection.execute(
+      `SELECT id, name
+         FROM vendors
+        WHERE id = ? AND deleted_at IS NULL
+        LIMIT 1`,
+      [cleanVendorId]
+    );
+    const vendor = rows[0];
+    if (!vendor) throwBadRequest("Vendor not found.");
+    await connection.execute(
+      `UPDATE vendors
+          SET deleted_at = CURRENT_TIMESTAMP, updated_by = ?
+        WHERE id = ?`,
+      [userId || null, cleanVendorId]
+    );
+    await audit("vendors", cleanVendorId, "SOFT_DELETE", userId, { vendorId: cleanVendorId, vendorName: vendor.name }, connection);
+    await connection.commit();
+    return { id: cleanVendorId, vendorId: `VEN-${String(cleanVendorId).padStart(3, "0")}`, name: vendor.name, deleted: true };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 function vendorPayload(input = {}) {
   return {
     name: String(input.name || "").trim(),
     phone: String(input.phone || "").trim(),
     contact: String(input.contact || "").trim(),
     address: String(input.address || "").trim(),
+    ntn: String(input.ntn || "").trim(),
     bankName: String(input.bankName || input.bank_name || "").trim(),
     accountTitle: String(input.accountTitle || input.account_title || "").trim(),
     accountNo: String(input.accountNo || input.account_no || "").trim()
   };
+}
+
+function extractVendorNtn(notes) {
+  const match = String(notes || "").match(/(?:^|\n)\s*NTN:\s*([^\n]+)/i);
+  return match ? match[1].trim() : "";
+}
+
+function mergeVendorNotesRemarks(existingNotes, ntn) {
+  const withoutNtn = String(existingNotes || "")
+    .replace(/(?:^|\n)\s*NTN:\s*[^\n]+/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return [withoutNtn, String(ntn || "").trim() ? `NTN: ${String(ntn || "").trim()}` : ""]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function ensureVendorNtnColumn(connection = pool) {
+  const hasNtnColumn = await tableColumnExists(connection, "vendors", "ntn");
+  if (hasNtnColumn) return;
+  try {
+    await connection.execute(`ALTER TABLE vendors ADD COLUMN ntn VARCHAR(120) NULL AFTER phone`);
+  } catch (error) {
+    if (error?.code !== "ER_DUP_FIELDNAME" && !/duplicate column/i.test(String(error?.message || ""))) throw error;
+  }
 }
 
 async function listRequests() {
@@ -1714,6 +1781,7 @@ module.exports = {
   listVendors,
   createVendor,
   updateVendor,
+  deleteVendor,
   listRequests,
   createRequest,
   updateRequestApproval,

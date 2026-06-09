@@ -39,9 +39,13 @@ function getFirebaseAdminAuth() {
 }
 
 function firebaseAuthUnavailableError() {
-  const error = new Error("Firebase Admin Auth is not configured. Configure Firebase service credentials before creating invite links.");
+  const error = new Error("Firebase Admin Auth is not configured. Configure Firebase service credentials before managing portal users.");
   error.statusCode = 503;
   return error;
+}
+
+function isFirebaseUserNotFound(error) {
+  return error?.code === "auth/user-not-found";
 }
 
 function normalizeEmail(email) {
@@ -68,14 +72,25 @@ function toRoleKey(dbName) {
   return ROLE_KEY_BY_DB_NAME.get(normalized) || normalizeRoleKey(dbName);
 }
 
+function toTitleCaseWords(value) {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
 function toDbRoleName(roleKey) {
   const role = ROLE_BY_KEY.get(normalizeRoleKey(roleKey));
-  if (!role) {
-    const error = new Error(`Unsupported role: ${roleKey}`);
+  if (role) return role.dbName;
+  const normalized = normalizeRoleKey(roleKey);
+  if (!normalized) {
+    const error = new Error("Role name is required.");
     error.statusCode = 400;
     throw error;
   }
-  return role.dbName;
+  return toTitleCaseWords(normalized.replace(/_/g, " "));
 }
 
 async function getUserAuthContextByEmail(email, fallbackName = "") {
@@ -162,6 +177,11 @@ async function resolveAuthContextFromToken(token) {
   const payload = adminAuth ? await adminAuth.verifyIdToken(token) : null;
   if (!payload) return null;
   assertAllowedOfficialEmail(payload.email);
+  if (!payload.email_verified) {
+    const error = new Error("Verify your email address before signing in to the portal.");
+    error.statusCode = 403;
+    throw error;
+  }
   return getUserAuthContextByEmail(payload.email, payload.name || payload.displayName);
 }
 
@@ -200,8 +220,106 @@ async function listRoles() {
       label: ROLE_BY_KEY.get(toRoleKey(row.name))?.label || row.name,
       description: row.description,
       isSystem: Boolean(row.isSystem)
-    }))
-    .filter((row) => ROLE_BY_KEY.has(row.name));
+    }));
+}
+
+async function createRole(input = {}, createdBy) {
+  const label = toTitleCaseWords(String(input.label || input.name || "").replace(/[_-]+/g, " "));
+  const description = String(input.description || "").trim();
+  if (!label) {
+    const error = new Error("Role name is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedKey = normalizeRoleKey(label);
+  if (normalizedKey === "admin") {
+    const error = new Error("Admin role already exists.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const [existing] = await pool.execute(
+    `SELECT id
+       FROM roles
+      WHERE LOWER(REPLACE(name, ' ', '_')) = ?
+      LIMIT 1`,
+    [normalizedKey]
+  );
+  if (existing.length) {
+    const error = new Error("Role already exists.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const [result] = await pool.execute(
+    `INSERT INTO roles (name, description, is_system)
+     VALUES (?, ?, 0)`,
+    [label, description || null]
+  );
+
+  return {
+    id: result.insertId,
+    name: normalizedKey,
+    label,
+    description,
+    isSystem: false
+  };
+}
+
+async function deleteRole(roleName) {
+  const normalizedKey = normalizeRoleKey(roleName);
+  if (!normalizedKey) {
+    const error = new Error("Role not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const [roles] = await pool.execute(
+    `SELECT id, name, is_system AS isSystem
+       FROM roles
+      WHERE LOWER(REPLACE(name, ' ', '_')) = ?
+      LIMIT 1`,
+    [normalizedKey]
+  );
+
+  const role = roles[0];
+  if (!role) {
+    const error = new Error("Role not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (Boolean(role.isSystem) || ROLE_BY_KEY.has(normalizedKey)) {
+    const error = new Error("System roles cannot be deleted.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const [usageRows] = await pool.execute(
+    `SELECT COUNT(*) AS memberCount
+       FROM user_roles
+      WHERE role_id = ?`,
+    [role.id]
+  );
+
+  if (Number(usageRows[0]?.memberCount || 0) > 0) {
+    const error = new Error("Remove this role from all users before deleting it.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const [result] = await pool.execute(
+    `DELETE FROM roles
+      WHERE id = ? AND is_system = 0`,
+    [role.id]
+  );
+
+  if (!result.affectedRows) {
+    const error = new Error("Role not found.");
+    error.statusCode = 404;
+    throw error;
+  }
 }
 
 async function createUser(input = {}, createdBy) {
@@ -392,20 +510,50 @@ async function setUserActiveStatus(userId, isActive, updatedBy) {
 }
 
 async function deleteUser(userId) {
+  // #region debug-point B:backend-delete-user-start
+  fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:start",msg:"[DEBUG] backend delete user start",data:{userId},ts:Date.now()})}).catch(()=>{});
+  // #endregion
+  const [users] = await pool.execute(
+    `SELECT id, email
+       FROM users
+      WHERE id = ?
+      LIMIT 1`,
+    [userId]
+  );
+
+  if (!users.length) {
+    const error = new Error("User not found.");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const email = normalizeEmail(users[0].email);
+  // #region debug-point B:backend-delete-user-email
+  fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:loaded",msg:"[DEBUG] backend delete user loaded",data:{userId,email},ts:Date.now()})}).catch(()=>{});
+  // #endregion
+  if (email) {
+    const adminAuth = getFirebaseAdminAuth();
+    if (!adminAuth) throw firebaseAuthUnavailableError();
+    try {
+      const userRecord = await adminAuth.getUserByEmail(email);
+      // #region debug-point B:backend-delete-user-firebase-found
+      fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:firebase-found",msg:"[DEBUG] firebase auth user found for delete",data:{userId,email,uid:userRecord.uid,providers:(userRecord.providerData||[]).map((item)=>item.providerId)},ts:Date.now()})}).catch(()=>{});
+      // #endregion
+      await adminAuth.deleteUser(userRecord.uid);
+      // #region debug-point B:backend-delete-user-firebase-deleted
+      fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:firebase-deleted",msg:"[DEBUG] firebase auth user deleted",data:{userId,email,uid:userRecord.uid},ts:Date.now()})}).catch(()=>{});
+      // #endregion
+    } catch (error) {
+      // #region debug-point B:backend-delete-user-firebase-error
+      fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:firebase-error",msg:"[DEBUG] firebase auth delete lookup/delete error",data:{userId,email,code:error?.code||"",message:error?.message||""},ts:Date.now()})}).catch(()=>{});
+      // #endregion
+      if (!isFirebaseUserNotFound(error)) throw error;
+    }
+  }
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    const [users] = await connection.execute(
-      `SELECT id FROM users WHERE id = ? LIMIT 1`,
-      [userId]
-    );
-
-    if (!users.length) {
-      const error = new Error("User not found.");
-      error.statusCode = 404;
-      throw error;
-    }
-
     await connection.execute(`DELETE FROM user_roles WHERE user_id = ?`, [userId]);
     const [result] = await connection.execute(`DELETE FROM users WHERE id = ?`, [userId]);
 
@@ -416,8 +564,14 @@ async function deleteUser(userId) {
     }
 
     await connection.commit();
+    // #region debug-point B:backend-delete-user-db-commit
+    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:db-commit",msg:"[DEBUG] backend delete user db commit",data:{userId,email},ts:Date.now()})}).catch(()=>{});
+    // #endregion
   } catch (error) {
     await connection.rollback();
+    // #region debug-point B:backend-delete-user-db-error
+    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:db-error",msg:"[DEBUG] backend delete user db error",data:{userId,email,code:error?.code||"",message:error?.message||""},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     throw error;
   } finally {
     connection.release();
@@ -447,8 +601,10 @@ async function assertUserAndRole(userId, roleName) {
 
 module.exports = {
   assignRoleToUser,
+  createRole,
   createUser,
   createPasswordSetupLink,
+  deleteRole,
   deleteUser,
   getUserById,
   listRoles,

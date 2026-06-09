@@ -15,7 +15,7 @@ const AUTO_REFRESH_INTERVAL_MS = 10000;
 const CHAT_POLL_INTERVAL_MS = 5000;
 const OFFICIAL_EMAIL_DOMAIN = "@shehersaaz.org.pk";
 const OFFICIAL_EMAIL_MESSAGE = "Only Shehersaaz official email addresses are allowed.";
-const AVAILABLE_USER_ROLES = [
+const DEFAULT_USER_ROLES = [
   { key: "admin", label: "admin" },
   { key: "requestor", label: "requestor" },
   { key: "approver", label: "approver" },
@@ -32,7 +32,7 @@ const VIEW_ROLE_ACCESS = {
   grn: ["admin", "inventory_manager"],
   po: ["admin", "inventory_manager"],
   vendors: ["admin", "inventory_manager"],
-  itemRequests: ["admin"],
+  itemRequests: ["admin", "inventory_manager"],
   transport: ["admin", "inventory_manager"],
   audit: ["admin"],
   settings: ["admin"],
@@ -138,6 +138,7 @@ let requestModuleTab = "requisition";
 const REQUESTS_PAGE_SIZE = 10;
 let settingsState = {};
 let userManagementUsers = [];
+let availableUserRoles = DEFAULT_USER_ROLES.map((role) => ({ ...role }));
 let userManagementLoaded = false;
 let lastUserInviteLink = "";
 let lastInvitedUserEmail = "";
@@ -164,6 +165,7 @@ let notificationSoundUnlocked = false;
 let pendingPurchaseOrder = null;
 let pendingCancelPoNumber = "";
 let pendingDeleteUserId = "";
+let pendingDeleteVendorId = "";
 let activeHistorySection = "requests";
 let previousHistoryView = "dashboard";
 const expandedHistoryIds = new Set();
@@ -188,6 +190,45 @@ function normalizeRoleKey(role) {
   return value;
 }
 
+function titleCaseWords(value = "") {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function normalizeAvailableRoles(roles = []) {
+  const mapped = roles.map((role) => {
+    const key = normalizeRoleKey(role?.key || role?.name || role?.label);
+    const rawLabel = String(role?.label || role?.name || key || "").trim();
+    return {
+      id: role?.id || key,
+      key,
+      label: rawLabel || titleCaseWords(String(key || "").replace(/_/g, " ")),
+      description: String(role?.description || "").trim(),
+      isSystem: Boolean(role?.isSystem)
+    };
+  }).filter((role) => role.key);
+
+  if (!mapped.length) {
+    return DEFAULT_USER_ROLES.map((role) => ({
+      id: role.key,
+      key: role.key,
+      label: titleCaseWords(role.label.replace(/_/g, " ")),
+      description: "",
+      isSystem: true
+    }));
+  }
+
+  return mapped.filter((role, index, list) => list.findIndex((entry) => entry.key === role.key) === index);
+}
+
+function getAvailableUserRoles() {
+  return availableUserRoles.length ? availableUserRoles : normalizeAvailableRoles();
+}
+
 function isOfficialEmail(email) {
   return String(email || "").trim().toLowerCase().endsWith(OFFICIAL_EMAIL_DOMAIN);
 }
@@ -199,6 +240,18 @@ function userRoles() {
 function hasRole(role) {
   const roles = userRoles();
   return roles.includes("admin") || roles.includes(normalizeRoleKey(role));
+}
+
+function userPermissions() {
+  return [...new Set((currentUser.permissions || []).map((permission) => String(permission || "").trim()).filter(Boolean))];
+}
+
+function hasPermission(permission) {
+  return userPermissions().includes(String(permission || "").trim());
+}
+
+function hasPortalAdminAccess() {
+  return hasRole("admin") || hasPermission("setting.manage");
 }
 
 function canAccessView(view) {
@@ -306,7 +359,7 @@ async function requirePortalSession() {
     redirectToLogin();
     return null;
   }
-  isAdmin = hasRole("admin");
+  isAdmin = hasPortalAdminAccess();
   recordAuditLoginIfNeeded();
   // #region debug-point F:portal-session-ready
   fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"F",location:"script.js:requirePortalSession:ready",msg:"[DEBUG] portal session established",data:{currentUserName:currentUser?.name||"",currentUserEmail:currentUser?.email||"",currentUserId:currentUser?.id||"",isAdmin},ts:Date.now()})}).catch(()=>{});
@@ -600,6 +653,7 @@ function normalizeVendorRecord(vendor = {}) {
 
   return {
     ...vendor,
+    ntn: vendor.ntn || vendor.vendorNtn || "",
     bankName: vendor.bankName || vendor.bank_name || savedDetails.bankName || "",
     accountTitle: vendor.accountTitle || vendor.account_title || savedDetails.accountTitle || "",
     accountNo: vendor.accountNo || vendor.account_no || savedDetails.accountNo || ""
@@ -617,6 +671,13 @@ function rememberVendorAccountDetails(vendor = {}) {
   if (!details.bankName && !details.accountTitle && !details.accountNo) return;
   vendorAccountKeys(normalized).forEach((key) => {
     vendorAccountDetails[key] = details;
+  });
+  saveVendorAccountDetails();
+}
+
+function forgetVendorAccountDetails(vendor = {}) {
+  vendorAccountKeys(vendor).forEach((key) => {
+    delete vendorAccountDetails[key];
   });
   saveVendorAccountDetails();
 }
@@ -641,6 +702,12 @@ async function saveVendorRecord(vendorId, payload) {
       body: JSON.stringify(payload)
     });
   }
+}
+
+async function deleteVendorRecord(vendorId) {
+  return apiRequest(`/vendors/${encodeURIComponent(vendorId)}`, {
+    method: "DELETE"
+  });
 }
 
 function stockFor(itemCode, location) {
@@ -952,11 +1019,15 @@ async function loadSettings(options = {}) {
 async function loadUserManagement({ silent = false } = {}) {
   if (!isAdmin) return;
   try {
-    const data = await apiRequest("/auth/users");
-    userManagementUsers = (data.users || []).map((user) => ({
+    const [usersData, rolesData] = await Promise.all([
+      apiRequest("/auth/users"),
+      apiRequest("/auth/roles")
+    ]);
+    userManagementUsers = (usersData.users || []).map((user) => ({
       ...user,
       roles: Array.isArray(user.roles) ? user.roles.map(normalizeRoleKey) : []
     }));
+    availableUserRoles = normalizeAvailableRoles(rolesData.roles || []);
     userManagementLoaded = true;
     renderAuditPage();
     renderSettings();
@@ -1007,6 +1078,7 @@ function renderUserManagement(section) {
   document.getElementById("settingsSectionDescription").textContent = section.description;
   const form = document.getElementById("settingsForm");
   removeDetachedManagementDrawers();
+  const roleOptions = getAvailableUserRoles();
 
   if (!userManagementLoaded) {
     form.innerHTML = `
@@ -1062,10 +1134,10 @@ function renderUserManagement(section) {
             </div>
             <div class="settings-inline-role-editor">
               <div class="role-checkbox-grid">
-                ${AVAILABLE_USER_ROLES.map((role) => `
+                ${roleOptions.map((role) => `
                   <label class="role-pill ${roles.includes(role.key) ? "selected" : ""}">
                     <input type="checkbox" name="roles-${escapeHtml(user.id)}" value="${role.key}" ${roles.includes(role.key) ? "checked" : ""}>
-                    <span>${role.label}</span>
+                    <span>${escapeHtml(role.label)}</span>
                   </label>
                 `).join("")}
               </div>
@@ -1088,10 +1160,10 @@ function renderUserManagement(section) {
           <label>Email Address<input id="newUserEmail" name="newUserEmail" type="email" placeholder="Enter email address" required></label>
           <fieldset class="team-drawer-role-list">
             <legend>Assign role</legend>
-            ${AVAILABLE_USER_ROLES.map((role) => `
+            ${roleOptions.map((role) => `
               <label class="team-drawer-role-option">
                 <input type="checkbox" name="newUserRoles" value="${role.key}" ${role.key === "requestor" ? "checked" : ""}>
-                <span>${role.label.replace(/_/g, " ")}</span>
+                <span>${escapeHtml(role.label)}</span>
               </label>
             `).join("")}
           </fieldset>
@@ -1134,10 +1206,10 @@ function renderUserManagement(section) {
         <div class="team-user-drawer-form">
           <fieldset class="team-drawer-role-list">
             <legend>Assigned roles</legend>
-            ${AVAILABLE_USER_ROLES.map((role) => `
+            ${roleOptions.map((role) => `
               <label class="team-drawer-role-option">
                 <input type="checkbox" name="editUserRoles" value="${role.key}">
-                <span>${role.label.replace(/_/g, " ")}</span>
+                <span>${escapeHtml(role.label)}</span>
               </label>
             `).join("")}
           </fieldset>
@@ -1176,6 +1248,7 @@ function renderRolesManagement(section) {
     approver: "list-checks",
     inventory_manager: "package"
   };
+  const roleOptions = getAvailableUserRoles();
   const roleAccessSections = [
     { module: "Workspace", label: "Dashboard", view: "dashboard" },
     { module: "Requests", label: "Requisition Form", view: "requisition" },
@@ -1203,25 +1276,31 @@ function renderRolesManagement(section) {
   document.getElementById("settingsSectionDescription").textContent = section.description;
   document.getElementById("settingsForm").innerHTML = `
     <div class="settings-roles-head">
-      <span>${AVAILABLE_USER_ROLES.length} roles</span>
-      <button class="primary" type="button"><i data-lucide="plus"></i>New role</button>
+      <span>${roleOptions.length} roles</span>
+      <button class="primary" id="openRoleModalBtn" type="button" onclick="window.openRoleModal && window.openRoleModal()"><i data-lucide="plus"></i>New role</button>
     </div>
     <div class="settings-role-list">
-      ${AVAILABLE_USER_ROLES.map((role) => {
+      ${roleOptions.map((role) => {
         const memberCount = userManagementUsers.filter((user) => (user.roles || []).includes(role.key)).length;
-        const permissionCount = role.key === "admin" ? "All" : role.key === "inventory_manager" ? "Procurement + inventory" : role.key === "approver" ? "Approvals" : "Requests";
         const roleAccess = groupedRoleAccess(role.key);
+        const accessCount = Object.values(roleAccess).reduce((count, sections) => count + sections.length, 0);
         const isExpanded = activeRoleAccessPreviewRole === role.key;
+        const canDeleteRole = !role.isSystem && memberCount === 0;
         return `
           <article class="settings-role-card settings-role-${escapeHtml(role.key)}">
             <div class="settings-role-icon"><i data-lucide="${roleIcons[role.key] || "shield"}"></i></div>
             <div class="settings-role-copy">
-              <h3>${escapeHtml(role.label.replace(/_/g, " "))}<span>System</span></h3>
-              <p>${escapeHtml(roleDescriptions[role.key] || "Workspace access role.")}</p>
-              <small>${escapeHtml(permissionCount)} permissions · ${memberCount} ${memberCount === 1 ? "member" : "members"}</small>
+              <h3>${escapeHtml(role.label.replace(/_/g, " "))}<span>${role.isSystem ? "System" : "Custom"}</span></h3>
+              <p>${escapeHtml(role.description || roleDescriptions[role.key] || "Workspace access role.")}</p>
+              <small>${accessCount} accessible sections · ${memberCount} ${memberCount === 1 ? "member" : "members"}</small>
             </div>
             <span class="settings-role-member-pill">${memberCount} ${memberCount === 1 ? "member" : "members"}</span>
-            <button class="secondary view-role-access" type="button" data-role-access-preview="${escapeHtml(role.key)}"><i data-lucide="eye"></i>${isExpanded ? "Hide" : "View"}</button>
+            <div class="settings-role-actions">
+              <button class="secondary view-role-access" type="button" data-role-access-preview="${escapeHtml(role.key)}"><i data-lucide="eye"></i>${isExpanded ? "Hide" : "View"}</button>
+              ${role.isSystem ? "" : `
+                <button class="secondary danger delete-role" type="button" data-role-delete="${escapeHtml(role.key)}" ${canDeleteRole ? "" : "disabled"} title="${canDeleteRole ? "Delete this custom role" : "Remove this role from all users before deleting it"}"><i data-lucide="trash-2"></i>${canDeleteRole ? "Delete" : "Assigned"}</button>
+              `}
+            </div>
             ${isExpanded ? `
               <div class="settings-role-access-preview">
                 <strong>Accessible modules and sections</strong>
@@ -1241,6 +1320,7 @@ function renderRolesManagement(section) {
     </div>
   `;
   renderSettingsTabs();
+  document.getElementById("openRoleModalBtn")?.addEventListener("click", openRoleModal);
   if (window.lucide) window.lucide.createIcons();
 }
 
@@ -1292,6 +1372,125 @@ function closePermissionsDrawer() {
     document.body.classList.remove("team-user-drawer-open");
   }
 }
+
+function ensureRoleModalElements() {
+  let modal = document.getElementById("roleModal");
+  let form = document.getElementById("roleForm");
+  if (modal && form) return { modal, form };
+
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="modal-backdrop" id="roleModal" aria-hidden="true">
+      <form id="roleForm" class="card form-card modal-card role-modal-card">
+        <div class="modal-head">
+          <div class="section-title"><h2>Create Role</h2><p>Add a new workspace role for assignment in user settings.</p></div>
+          <button class="icon-btn" id="closeRoleModal" type="button" aria-label="Close create role"><i data-lucide="x"></i></button>
+        </div>
+        <label>Role name<input id="roleName" name="name" required placeholder="e.g. Field Auditor"></label>
+        <label>Description<textarea id="roleDescription" name="description" rows="4" placeholder="What this role is used for"></textarea></label>
+        <div class="form-actions">
+          <button class="secondary" id="cancelRoleModal" type="button">Cancel</button>
+          <button class="primary" type="submit"><i data-lucide="plus"></i>Create Role</button>
+        </div>
+      </form>
+    </div>
+  `);
+
+  modal = document.getElementById("roleModal");
+  form = document.getElementById("roleForm");
+  form?.addEventListener("submit", createRoleFromSettings);
+  document.getElementById("closeRoleModal")?.addEventListener("click", closeRoleModal);
+  document.getElementById("cancelRoleModal")?.addEventListener("click", closeRoleModal);
+  modal?.addEventListener("click", (event) => {
+    if (event.target.id === "roleModal") closeRoleModal();
+  });
+  if (window.lucide) window.lucide.createIcons();
+  return { modal, form };
+}
+
+function openRoleModal() {
+  const { modal, form } = ensureRoleModalElements();
+  if (!modal || !form) return;
+  form.reset();
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+  document.getElementById("roleName")?.focus();
+}
+
+function closeRoleModal() {
+  const modal = document.getElementById("roleModal");
+  const form = document.getElementById("roleForm");
+  if (!modal) return;
+  modal.classList.remove("show");
+  modal.setAttribute("aria-hidden", "true");
+  form?.reset();
+}
+
+async function deleteRoleFromSettings(roleKey) {
+  if (!isAdmin) return showToast("Admin access is required.", "error");
+  const normalizedRoleKey = normalizeRoleKey(roleKey);
+  const role = getAvailableUserRoles().find((item) => item.key === normalizedRoleKey);
+  if (!role) return showToast("Role not found.", "error");
+  if (role.isSystem) return showToast("System roles cannot be deleted.", "error");
+  const memberCount = userManagementUsers.filter((user) => (user.roles || []).includes(normalizedRoleKey)).length;
+  if (memberCount > 0) {
+    return showToast("Remove this role from all users before deleting it.", "error");
+  }
+  const roleLabel = role.label || titleCaseWords(normalizedRoleKey.replace(/_/g, " "));
+  if (!window.confirm(`Delete the ${roleLabel} role?`)) return;
+
+  try {
+    await apiRequest(`/auth/roles/${encodeURIComponent(normalizedRoleKey)}`, {
+      method: "DELETE"
+    });
+    if (activeRoleAccessPreviewRole === normalizedRoleKey) activeRoleAccessPreviewRole = "";
+    await loadUserManagement({ silent: true });
+    recordAuditEvent({
+      action: "delete",
+      entityType: "settings.role",
+      entityId: normalizedRoleKey,
+      summary: `${currentUser.name || "IMS User"} deleted role ${roleLabel}`,
+      section: "settings",
+      details: { name: roleLabel }
+    });
+    showToast("Role deleted.");
+  } catch (error) {
+    showToast(error.message || "Unable to delete role.", "error");
+  }
+}
+
+async function createRoleFromSettings(event) {
+  event.preventDefault();
+  if (!isAdmin) return showToast("Admin access is required.", "error");
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const name = String(data.get("name") || "").trim();
+  const description = String(data.get("description") || "").trim();
+  if (!name) return showToast("Enter a role name.", "error");
+
+  try {
+    const response = await apiRequest("/auth/roles", {
+      method: "POST",
+      body: JSON.stringify({ name, description })
+    });
+    const createdRole = response.role;
+    await loadUserManagement({ silent: true });
+    closeRoleModal();
+    recordAuditEvent({
+      action: "create",
+      entityType: "settings.role",
+      entityId: createdRole?.name || normalizeRoleKey(name),
+      summary: `${currentUser.name || "IMS User"} created role ${createdRole?.label || name}`,
+      section: "settings",
+      details: { name: createdRole?.label || name, description: createdRole?.description || description }
+    });
+    showToast("Role created.");
+  } catch (error) {
+    showToast(error.message || "Unable to create role.", "error");
+  }
+}
+
+window.openRoleModal = openRoleModal;
+window.closeRoleModal = closeRoleModal;
 
 function bindTeamDrawerActions(scope = document) {
   const openAddButton = scope.querySelector?.("#openAddUserDrawerBtn");
@@ -1545,7 +1744,7 @@ async function deleteUser(userId) {
   const user = userManagementUsers.find((item) => String(item.id) === String(userId));
   const label = user?.email || user?.name || "this user";
   pendingDeleteUserId = String(userId);
-  document.getElementById("deleteUserMessage").textContent = `Delete ${label}? This will remove the user from the database and remove assigned roles.`;
+  document.getElementById("deleteUserMessage").textContent = `Delete ${label}? This will remove the user from the portal, delete assigned roles, and remove the sign-in account.`;
   document.getElementById("deleteUserModal").classList.add("show");
   document.getElementById("deleteUserModal").setAttribute("aria-hidden", "false");
   if (window.lucide) window.lucide.createIcons();
@@ -1562,7 +1761,13 @@ async function confirmDeleteUser() {
   if (!userId) return;
   const user = userManagementUsers.find((item) => String(item.id) === String(userId));
   try {
+    // #region debug-point A:frontend-delete-user-before
+    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"A",location:"script.js:confirmDeleteUser:before",msg:"[DEBUG] frontend delete user request",data:{userId,email:user?.email||"",name:user?.name||""},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     await apiRequest(`/auth/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+    // #region debug-point A:frontend-delete-user-after
+    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"A",location:"script.js:confirmDeleteUser:after",msg:"[DEBUG] frontend delete user success",data:{userId,email:user?.email||""},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     userManagementUsers = userManagementUsers.filter((item) => String(item.id) !== String(userId));
     closeDeleteUserModal();
     renderSettings();
@@ -1576,6 +1781,9 @@ async function confirmDeleteUser() {
     });
     showToast("User deleted.");
   } catch (error) {
+    // #region debug-point A:frontend-delete-user-error
+    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"A",location:"script.js:confirmDeleteUser:error",msg:"[DEBUG] frontend delete user failed",data:{userId,message:error?.message||""},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     showToast(error.message || "Unable to delete user.", "error");
   }
 }
@@ -2514,17 +2722,17 @@ function updateTopbarBreadcrumb(view) {
 }
 
 function setView(view) {
-  if (view === "history") view = "audit";
+  let isHistoryView = view === "history";
   const previousView = document.querySelector(".app-shell")?.getAttribute("data-active-view") || "";
-  if (INVENTORY_VIEW_TABS[view]) {
+  if (!isHistoryView && INVENTORY_VIEW_TABS[view]) {
     inventoryModuleTab = INVENTORY_VIEW_TABS[view];
     view = "inventory";
   }
-  if (PROCUREMENT_VIEW_TABS[view]) {
+  if (!isHistoryView && PROCUREMENT_VIEW_TABS[view]) {
     procurementModuleTab = PROCUREMENT_VIEW_TABS[view];
     view = "procurement";
   }
-  if (REQUEST_VIEW_TABS[view]) {
+  if (!isHistoryView && REQUEST_VIEW_TABS[view]) {
     requestModuleTab = REQUEST_VIEW_TABS[view];
     view = "requests";
   }
@@ -2532,6 +2740,7 @@ function setView(view) {
   if (view !== "dashboard" && dashboardPickerOpen) dashboardPickerOpen = false;
   if (!canAccessView(view)) {
     view = firstAccessibleView();
+    isHistoryView = false;
     if (INVENTORY_VIEW_TABS[view]) {
       inventoryModuleTab = INVENTORY_VIEW_TABS[view];
       view = "inventory";
@@ -2546,14 +2755,17 @@ function setView(view) {
     }
     if (view === "requests") normalizeRequestModuleTab();
   }
-  if (!document.getElementById(`${view}View`)) view = firstAccessibleView();
-  document.querySelector(".app-shell")?.setAttribute("data-active-view", view);
+  const panelView = isHistoryView ? "audit" : view;
+  if (!document.getElementById(`${panelView}View`)) view = firstAccessibleView();
+  document.querySelector(".app-shell")?.setAttribute("data-active-view", isHistoryView ? "history" : view);
   document.querySelectorAll(".view").forEach((panel) => panel.classList.remove("active"));
-  document.getElementById(`${view}View`).classList.add("active");
-  document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
-  const active = document.querySelector(`.nav-item[data-view="${view}"] span:last-child`);
-  document.getElementById("pageTitle").textContent = view === "audit" ? "Audit Logs" : active ? active.textContent : "Dashboard";
-  updateTopbarBreadcrumb(view);
+  document.getElementById(`${panelView}View`).classList.add("active");
+  document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", !isHistoryView && item.dataset.view === view));
+  const active = !isHistoryView ? document.querySelector(`.nav-item[data-view="${view}"] span:last-child`) : null;
+  document.getElementById("pageTitle").textContent = isHistoryView
+    ? historySectionMeta(activeHistorySection).title
+    : view === "audit" ? "Audit Logs" : active ? active.textContent : "Dashboard";
+  updateTopbarBreadcrumb(isHistoryView ? "history" : view);
   render();
 }
 
@@ -2567,7 +2779,7 @@ function openHistoryPage(section) {
   auditActorFilter = "all";
   auditEntityFilter = "";
   expandedHistoryIds.clear();
-  setView("audit");
+  setView("history");
 }
 
 function addRequestLine() {
@@ -3019,7 +3231,6 @@ function renderRequests() {
     return;
   }
   const rows = state.requests.flatMap((request) => request.items.map((item) => ({ request, item })))
-    .filter(({ item }) => !isRequestLineHistory(item))
     .filter(({ item }) => requestsFilter === "All" || item.approvalStatus === requestsFilter);
   const pageCount = Math.max(1, Math.ceil(rows.length / REQUESTS_PAGE_SIZE));
   requestsPage = Math.min(Math.max(1, requestsPage), pageCount);
@@ -3041,7 +3252,7 @@ function renderRequests() {
         <td>${statusBadge(item.issuanceStatus)}</td>
         <td>${formatDate(request.date)}</td>
       </tr>`;
-  }).join("") || emptyStateRow(12, "No requests yet", "Inventory request lines will appear here once they are submitted."));
+  }).join("") || emptyStateRow(12, "No requests yet", "Submitted request lines will appear here once they are created."));
   document.getElementById("requestsPageInfo").textContent = `Page ${requestsPage} of ${pageCount}`;
   document.getElementById("requestsPrev").disabled = requestsPage === 1;
   document.getElementById("requestsNext").disabled = requestsPage === pageCount;
@@ -3056,7 +3267,7 @@ function requesterMatchesCurrentUser(request) {
   const email = String(currentUser.email || "").trim().toLowerCase();
   const name = String(currentUser.name || "").trim().toLowerCase();
   if (email) return String(request.requesterEmail || "").trim().toLowerCase() === email;
-  if (name && name !== "inventory manager") return String(request.requester || "").trim().toLowerCase() === name;
+  if (name) return String(request.requester || "").trim().toLowerCase() === name;
   return true;
 }
 
@@ -3091,9 +3302,10 @@ function renderRequisition() {
   const table = document.getElementById("myRequestsTable");
   if (!table) return;
   const requestsError = sourceError("requests");
+  const emptyMessage = "Your submitted requests will appear here.";
   setTableContent("myRequestsTable", requestsError
     ? errorStateRow(12, requestsError)
-    : rows.map(requestTrackingRow).join("") || emptyStateRow(12, "No requests yet", "Your submitted requests will appear here."));
+    : rows.map(requestTrackingRow).join("") || emptyStateRow(12, "No requests yet", emptyMessage));
 }
 
 function renderInventory() {
@@ -3555,7 +3767,15 @@ function renderPO() {
 }
 
 function poVendorName(po = {}) {
-  return po.vendorName || state.vendors.find((vendor) => String(vendor.id) === String(po.vendorId))?.name || "-";
+  return po.vendorName || poVendorRecord(po)?.name || "-";
+}
+
+function poVendorRecord(po = {}) {
+  return state.vendors.find((vendor) => String(vendor.id) === String(po.vendorId)) || null;
+}
+
+function poVendorNtn(po = {}) {
+  return po.vendorNtn || po.ntn || poVendorRecord(po)?.ntn || "";
 }
 
 function poDisplayStatus(po = {}) {
@@ -3633,7 +3853,7 @@ function clearVendorFilter(type) {
 function renderPoRecordRow(po) {
   const status = poDisplayStatus(po);
   return `
-    <tr data-reference-id="${escapeHtml(po.poNumber)}">
+    <tr class="po-clickable-row" data-reference-id="${escapeHtml(po.poNumber)}" data-po-number="${escapeHtml(po.poNumber)}">
       <td><strong>${escapeHtml(po.poNumber)}</strong></td>
       <td>${escapeHtml(poVendorName(po))}</td>
       <td>${formatDate(po.issueDate || po.date)}</td>
@@ -3649,6 +3869,107 @@ function renderPoRecordRow(po) {
     </tr>
   `;
 }
+
+function poDetailMarkup(po) {
+  const vendor = poVendorRecord(po) || {};
+  const lines = poLineItems(po);
+  const subtotal = Number(po.subtotal ?? lines.reduce((sum, item) => sum + Number(item.subtotal ?? (item.quantityOrdered || 0) * (item.unitPrice || 0)), 0));
+  const taxRate = Number(po.taxRate || 0);
+  const taxAmount = Number(po.taxAmount ?? subtotal * (taxRate / 100));
+  const grandTotal = Number(po.poAmount ?? po.total ?? subtotal + taxAmount);
+  return `
+    <div class="po-detail-stack">
+      <div class="approval-detail-grid">
+        <div><span>PO Number</span><strong>${escapeHtml(po.poNumber || "")}</strong></div>
+        <div><span>Status</span><strong>${escapeHtml(po.status || poDisplayStatus(po))}</strong></div>
+        <div><span>Issue date</span><strong>${escapeHtml(formatDate(po.issueDate || po.date) || "-")}</strong></div>
+        <div><span>Location</span><strong>${escapeHtml(po.location || "-")}</strong></div>
+        <div><span>Vendor</span><strong>${escapeHtml(poVendorName(po))}</strong></div>
+        <div><span>Quotation reference</span><strong>${escapeHtml(po.quotationReference || "-")}</strong></div>
+        <div><span>Approved by</span><strong>${escapeHtml(po.approvedBy || "-")}</strong></div>
+        <div><span>Delivery terms</span><strong>${escapeHtml(po.deliveryTerms || "-")}</strong></div>
+      </div>
+      <section class="po-detail-section">
+        <h3>Vendor details</h3>
+        <div class="approval-detail-grid">
+          <div><span>Contact</span><strong>${escapeHtml(po.vendorContact || vendor.contact || vendor.phone || "-")}</strong></div>
+          <div><span>NTN</span><strong>${escapeHtml(poVendorNtn(po) || "-")}</strong></div>
+          <div><span>Bank</span><strong>${escapeHtml(po.bankName || vendor.bankName || "-")}</strong></div>
+          <div><span>Account title</span><strong>${escapeHtml(po.accountTitle || vendor.accountTitle || "-")}</strong></div>
+          <div><span>Account no.</span><strong>${escapeHtml(po.accountNo || vendor.accountNo || "-")}</strong></div>
+          <div><span>Address</span><strong>${escapeHtml(po.vendorAddress || vendor.address || "-")}</strong></div>
+        </div>
+      </section>
+      <section class="po-detail-section">
+        <h3>Items</h3>
+        <div class="po-detail-items">
+          ${lines.map((item, index) => {
+            const quantity = Number(item.quantityOrdered ?? item.quantity ?? 0);
+            const unitPrice = Number(item.unitPrice || 0);
+            const lineTotal = Number(item.subtotal ?? quantity * unitPrice);
+            const remaining = remainingPoLineQuantity(item);
+            const title = [item.itemName || item.specifications || "Item", item.itemType || item.type].filter(Boolean).join(" - ");
+            return `
+              <article class="po-detail-item">
+                <div class="po-detail-item-head">
+                  <strong>Item ${index + 1}: ${escapeHtml(title || item.itemCode || "Item")}</strong>
+                  <span>${escapeHtml(item.itemCode || "-")}</span>
+                </div>
+                <div class="po-detail-item-meta">
+                  <span>Category: ${escapeHtml(item.category || "-")}</span>
+                  <span>Qty ordered: ${quantityValue(quantity)}</span>
+                  <span>Qty received: ${quantityValue(item.quantityReceived || 0)}</span>
+                  <span>Remaining: ${quantityValue(remaining)}</span>
+                  <span>Unit price: $${money(unitPrice)}</span>
+                  <span>Total: $${money(lineTotal)}</span>
+                </div>
+                ${item.specifications ? `<p>${escapeHtml(item.specifications)}</p>` : ""}
+              </article>
+            `;
+          }).join("")}
+        </div>
+      </section>
+      <div class="po-detail-totals">
+        <div><span>Subtotal</span><strong>$${money(subtotal)}</strong></div>
+        <div><span>GST ${money(taxRate)}%</span><strong>$${money(taxAmount)}</strong></div>
+        <div><span>Total</span><strong>$${money(grandTotal)}</strong></div>
+      </div>
+      ${po.notesRemarks ? `<section class="po-detail-section"><h3>Notes</h3><div class="po-detail-note">${escapeHtml(po.notesRemarks)}</div></section>` : ""}
+      <div class="approval-detail-actions">
+        <button class="secondary" type="button" onclick="closePoDetail()">Close</button>
+        <button class="primary" type="button" onclick="printPO('${escapeHtml(po.poNumber)}')"><i data-lucide="clipboard-list"></i>Print</button>
+        ${canReceivePo(po) ? `<button class="primary" type="button" onclick="closePoDetail(); setView('grn')"><i data-lucide="package-open"></i>Receive</button>` : ""}
+        ${canCancelPo(po) ? `<button class="danger-btn" type="button" onclick="closePoDetail(); cancelPO('${escapeHtml(po.poNumber)}')"><i data-lucide="trash-2"></i>Cancel</button>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+function openPoDetail(poNumber) {
+  const po = state.purchaseOrders.find((row) => String(row.poNumber) === String(poNumber));
+  if (!po) return showToast("Purchase order not found.", "error");
+  const modal = document.getElementById("poDetailModal");
+  const content = document.getElementById("poDetailContent");
+  const title = document.getElementById("poDetailTitle");
+  const subtitle = document.getElementById("poDetailSubtitle");
+  if (!modal || !content || !title || !subtitle) return;
+  title.textContent = po.poNumber || "Purchase order details";
+  subtitle.textContent = `${poVendorName(po)} - ${formatDate(po.issueDate || po.date) || "No date"} - ${poDisplayStatus(po)}`;
+  content.innerHTML = poDetailMarkup(po);
+  modal.classList.add("show");
+  modal.setAttribute("aria-hidden", "false");
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function closePoDetail() {
+  const modal = document.getElementById("poDetailModal");
+  if (!modal) return;
+  modal.classList.remove("show");
+  modal.setAttribute("aria-hidden", "true");
+}
+
+window.openPoDetail = openPoDetail;
+window.closePoDetail = closePoDetail;
 
 function collectPurchaseOrder(formElement) {
   const form = new FormData(formElement);
@@ -3685,6 +4006,7 @@ function collectPurchaseOrder(formElement) {
     vendorName: vendor?.name || "",
     vendorContact: String(form.get("vendorContact") || vendor?.phone || vendor?.contact || "").trim(),
     vendorAddress: String(form.get("vendorAddress") || vendor?.address || "").trim(),
+    vendorNtn: String(vendor?.ntn || "").trim(),
     issueDate: form.get("issueDate") || isoToday(),
     focalPerson: String(form.get("focalPerson") || "").trim(),
     deliveryNtn: String(form.get("deliveryNtn") || "424701-0").trim(),
@@ -4338,7 +4660,7 @@ function requestDateTime(value) {
 }
 
 function lineManagerMatchesCurrentUser(request = {}) {
-  if (isAdmin) return true;
+  if (hasPortalAdminAccess()) return true;
   const userEmail = String(currentUser.email || "").trim().toLowerCase();
   if (!userEmail) return false;
   return String(request.managerEmail || "").trim().toLowerCase() === userEmail;
@@ -4488,18 +4810,18 @@ function openApprovalColumnHistory(columnKey) {
 
 function renderVendors() {
   if (businessDataLoading) {
-    showTableSkeleton("vendorsTable", 8, 6);
+    showTableSkeleton("vendorsTable", 9, 6);
     return;
   }
   const vendorsError = sourceError("vendors");
   if (vendorsError) {
-    setTableContent("vendorsTable", errorStateRow(8, vendorsError));
+    setTableContent("vendorsTable", errorStateRow(9, vendorsError));
     return;
   }
   const searchTerm = vendorSearchTerm.trim().toLowerCase();
   const rows = state.vendors.filter((vendor) => {
     if (!searchTerm) return true;
-    return [vendor.name, vendor.phone, vendor.contact, vendor.bankName, vendor.accountTitle, vendor.accountNo, vendor.address]
+    return [vendor.name, vendor.phone, vendor.contact, vendor.ntn, vendor.bankName, vendor.accountTitle, vendor.accountNo, vendor.address]
       .some((value) => String(value || "").toLowerCase().includes(searchTerm));
   });
   setTableContent("vendorsTable", rows.map((vendor) => `
@@ -4507,13 +4829,19 @@ function renderVendors() {
       <td>${escapeHtml(vendor.name)}</td>
       <td>${escapeHtml(vendor.phone || "")}</td>
       <td>${escapeHtml(vendor.contact || "")}</td>
+      <td>${escapeHtml(vendor.ntn || "")}</td>
       <td>${escapeHtml(vendor.bankName || "")}</td>
       <td>${escapeHtml(vendor.accountTitle || "")}</td>
       <td>${escapeHtml(vendor.accountNo || "")}</td>
       <td>${escapeHtml(vendor.address || "")}</td>
-      <td><button class="tiny" type="button" onclick="editVendor('${escapeHtml(vendor.id)}')">Edit</button></td>
+      <td>
+        <span class="vendor-row-actions">
+          <button class="tiny" type="button" onclick="editVendor('${escapeHtml(vendor.id)}')">Edit</button>
+          <button class="tiny danger" type="button" onclick="promptDeleteVendor('${escapeHtml(vendor.id)}')">Delete</button>
+        </span>
+      </td>
     </tr>
-  `).join("") || emptyStateRow(8, searchTerm ? "No matching vendors" : "No vendors added yet", searchTerm ? "Try another name, phone, contact, bank, account, or address." : "Vendor records used by purchase orders will appear here."));
+  `).join("") || emptyStateRow(9, searchTerm ? "No matching vendors" : "No vendors added yet", searchTerm ? "Try another name, phone, contact, NTN, bank, account, or address." : "Vendor records used by purchase orders will appear here."));
 }
 
 function resetVendorForm() {
@@ -4535,6 +4863,7 @@ window.editVendor = function (vendorId) {
   form.elements.name.value = vendor.name || "";
   form.elements.phone.value = vendor.phone || "";
   form.elements.contact.value = vendor.contact || "";
+  form.elements.ntn.value = vendor.ntn || "";
   form.elements.bankName.value = vendor.bankName || "";
   form.elements.accountTitle.value = vendor.accountTitle || "";
   form.elements.accountNo.value = vendor.accountNo || "";
@@ -4546,6 +4875,46 @@ window.editVendor = function (vendorId) {
   openVendorDrawer();
   if (window.lucide) window.lucide.createIcons();
 };
+
+window.promptDeleteVendor = function (vendorId) {
+  const vendor = state.vendors.find((row) => String(row.id) === String(vendorId));
+  if (!vendor) return showToast("Vendor not found.", "error");
+  pendingDeleteVendorId = String(vendorId);
+  document.getElementById("deleteVendorMessage").textContent = `Delete ${vendor.name || "this vendor"}? This vendor will be removed from the active vendors list.`;
+  document.getElementById("deleteVendorModal").classList.add("show");
+  document.getElementById("deleteVendorModal").setAttribute("aria-hidden", "false");
+  if (window.lucide) window.lucide.createIcons();
+};
+
+function closeDeleteVendorModal() {
+  pendingDeleteVendorId = "";
+  document.getElementById("deleteVendorModal").classList.remove("show");
+  document.getElementById("deleteVendorModal").setAttribute("aria-hidden", "true");
+}
+
+async function confirmDeleteVendor() {
+  const vendorId = pendingDeleteVendorId;
+  if (!vendorId) return;
+  const vendor = state.vendors.find((row) => String(row.id) === String(vendorId));
+  try {
+    await deleteVendorRecord(vendorId);
+    if (vendor) forgetVendorAccountDetails(vendor);
+    state.vendors = state.vendors.filter((row) => String(row.id) !== String(vendorId));
+    closeDeleteVendorModal();
+    render();
+    recordAuditEvent({
+      action: "delete",
+      entityType: "procurement.vendors",
+      entityId: vendor?.id || vendorId,
+      summary: `${currentUser.name || "IMS User"} deleted vendor ${vendor?.name || vendorId}`,
+      section: "procurement",
+      details: { vendorId, vendorName: vendor?.name || "" }
+    });
+    showToast("Vendor deleted.");
+  } catch (error) {
+    showToast(error.message || "Unable to delete vendor.", "error");
+  }
+}
 
 function detailsText(details) {
   if (!details) return "";
@@ -4582,8 +4951,14 @@ function isIssuedStockHistory(log) {
   const details = detailsObject(log.details);
   const entity = String(log.entityType || "").toLowerCase();
   const type = String(details.type || "").toLowerCase();
+  const action = String(log.action || "").toLowerCase();
   const text = detailsText(log.details).toLowerCase();
-  return entity.includes("stock_movements") && (
+  return (
+    entity.includes("stock_movements")
+    || entity === "requests.issue"
+    || entity === "inventory.stock_out"
+    || (action === "issue" && (entity.includes("issue") || entity.includes("stock_out")))
+  ) && (
     type.includes("out") ||
     type.includes("request_issue") ||
     text.includes("request_issue") ||
@@ -4620,6 +4995,47 @@ function historyRows(section) {
     if (section === "stockOut") return isIssuedStockHistory(log);
     return false;
   });
+}
+
+function historySectionMeta(section) {
+  if (section === "requests") {
+    return {
+      title: "Request History",
+      description: "Review request approvals, fulfilled items, and issued stock tied to requests.",
+      emptyTitle: "No request history found",
+      emptyMessage: "Request approvals and issued request items will appear here."
+    };
+  }
+  if (section === "transport") {
+    return {
+      title: "Transport History",
+      description: "Track arranged and completed transport activity for transport requests.",
+      emptyTitle: "No transport history found",
+      emptyMessage: "Transport approval and arrangement updates will appear here."
+    };
+  }
+  if (section === "approvals") {
+    return {
+      title: "Approval History",
+      description: "See when requests and transport records were approved.",
+      emptyTitle: "No approval history found",
+      emptyMessage: "Approval events will appear here."
+    };
+  }
+  if (section === "stockOut") {
+    return {
+      title: "Stock Issue History",
+      description: "See when stock was issued, what item moved, and where the issue was recorded.",
+      emptyTitle: "No stock issue history found",
+      emptyMessage: "Issued stock records will appear here after stock is issued."
+    };
+  }
+  return {
+    title: "History",
+    description: "Review recorded history for this section.",
+    emptyTitle: "No history found",
+    emptyMessage: "Recorded history will appear here."
+  };
 }
 
 function recordHistoryEntries(section) {
@@ -4693,6 +5109,36 @@ function recordHistoryEntries(section) {
   return [];
 }
 
+function historyEntries(section) {
+  const recordEntries = recordHistoryEntries(section).map((entry) => ({
+    ...entry,
+    log: entry.log || {},
+    details: entry.details || {}
+  }));
+  const logEntries = historyRows(section).map((log) => {
+    const summary = historySummary(log);
+    return {
+      ...summary,
+      log,
+      details: summary.details || detailsObject(log.details)
+    };
+  });
+
+  const uniqueEntries = [];
+  const seen = new Set();
+  [...recordEntries, ...logEntries].forEach((entry) => {
+    if (!entry?.id || seen.has(entry.id)) return;
+    seen.add(entry.id);
+    uniqueEntries.push(entry);
+  });
+
+  return uniqueEntries.sort((a, b) => {
+    const aDate = new Date(a.log?.date || a.details?.requestDate || a.details?.travelDate || 0).getTime();
+    const bDate = new Date(b.log?.date || b.details?.requestDate || b.details?.travelDate || 0).getTime();
+    return bDate - aDate;
+  });
+}
+
 function compactDate(value) {
   if (!value) return "";
   const date = new Date(value);
@@ -4701,7 +5147,7 @@ function compactDate(value) {
 }
 
 function historyRef(details, log) {
-  return details.requestNumber || details.requestId || details.poNumber || details.movementNumber || `${log.entityType || ""}-${log.entityId || ""}`;
+  return details.movementNumber || details.requestNumber || details.requestId || details.poNumber || log.entityId || `${log.entityType || ""}-${log.entityId || ""}`;
 }
 
 function historyKind(log, details) {
@@ -4736,7 +5182,14 @@ function historySummary(log) {
   } else if (field === "approval_status" || details.fromStatus || details.toStatus) {
     title = `${ref} item ${String(toStatus || "updated").toLowerCase()}`;
     subtitle = "Request item status updated";
-  } else if (String(details.type || "").includes("OUT") || String(details.type || "").includes("REQUEST_ISSUE") || String(details.movementNumber || "").startsWith("MOV")) {
+  } else if (
+    String(details.type || "").includes("OUT")
+    || String(details.type || "").includes("REQUEST_ISSUE")
+    || String(details.movementNumber || "").startsWith("MOV")
+    || String(log.entityType || "").toLowerCase() === "requests.issue"
+    || String(log.entityType || "").toLowerCase() === "inventory.stock_out"
+    || String(log.action || "").toLowerCase() === "issue"
+  ) {
     title = `${ref} stock issued`;
     subtitle = details.type ? String(details.type).replace(/_/g, " ").toLowerCase() : "Issued stock recorded";
   }
@@ -4801,6 +5254,15 @@ function historyDetailGrid(entry) {
   `).join("")}</div>`;
 }
 
+function historyEntryBadge(entry) {
+  const title = String(entry.title || "").toLowerCase();
+  if (entry.kind === "transport") return "Transport";
+  if (title.includes("approved")) return "Approved";
+  if (title.includes("issued")) return "Issued";
+  if (title.includes("completed")) return "Completed";
+  return "History";
+}
+
 function auditSectionMatches(log, section = "all") {
   if (!section || section === "all") return true;
   const haystack = `${log.section || ""} ${log.entityType || ""} ${log.summary || ""}`.toLowerCase();
@@ -4839,11 +5301,76 @@ function filteredAuditLogs() {
 }
 
 function renderAuditPage() {
+  const tableCard = document.querySelector("#auditView .audit-log-table-card");
+  const filters = document.querySelector("#auditView .audit-log-filters");
+  const heading = document.querySelector("#auditView .audit-log-heading h2");
+  const headingDescription = document.querySelector("#auditView .audit-log-heading p");
+  const verifiedCount = document.getElementById("auditVerifiedCount");
+  const backButton = document.getElementById("auditBackBtn");
+  const isSectionHistory = activeAuditSection !== "all";
+  const pageTitle = document.getElementById("pageTitle");
+
+  if (!tableCard || !verifiedCount || !backButton) return;
+
+  if (isSectionHistory) {
+    const meta = historySectionMeta(activeAuditSection);
+    const entries = historyEntries(activeHistorySection);
+    if (heading) heading.innerHTML = `<i data-lucide="history"></i>${escapeHtml(meta.title)}`;
+    if (headingDescription) headingDescription.textContent = meta.description;
+    if (pageTitle) pageTitle.textContent = meta.title;
+    if (filters) filters.hidden = true;
+    backButton.hidden = false;
+    verifiedCount.innerHTML = `<i data-lucide="history"></i>${entries.length} ${entries.length === 1 ? "record" : "records"}`;
+    tableCard.innerHTML = entries.length
+      ? `<div class="approval-history-list">${entries.map((entry) => {
+        const [icon, color] = historyIcon(entry);
+        const isOpen = expandedHistoryIds.has(entry.id);
+        return `
+          <article class="history-entry ${isOpen ? "open" : ""}">
+            <button class="history-entry-main" type="button" data-history-entry-toggle="${escapeHtml(entry.id)}">
+              <span class="history-icon ${escapeHtml(color)}"><i data-lucide="${escapeHtml(icon)}"></i></span>
+              <span class="history-copy">
+                <strong>${escapeHtml(entry.title || "History record")}</strong>
+                <span>${escapeHtml(entry.subtitle || "Recorded activity")}</span>
+              </span>
+              <span class="history-meta">
+                <strong>${escapeHtml(compactDate(entry.log?.date || entry.details?.requestDate || entry.details?.travelDate || ""))}</strong>
+                <em>${escapeHtml(historyEntryBadge(entry))}</em>
+              </span>
+              <i class="history-chevron" data-lucide="chevron-down"></i>
+            </button>
+            ${historyDetailGrid(entry)}
+          </article>
+        `;
+      }).join("")}</div>`
+      : `<div class="history-empty"><strong>${escapeHtml(meta.emptyTitle)}</strong><p>${escapeHtml(meta.emptyMessage)}</p></div>`;
+    return;
+  }
+
+  if (heading) heading.innerHTML = `<i data-lucide="scroll-text"></i>Audit Log`;
+  if (headingDescription) headingDescription.textContent = "Immutable record of every important action in this workspace.";
+  if (pageTitle) pageTitle.textContent = "Audit Logs";
+  if (filters) filters.hidden = false;
+  tableCard.innerHTML = `
+    <div class="table-wrap">
+      <table class="audit-log-table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Actor</th>
+            <th>Action</th>
+            <th>Entity</th>
+            <th>Summary</th>
+          </tr>
+        </thead>
+        <tbody id="auditLogTable"></tbody>
+      </table>
+    </div>
+  `;
+
   const tbody = document.getElementById("auditLogTable");
   const actionSelect = document.getElementById("auditActionFilter");
   const actorSelect = document.getElementById("auditActorFilter");
-  const verifiedCount = document.getElementById("auditVerifiedCount");
-  const backButton = document.getElementById("auditBackBtn");
   const searchInput = document.getElementById("auditSearchInput");
   const entityInput = document.getElementById("auditEntityFilter");
   if (!tbody || !actionSelect || !actorSelect) return;
@@ -5020,16 +5547,32 @@ window.issueItem = async function (requestId, itemId) {
     await apiRequest(`/requests/${encodeURIComponent(requestId)}/items/${encodeURIComponent(itemId)}/issue`, {
       method: "POST",
       body: JSON.stringify({ quantity: qty, issuedBy, notes: `Issued by ${issuedBy}` })
-    });
-    await loadBusinessData({ silent: true });
-    render();
-    recordAuditEvent({
-      action: "issue",
-      entityType: "requests.issue",
-      entityId: `${requestId}:${itemId}`,
-      summary: `${currentUser.name || "IMS User"} issued stock for request ${requestId}`,
-      section: "requests",
-      details: { requestId, itemId, quantityIssued: qty, issuedBy }
+    }).then(async (response) => {
+      await loadBusinessData({ silent: true });
+      render();
+      recordAuditEvent({
+        action: "issue",
+        entityType: "requests.issue",
+        entityId: `${requestId}:${itemId}`,
+        summary: `${currentUser.name || "IMS User"} issued stock for request ${requestId}`,
+        section: "requests",
+        details: {
+          requestId,
+          itemId,
+          itemCode: item.itemCode,
+          itemName: item.itemName,
+          type: "REQUEST_ISSUE",
+          movementNumber: response?.movementNumber || "",
+          location: request.location,
+          quantity: qty,
+          quantityIssued: qty,
+          issuedBy,
+          requester: request.requester,
+          requesterEmail: request.requesterEmail,
+          department: request.department,
+          requestDate: request.date
+        }
+      });
     });
     showToast("Stock issued and request status updated.");
   } catch (error) {
@@ -5216,7 +5759,9 @@ window.setTransportApproval = async function (id, status) {
 window.printPO = function (poNumber) {
   const po = state.purchaseOrders.find((row) => row.poNumber === poNumber);
   if (!po) return showToast("Purchase order not found.", "error");
+  const vendor = poVendorRecord(po) || {};
   printHtml(renderPurchaseOrderSheet({
+    vendorNtn: po.vendorNtn || po.ntn || vendor.ntn || "",
     subtotal: Number(po.subtotal ?? (po.quantityOrdered || 0) * (po.unitPrice || 0)),
     taxRate: Number(po.taxRate || 0),
     taxAmount: Number(po.taxAmount || 0),
@@ -5410,6 +5955,16 @@ document.addEventListener("click", (event) => {
   openHistoryPage(button.dataset.historyPage);
 });
 
+document.addEventListener("click", (event) => {
+  const toggle = event.target.closest("[data-history-entry-toggle]");
+  if (!toggle) return;
+  const entryId = toggle.dataset.historyEntryToggle;
+  if (!entryId) return;
+  if (expandedHistoryIds.has(entryId)) expandedHistoryIds.delete(entryId);
+  else expandedHistoryIds.add(entryId);
+  renderAuditPage();
+});
+
 document.getElementById("auditBackBtn")?.addEventListener("click", () => {
   activeAuditSection = "all";
   setView(previousHistoryView || "dashboard");
@@ -5531,6 +6086,7 @@ document.addEventListener("keydown", (event) => {
     closeApprovalDetailModal();
     closeAddUserDrawer();
     closePermissionsDrawer();
+    closeRoleModal();
   }
 });
 
@@ -5569,6 +6125,7 @@ document.getElementById("settingsForm").addEventListener("submit", saveActiveSet
 document.getElementById("settingsForm").addEventListener("click", (event) => {
   if (event.target.id === "reloadSettingsBtn") loadSettings({ silent: false });
   if (event.target.id === "reloadUsersBtn") loadUserManagement({ silent: false });
+  if (event.target.closest("#openRoleModalBtn")) openRoleModal();
   if (event.target.closest("#openAddUserDrawerBtn")) openAddUserDrawer();
   if (event.target.closest("#closeAddUserDrawerBtn")) closeAddUserDrawer();
   if (event.target.closest("#closePermissionsDrawerBtn")) closePermissionsDrawer();
@@ -5592,6 +6149,8 @@ document.getElementById("settingsForm").addEventListener("click", (event) => {
       : roleAccessButton.dataset.roleAccessPreview;
     renderSettings();
   }
+  const deleteRoleButton = event.target.closest(".delete-role");
+  if (deleteRoleButton && !deleteRoleButton.disabled) deleteRoleFromSettings(deleteRoleButton.dataset.roleDelete);
 });
 
 document.addEventListener("click", (event) => {
@@ -5731,6 +6290,12 @@ document.getElementById("poStatusFilters")?.addEventListener("click", (event) =>
   renderPO();
 });
 
+document.getElementById("poTable")?.addEventListener("click", (event) => {
+  const row = event.target.closest("tr[data-po-number]");
+  if (!row || event.target.closest("button")) return;
+  openPoDetail(row.dataset.poNumber);
+});
+
 document.getElementById("inventoryPrev").addEventListener("click", () => {
   inventoryPage -= 1;
   renderInventory();
@@ -5801,6 +6366,8 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeManualStockIssue();
   if (event.key === "Escape") closePoDrawer();
   if (event.key === "Escape") closeVendorDrawer();
+  if (event.key === "Escape") closePoDetail();
+  if (event.key === "Escape") closeRoleModal();
 });
 
 document.getElementById("closeInventoryDetail")?.addEventListener("click", closeInventoryItemDetail);
@@ -5822,6 +6389,10 @@ document.getElementById("savePoPreview")?.addEventListener("click", savePendingP
 document.getElementById("poPreviewModal")?.addEventListener("click", (event) => {
   if (event.target.id === "poPreviewModal") closePoPreview();
 });
+document.getElementById("closePoDetail")?.addEventListener("click", closePoDetail);
+document.getElementById("poDetailModal")?.addEventListener("click", (event) => {
+  if (event.target.id === "poDetailModal") closePoDetail();
+});
 document.getElementById("closePoCancel")?.addEventListener("click", closePoCancelModal);
 document.getElementById("dismissPoCancel")?.addEventListener("click", closePoCancelModal);
 document.getElementById("poCancelForm")?.addEventListener("submit", submitPoCancellation);
@@ -5833,6 +6404,18 @@ document.getElementById("cancelDeleteUser")?.addEventListener("click", closeDele
 document.getElementById("confirmDeleteUser")?.addEventListener("click", confirmDeleteUser);
 document.getElementById("deleteUserModal")?.addEventListener("click", (event) => {
   if (event.target.id === "deleteUserModal") closeDeleteUserModal();
+});
+document.getElementById("closeDeleteVendorModal")?.addEventListener("click", closeDeleteVendorModal);
+document.getElementById("cancelDeleteVendor")?.addEventListener("click", closeDeleteVendorModal);
+document.getElementById("confirmDeleteVendor")?.addEventListener("click", confirmDeleteVendor);
+document.getElementById("deleteVendorModal")?.addEventListener("click", (event) => {
+  if (event.target.id === "deleteVendorModal") closeDeleteVendorModal();
+});
+document.getElementById("roleForm")?.addEventListener("submit", createRoleFromSettings);
+document.getElementById("closeRoleModal")?.addEventListener("click", closeRoleModal);
+document.getElementById("cancelRoleModal")?.addEventListener("click", closeRoleModal);
+document.getElementById("roleModal")?.addEventListener("click", (event) => {
+  if (event.target.id === "roleModal") closeRoleModal();
 });
 document.getElementById("approvalsBoard")?.addEventListener("click", (event) => {
   const menuButton = event.target.closest("[data-approval-menu]");
@@ -6006,7 +6589,7 @@ document.getElementById("manualStockOutForm").addEventListener("submit", async (
   if (available < quantity) return showToast("Stock unavailable for this manual stock out.", "error");
   form.set("notes", [issuedTo ? `Issued to: ${issuedTo}` : "", notes].filter(Boolean).join(" | "));
   try {
-    await apiRequest("/stock/out", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
+    const response = await apiRequest("/stock/out", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
     event.currentTarget.reset();
     closeManualStockIssue();
     await loadBusinessData({ silent: true });
@@ -6017,7 +6600,16 @@ document.getElementById("manualStockOutForm").addEventListener("submit", async (
       entityId: itemCode,
       summary: `${currentUser.name || "IMS User"} recorded a manual stock issue for ${itemCode}`,
       section: "inventory",
-      details: { location, quantity, issuedTo }
+      details: {
+        itemCode,
+        itemName: item.name,
+        type: "MANUAL_OUT",
+        movementNumber: response?.movementNumber || "",
+        location,
+        quantity,
+        issuedTo,
+        notes
+      }
     });
     showToast("Manual stock-out saved.");
   } catch (error) {
@@ -6168,6 +6760,7 @@ document.getElementById("vendorForm").addEventListener("submit", async (event) =
     name: String(form.get("name") || "").trim(),
     phone: String(form.get("phone") || "").trim(),
     contact: String(form.get("contact") || "").trim(),
+    ntn: String(form.get("ntn") || "").trim(),
     bankName: String(form.get("bankName") || "").trim(),
     accountTitle: String(form.get("accountTitle") || "").trim(),
     accountNo: String(form.get("accountNo") || "").trim(),

@@ -188,7 +188,7 @@
         <div class="request-panel" id="requestsTransportPanel"></div>
         <div class="request-panel" id="requestsItemsPanel">
           <div class="card table-card">
-            <div class="section-title"><p>Review submitted request lines, approval decisions, issuance status, and request dates in one place.</p><button class="secondary" type="button" data-history-page="requests">History</button></div>
+            <div class="section-title"><p>Review submitted request lines, approval decisions, issuance status, and request dates in one place.</p></div>
             <div class="table-wrap requests-scroll"><table><thead><tr><th>ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Approval</th><th>Issue</th><th>Date</th></tr></thead><tbody id="requestsTable"></tbody></table></div>
             <div class="pagination" id="requestsPagination">
               <button class="page-btn" id="requestsPrev" type="button"><i data-lucide="chevron-left"></i>Prev</button>
@@ -523,7 +523,7 @@
           <div class="po-records-toolbar vendors-records-toolbar">
             <label class="po-search-filter vendors-search-filter"><i data-lucide="search"></i><input id="vendorSearchInput" type="search" placeholder="Search vendors..."></label>
           </div>
-          <div class="vendors-records-card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone number</th><th>Contact person</th><th>Bank</th><th>A/C Title</th><th>A/C No.</th><th>Address</th><th>Actions</th></tr></thead><tbody id="vendorsTable"></tbody></table></div></div>
+          <div class="vendors-records-card"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone number</th><th>Contact person</th><th>NTN</th><th>Bank</th><th>A/C Title</th><th>A/C No.</th><th>Address</th><th>Actions</th></tr></thead><tbody id="vendorsTable"></tbody></table></div></div>
         </div>
         <div class="vendor-drawer" id="vendorDrawer" aria-hidden="true">
           <form id="vendorForm" class="card form-card vendor-drawer-card">
@@ -534,6 +534,7 @@
               <label>Name<input required name="name"></label>
               <label>Phone<input name="phone"></label>
               <label>Contact person<input name="contact"></label>
+              <label>NTN<input name="ntn"></label>
               <label>Bank<input name="bankName"></label>
               <label>A/C title<input name="accountTitle"></label>
               <label>A/C no.<input name="accountNo"></label>
@@ -541,6 +542,18 @@
             </div>
             <div class="form-actions"><button class="secondary" id="cancelVendorEdit" type="button" hidden>Cancel edit</button><button class="primary" id="saveVendorButton" type="submit"><i data-lucide="building-2"></i>Add Vendor</button></div>
           </form>
+        </div>
+        <div class="modal-backdrop" id="deleteVendorModal" aria-hidden="true">
+          <div class="card modal-card delete-user-card">
+            <div class="modal-head">
+              <div class="section-title"><h2>Delete Vendor</h2><p id="deleteVendorMessage">Do you want to delete this vendor?</p></div>
+              <button class="icon-btn" id="closeDeleteVendorModal" type="button" aria-label="Close delete vendor confirmation"><i data-lucide="x"></i></button>
+            </div>
+            <div class="form-actions">
+              <button class="secondary" id="cancelDeleteVendor" type="button">Cancel</button>
+              <button class="danger-btn" id="confirmDeleteVendor" type="button"><i data-lucide="trash-2"></i>Delete Vendor</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -620,6 +633,7 @@
     </form>
   </div>
 
+  <div class="modal-backdrop" id="poPreviewModal" aria-hidden="true">
     <div class="card modal-card po-modal-card">
       <div class="modal-head">
         <div class="section-title"><h2>Purchase Order Preview</h2><p>Review the generated PO before saving.</p></div>
@@ -660,6 +674,21 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="roleModal" aria-hidden="true">
+    <form id="roleForm" class="card form-card modal-card role-modal-card">
+      <div class="modal-head">
+        <div class="section-title"><h2>Create Role</h2><p>Add a new workspace role for assignment in user settings.</p></div>
+        <button class="icon-btn" id="closeRoleModal" type="button" aria-label="Close create role"><i data-lucide="x"></i></button>
+      </div>
+      <label>Role name<input id="roleName" name="name" required placeholder="e.g. Field Auditor"></label>
+      <label>Description<textarea id="roleDescription" name="description" rows="4" placeholder="What this role is used for"></textarea></label>
+      <div class="form-actions">
+        <button class="secondary" id="cancelRoleModal" type="button">Cancel</button>
+        <button class="primary" type="submit"><i data-lucide="plus"></i>Create Role</button>
+      </div>
+    </form>
+  </div>
+
   <div class="modal-backdrop" id="deleteInventoryItemModal" aria-hidden="true">
     <div class="card modal-card delete-user-card">
       <div class="modal-head">
@@ -697,11 +726,21 @@
     </div>
   </div>
 
+  <div class="modal-backdrop" id="poDetailModal" aria-hidden="true">
+    <div class="card modal-card po-detail-card">
+      <div class="modal-head">
+        <div class="section-title"><h2 id="poDetailTitle">Purchase order details</h2><p id="poDetailSubtitle">Review the full PO details.</p></div>
+        <button class="icon-btn" id="closePoDetail" type="button" aria-label="Close PO details"><i data-lucide="x"></i></button>
+      </div>
+      <div id="poDetailContent"></div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="js/firebase-config.js?v=firebase-1"></script>
   <script src="js/inventory data/progressive.js?v=inventory-split-1"></script>
   <script src="js/inventory data/rwhu.js?v=inventory-split-1"></script>
   <script src="js/inventory data/stationary.js?v=inventory-split-1"></script>
-  <script src="js/script.js?v=audit-log-20260608-1"></script>
+  <script src="js/script.js?v=roles-debug-20260609-1"></script>
 </body>
 </html>

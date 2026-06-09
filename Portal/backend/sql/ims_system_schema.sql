@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS vendors (
   contact VARCHAR(150) NULL,
   email VARCHAR(255) NULL,
   phone VARCHAR(80) NULL,
+  ntn VARCHAR(120) NULL,
   address TEXT NULL,
   bank_name VARCHAR(150) NULL,
   account_title VARCHAR(220) NULL,
@@ -786,6 +787,7 @@ CALL sp_drop_column_if_exists('users', 'role');
 CALL sp_add_column_if_missing('vendors', 'deleted_at', 'deleted_at TIMESTAMP NULL');
 CALL sp_add_column_if_missing('vendors', 'created_by', 'created_by INT UNSIGNED NULL');
 CALL sp_add_column_if_missing('vendors', 'updated_by', 'updated_by INT UNSIGNED NULL');
+CALL sp_add_column_if_missing('vendors', 'ntn', 'ntn VARCHAR(120) NULL AFTER phone');
 CALL sp_add_column_if_missing('vendors', 'bank_name', 'bank_name VARCHAR(150) NULL');
 CALL sp_add_column_if_missing('vendors', 'account_title', 'account_title VARCHAR(220) NULL');
 CALL sp_add_column_if_missing('vendors', 'account_no', 'account_no VARCHAR(120) NULL');

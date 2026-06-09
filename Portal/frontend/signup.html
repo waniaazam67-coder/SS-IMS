@@ -21,9 +21,29 @@
         </div>
       </div>
 
-      <div class="auth-form google-only-auth">
+      <form class="auth-form" id="signupForm">
         <p id="errorMsg" style="color:red; font-size:13px; display:none;"></p>
         <p id="successMsg" style="color:green; font-size:13px; display:none;"></p>
+        <label>Full Name<input id="signupFullName" type="text" autocomplete="name" required></label>
+        <label>Email Address<input id="signupEmail" type="email" autocomplete="email" required></label>
+        <label>Password
+          <span class="auth-password-field">
+            <input id="signupPassword" type="password" autocomplete="new-password" minlength="8" required>
+            <button class="auth-password-toggle" type="button" data-password-toggle="signupPassword" aria-label="Show password"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+          </span>
+        </label>
+        <label>Confirm Password
+          <span class="auth-password-field">
+            <input id="signupConfirmPassword" type="password" autocomplete="new-password" minlength="8" required>
+            <button class="auth-password-toggle" type="button" data-password-toggle="signupConfirmPassword" aria-label="Show password"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+          </span>
+        </label>
+        <button class="primary auth-submit" type="submit">Create Account</button>
+      </form>
+
+      <div class="auth-divider">or</div>
+
+      <div class="auth-form google-only-auth">
         <button class="secondary auth-google" type="button" onclick="handleGoogleSignup()">Continue with Google</button>
       </div>
 
@@ -34,12 +54,26 @@
   <script src="js/firebase-config.js?v=firebase-1"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+    import { browserLocalPersistence, createUserWithEmailAndPassword, getAuth, GoogleAuthProvider, onAuthStateChanged, sendEmailVerification, setPersistence, signInWithPopup, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
     const app = initializeApp(window.IMS_FIREBASE_CONFIG);
     const auth = getAuth(app);
+    await setPersistence(auth, browserLocalPersistence);
+    const initialUser = await new Promise((resolve) => {
+      const unsubscribe = onAuthStateChanged(auth, (user) => {
+        unsubscribe();
+        resolve(user);
+      });
+    });
+    if (initialUser) {
+      localStorage.removeItem('firebase_token');
+      await signOut(auth);
+    }
     const googleProvider = new GoogleAuthProvider();
     const OFFICIAL_EMAIL_MESSAGE = 'Only Shehersaaz official email addresses are allowed.';
+    const loginPageUrl = window.location.protocol === 'file:'
+      ? 'http://localhost:3000/login.html'
+      : new URL('login.html', window.location.href).toString();
 
     function isOfficialEmail(email) {
       return String(email || '').trim().toLowerCase().endsWith('@shehersaaz.org.pk');
@@ -53,6 +87,33 @@
       errorMsg.style.display = 'block';
     }
 
+    function showSuccess(message) {
+      const errorMsg = document.getElementById('errorMsg');
+      const successMsg = document.getElementById('successMsg');
+      errorMsg.style.display = 'none';
+      successMsg.textContent = message;
+      successMsg.style.display = 'block';
+    }
+
+    const eyeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+    const eyeOffIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 18 18"></path><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.36 5.37A9.9 9.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.06 4.19"></path><path d="M6.23 6.23A17.3 17.3 0 0 0 2 12s3.5 7 10 7a9.9 9.9 0 0 0 5.27-1.5"></path></svg>';
+
+    function setPasswordToggleIcon(button, isHidden) {
+      button.innerHTML = isHidden ? eyeIcon : eyeOffIcon;
+      button.setAttribute('aria-label', isHidden ? 'Show password' : 'Hide password');
+    }
+
+    document.querySelectorAll('[data-password-toggle]').forEach((button) => {
+      setPasswordToggleIcon(button, true);
+      button.addEventListener('click', () => {
+        const input = document.getElementById(button.dataset.passwordToggle);
+        if (!input) return;
+        const isHidden = input.type === 'password';
+        input.type = isHidden ? 'text' : 'password';
+        setPasswordToggleIcon(button, !isHidden);
+      });
+    });
+
     async function rejectUnauthorizedUser(user) {
       if (isOfficialEmail(user?.email)) return false;
       localStorage.removeItem('firebase_token');
@@ -60,6 +121,53 @@
       showError(OFFICIAL_EMAIL_MESSAGE);
       return true;
     }
+
+    async function sendPortalVerification(user, successMessage) {
+      if (!user) return false;
+      try {
+        await sendEmailVerification(user, { url: loginPageUrl });
+        showSuccess(successMessage);
+        return true;
+      } catch (error) {
+        if (user.emailVerified) {
+          showSuccess('Google account created. This email is already verified by Google. You can now log in to the portal.');
+          return true;
+        }
+        showError(error.message || 'Unable to send verification email.');
+        return false;
+      } finally {
+        localStorage.removeItem('firebase_token');
+        await signOut(auth);
+      }
+    }
+
+    document.getElementById('signupForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const fullName = document.getElementById('signupFullName').value.trim();
+      const email = document.getElementById('signupEmail').value.trim();
+      const password = document.getElementById('signupPassword').value;
+      const confirmPassword = document.getElementById('signupConfirmPassword').value;
+      document.getElementById('errorMsg').style.display = 'none';
+      document.getElementById('successMsg').style.display = 'none';
+      if (!isOfficialEmail(email)) {
+        showError(OFFICIAL_EMAIL_MESSAGE);
+        return;
+      }
+      if (password !== confirmPassword) {
+        showError('Password and confirm password must match.');
+        return;
+      }
+      try {
+        const { user } = await createUserWithEmailAndPassword(auth, email, password);
+        if (fullName) await updateProfile(user, { displayName: fullName });
+        await sendPortalVerification(user, 'Account created. Check your email for the verification link before logging in.');
+      } catch (error) {
+        // #region debug-point C:signup-create-user-error
+        fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"C",location:"signup.html:createUserWithEmailAndPassword:error",msg:"[DEBUG] signup create user failed",data:{email,code:error?.code||"",message:error?.message||""},ts:Date.now()})}).catch(()=>{});
+        // #endregion
+        showError(error.message || 'Unable to create account.');
+      }
+    });
 
     window.handleGoogleSignup = async function handleGoogleSignup() {
       const errorMsg = document.getElementById('errorMsg');
@@ -69,8 +177,7 @@
       try {
         const { user } = await signInWithPopup(auth, googleProvider);
         if (await rejectUnauthorizedUser(user)) return;
-        localStorage.setItem('firebase_token', await user.getIdToken());
-        window.location.href = 'index.html';
+        await sendPortalVerification(user, 'Google signup complete. Check your email for the verification link before logging in.');
       } catch (error) {
         errorMsg.textContent = error.message;
         errorMsg.style.display = 'block';

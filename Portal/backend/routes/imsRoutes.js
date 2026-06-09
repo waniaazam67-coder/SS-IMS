@@ -72,6 +72,10 @@ router.put("/vendors/:vendorId", requirePermission(PERMISSIONS.MANAGE_PURCHASE_O
   try { ok(res, { vendor: await imsService.updateVendor(req.params.vendorId, req.body, req.auth.user.id) }); } catch (error) { next(error); }
 });
 
+router.delete("/vendors/:vendorId", requirePermission(PERMISSIONS.MANAGE_PURCHASE_ORDERS), async (req, res, next) => {
+  try { ok(res, { vendor: await imsService.deleteVendor(req.params.vendorId, req.auth.user.id) }); } catch (error) { next(error); }
+});
+
 router.get("/requests", requirePermission(PERMISSIONS.CREATE_REQUESTS), async (req, res, next) => {
   try { ok(res, { requests: await imsService.listRequests() }); } catch (error) { next(error); }
 });
