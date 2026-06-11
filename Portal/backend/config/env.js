@@ -47,8 +47,6 @@ const config = {
     web: firebaseWebConfig,
     admin: {
       projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY,
       serviceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH
     }
   },
@@ -76,6 +74,7 @@ function validateEnvironmentConfig() {
     "FIREBASE_STORAGE_BUCKET",
     "FIREBASE_MESSAGING_SENDER_ID",
     "FIREBASE_APP_ID",
+    "FIREBASE_SERVICE_ACCOUNT_PATH",
     "CORS_ORIGIN"
   ];
   const requiredDefinedOnly = ["DB_PASSWORD"];
@@ -90,12 +89,6 @@ function validateEnvironmentConfig() {
   const errors = [];
   if (missing.length) {
     errors.push(`Missing required environment variables: ${missing.join(", ")}`);
-  }
-
-  const hasServiceAccountPath = hasValue(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
-  const hasInlineServiceAccount = hasValue(process.env.FIREBASE_CLIENT_EMAIL) && hasValue(process.env.FIREBASE_PRIVATE_KEY);
-  if (!hasServiceAccountPath && !hasInlineServiceAccount) {
-    errors.push("Configure Firebase Admin with FIREBASE_SERVICE_ACCOUNT_PATH or both FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY.");
   }
 
   if (env === "production" && !config.corsOrigins.length) {

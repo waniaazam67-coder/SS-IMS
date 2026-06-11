@@ -1,11 +1,9 @@
-name: Deploy Requisition Form to Hostinger
+name: Deploy IMS Portal to Hostinger
 
 on:
   push:
     branches:
       - main
-    paths:
-      - 'Requisition-From/**'   # ← only triggers when req form files change
 
 jobs:
   ftp-deploy:
@@ -18,15 +16,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Verify password secret
+      - name: Verify FTP secret
         run: |
           if [ -z "$FTP_PASSWORD" ]; then
-            echo "Password secret is EMPTY or NOT FOUND"
+            echo "HOSTINGER_FTP_PASSWORD is missing"
             exit 1
           fi
-          echo "Password secret exists"
+          echo "FTP secret exists"
 
-      - name: Deploy to Hostinger
+      - name: Deploy IMS to Hostinger
         uses: SamKirkland/FTP-Deploy-Action@v4.4.0
         with:
           server: 195.35.62.66
@@ -34,5 +32,14 @@ jobs:
           password: ${{ secrets.HOSTINGER_FTP_PASSWORD }}
           port: 21
           protocol: ftp
-          local-dir: ./Requisition-From/    # ← changed: only uploads req form folder
+          local-dir: ./
           server-dir: ./
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/.env/**
+            **/.env
+            **/firebase-service-account.json
+            **/Portal/backend/firebase-service-account.json
+            **/*.log

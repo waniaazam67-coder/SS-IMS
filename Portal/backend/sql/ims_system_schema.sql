@@ -1,10 +1,4 @@
-
-CREATE DATABASE IF NOT EXISTS ims_system
-  CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
-
-USE ims_system;
-
+USE u228849669_ims;
 CREATE TABLE IF NOT EXISTS departments (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   code VARCHAR(40) NULL,

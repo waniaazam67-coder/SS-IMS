@@ -19,20 +19,22 @@ let firebaseAdminAuth = null;
 function getFirebaseAdminAuth() {
   if (firebaseAdminAuth) return firebaseAdminAuth;
   try {
-    const { cert, getApps, initializeApp } = require("firebase-admin/app");
+    const admin = require("firebase-admin/app");
     const { getAuth } = require("firebase-admin/auth");
-    if (!getApps().length) {
-      const credentialConfig = getFirebaseCredentialConfig();
-      if (!credentialConfig) {
+    if (!admin.getApps().length) {
+      const serviceAccountPath = String(process.env.FIREBASE_SERVICE_ACCOUNT_PATH || config.firebase.admin.serviceAccountPath || "").trim();
+      if (!serviceAccountPath) {
         if (config.isProduction) {
           throw new Error("Missing Firebase Admin service account configuration.");
         }
         console.warn("Firebase Admin Auth is not configured; user management and token verification are limited.");
         return null;
       }
-      initializeApp({
-        credential: cert(credentialConfig),
-        projectId: credentialConfig.projectId
+      const serviceAccount = JSON.parse(fs.readFileSync(resolveServiceAccountPath(serviceAccountPath), "utf8"));
+      const adminCredential = admin.cert(serviceAccount);
+      admin.initializeApp({
+        credential: adminCredential,
+        projectId: serviceAccount.project_id || config.firebase.admin.projectId
       });
     }
     firebaseAdminAuth = getAuth();
@@ -44,34 +46,12 @@ function getFirebaseAdminAuth() {
   }
 }
 
-function getFirebaseCredentialConfig() {
-  const serviceAccountPath = String(config.firebase.admin.serviceAccountPath || "").trim();
-  if (serviceAccountPath) {
-    const resolvedPath = resolveServiceAccountPath(serviceAccountPath);
-    if (fs.existsSync(resolvedPath)) {
-      const serviceAccount = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
-      return {
-        projectId: serviceAccount.project_id,
-        clientEmail: serviceAccount.client_email,
-        privateKey: serviceAccount.private_key
-      };
-    }
-    console.error(`Firebase service account file not found: ${resolvedPath}`);
-  }
-
-  const projectId = String(config.firebase.admin.projectId || "").trim();
-  const clientEmail = String(config.firebase.admin.clientEmail || "").trim();
-  const privateKey = String(config.firebase.admin.privateKey || "").replace(/^"|"$/g, "").replace(/\\n/g, "\n");
-  if (!projectId || !clientEmail || !privateKey) return null;
-  return { projectId, clientEmail, privateKey };
-}
-
 function resolveServiceAccountPath(serviceAccountPath) {
   if (path.isAbsolute(serviceAccountPath)) return serviceAccountPath;
   const candidates = [
     path.resolve(process.cwd(), serviceAccountPath),
-    path.resolve(__dirname, "..", serviceAccountPath),
-    path.resolve(__dirname, "../..", serviceAccountPath)
+    path.resolve(__dirname, "../..", serviceAccountPath),
+    path.resolve(__dirname, "../../..", serviceAccountPath)
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
 }
