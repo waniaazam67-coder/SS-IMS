@@ -394,17 +394,26 @@ body.page-exit-back .login-card {
       signOut
     } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
 
-    // Replace with your Firebase project config
-    const firebaseConfig = {
-      apiKey: "AIzaSyAZWlC3Om-zT6Ekgbu4jbGF4RTMvdBdPh0",
-      authDomain: "shehersaaz-ims.firebaseapp.com",
-      projectId: "shehersaaz-ims",
-      appId: "1:594008194328:web:628955770dd49b4298f26d"
-    };
+    const BACKEND_ORIGIN = "http://localhost:3000";
+    async function loadFirebaseConfig() {
+      const configUrl = window.location.protocol === "file:"
+        ? `${BACKEND_ORIGIN}/api/firebase-config`
+        : new URL("/api/firebase-config", BACKEND_ORIGIN).toString();
+      const response = await fetch(configUrl, {
+        headers: { Accept: "application/json" },
+        cache: "no-store"
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.success || !payload?.firebase) {
+        throw new Error("Unable to load Firebase configuration.");
+      }
+      return payload.firebase;
+    }
 
     // Replace with your real organization domain
     const ALLOWED_DOMAIN = "shehersaaz.org.pk";
 
+    const firebaseConfig = await loadFirebaseConfig();
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const provider = new GoogleAuthProvider();

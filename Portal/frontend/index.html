@@ -46,6 +46,10 @@
         </div>
       </nav>
       <div class="sidebar-footer">
+        <nav class="sidebar-legal-links" aria-label="Legal links">
+          <a href="privacy-policy.html">Privacy</a>
+          <a href="terms-and-conditions.html">Terms</a>
+        </nav>
         <div class="profile-wrap sidebar-profile-wrap">
           <button class="profile sidebar-profile" id="profileBtn" type="button" aria-label="IMS User" data-profile-name="IMS User"><span class="avatar">IU</span><span class="profile-copy"><span class="profile-name">IMS User</span><small>Member</small></span><i data-lucide="log-out"></i></button>
           <div class="profile-menu sidebar-profile-menu" id="profileMenu" aria-hidden="true">
@@ -189,6 +193,30 @@
         <div class="request-panel" id="requestsItemsPanel">
           <div class="card table-card">
             <div class="section-title"><p>Review submitted request lines, approval decisions, issuance status, and request dates in one place.</p></div>
+            <div class="temporal-filter-bar">
+              <span class="temporal-filter-title">Filter by</span>
+              <div class="temporal-filter-mode" role="group" aria-label="Item requests filter mode">
+                <button class="temporal-filter-chip" type="button" data-temporal-mode="date" data-temporal-filter="itemRequests">Date range</button>
+                <button class="temporal-filter-chip" type="button" data-temporal-mode="month" data-temporal-filter="itemRequests">Month range</button>
+              </div>
+              <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="itemRequests">
+                <span>Start date</span>
+                <input type="date" data-temporal-input="start" data-temporal-filter="itemRequests">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="itemRequests">
+                <span>End date</span>
+                <input type="date" data-temporal-input="end" data-temporal-filter="itemRequests">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="itemRequests" hidden>
+                <span>Start month</span>
+                <input type="month" data-temporal-input="monthStart" data-temporal-filter="itemRequests">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="itemRequests" hidden>
+                <span>End month</span>
+                <input type="month" data-temporal-input="monthEnd" data-temporal-filter="itemRequests">
+              </label>
+              <button class="secondary temporal-filter-clear" type="button" data-temporal-clear="true" data-temporal-filter="itemRequests">Clear</button>
+            </div>
             <div class="table-wrap requests-scroll"><table><thead><tr><th>ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Approval</th><th>Issue</th><th>Date</th></tr></thead><tbody id="requestsTable"></tbody></table></div>
             <div class="pagination" id="requestsPagination">
               <button class="page-btn" id="requestsPrev" type="button"><i data-lucide="chevron-left"></i>Prev</button>
@@ -206,6 +234,30 @@
             <button class="primary" id="openRequisitionForm" type="button"><i data-lucide="external-link"></i>New Request</button>
           </div>
           <div class="section-title compact-title"><h2>Your Requests</h2><p>Approval and issuance tracking for requests submitted from your account.</p></div>
+          <div class="temporal-filter-bar">
+            <span class="temporal-filter-title">Filter by</span>
+            <div class="temporal-filter-mode" role="group" aria-label="Requisition filter mode">
+              <button class="temporal-filter-chip" type="button" data-temporal-mode="date" data-temporal-filter="requisition">Date range</button>
+              <button class="temporal-filter-chip" type="button" data-temporal-mode="month" data-temporal-filter="requisition">Month range</button>
+            </div>
+            <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="requisition">
+              <span>Start date</span>
+              <input type="date" data-temporal-input="start" data-temporal-filter="requisition">
+            </label>
+            <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="requisition">
+              <span>End date</span>
+              <input type="date" data-temporal-input="end" data-temporal-filter="requisition">
+            </label>
+            <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="requisition" hidden>
+              <span>Start month</span>
+              <input type="month" data-temporal-input="monthStart" data-temporal-filter="requisition">
+            </label>
+            <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="requisition" hidden>
+              <span>End month</span>
+              <input type="month" data-temporal-input="monthEnd" data-temporal-filter="requisition">
+            </label>
+            <button class="secondary temporal-filter-clear" type="button" data-temporal-clear="true" data-temporal-filter="requisition">Clear</button>
+          </div>
           <div class="table-wrap requests-scroll"><table><thead><tr><th>ID</th><th>Requester</th><th>Department</th><th>Line Manager Email</th><th>Location</th><th>Item ID</th><th>Item</th><th>Type</th><th>Qty</th><th>Approval</th><th>Issue</th><th>Date</th></tr></thead><tbody id="myRequestsTable"></tbody></table></div>
         </div>
       </section>
@@ -279,6 +331,30 @@
             <label class="stock-issue-search"><i data-lucide="search"></i><input id="stockIssueSearchInput" type="search" placeholder="Search request ID, location, or item name"></label>
             <label class="stock-issue-location-filter"><span>Location</span><input id="stockIssueLocationFilter" data-locations list="stockIssueLocationOptions" placeholder="All locations"></label>
             <button class="secondary" type="button" data-history-page="stockOut">History</button>
+            <div class="temporal-filter-bar">
+              <span class="temporal-filter-title">Filter by</span>
+              <div class="temporal-filter-mode" role="group" aria-label="Stock issue filter mode">
+                <button class="temporal-filter-chip" type="button" data-temporal-mode="date" data-temporal-filter="stockIssue">Date range</button>
+                <button class="temporal-filter-chip" type="button" data-temporal-mode="month" data-temporal-filter="stockIssue">Month range</button>
+              </div>
+              <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="stockIssue">
+                <span>Start date</span>
+                <input type="date" data-temporal-input="start" data-temporal-filter="stockIssue">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="stockIssue">
+                <span>End date</span>
+                <input type="date" data-temporal-input="end" data-temporal-filter="stockIssue">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="stockIssue" hidden>
+                <span>Start month</span>
+                <input type="month" data-temporal-input="monthStart" data-temporal-filter="stockIssue">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="stockIssue" hidden>
+                <span>End month</span>
+                <input type="month" data-temporal-input="monthEnd" data-temporal-filter="stockIssue">
+              </label>
+              <button class="secondary temporal-filter-clear" type="button" data-temporal-clear="true" data-temporal-filter="stockIssue">Clear</button>
+            </div>
           </div>
           <div class="table-wrap"><table><thead><tr><th>Request</th><th>Item</th><th>Location</th><th>Requested</th><th>Available</th><th>Issue Qty</th><th>Issued By</th><th>Action</th></tr></thead><tbody id="issueTable"></tbody></table></div>
         </div>
@@ -315,6 +391,30 @@
             <label class="po-vendor-filter"><select id="poVendorFilter"><option value="">All vendors</option></select></label>
             <button class="filter-clear-button" id="clearPoVendorFilter" type="button" aria-label="Clear PO vendor filter" title="Clear vendor filter" disabled><i data-lucide="x"></i></button>
             <div class="po-status-filters" id="poStatusFilters" aria-label="PO status filters"></div>
+            <div class="temporal-filter-bar">
+              <span class="temporal-filter-title">Filter by</span>
+              <div class="temporal-filter-mode" role="group" aria-label="PO filter mode">
+                <button class="temporal-filter-chip" type="button" data-temporal-mode="date" data-temporal-filter="po">Date range</button>
+                <button class="temporal-filter-chip" type="button" data-temporal-mode="month" data-temporal-filter="po">Month range</button>
+              </div>
+              <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="po">
+                <span>Start date</span>
+                <input type="date" data-temporal-input="start" data-temporal-filter="po">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="po">
+                <span>End date</span>
+                <input type="date" data-temporal-input="end" data-temporal-filter="po">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="po" hidden>
+                <span>Start month</span>
+                <input type="month" data-temporal-input="monthStart" data-temporal-filter="po">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="po" hidden>
+                <span>End month</span>
+                <input type="month" data-temporal-input="monthEnd" data-temporal-filter="po">
+              </label>
+              <button class="secondary temporal-filter-clear" type="button" data-temporal-clear="true" data-temporal-filter="po">Clear</button>
+            </div>
           </div>
           <div class="po-records-card">
             <div class="table-wrap"><table><thead><tr><th>PO</th><th>Vendor</th><th>Ordered</th><th>Status</th><th>Total</th><th>Actions</th></tr></thead><tbody id="poTable"></tbody></table></div>
@@ -436,6 +536,30 @@
             <label class="stock-issue-search grn-record-search"><i data-lucide="search"></i><input id="grnSearchInput" type="search" placeholder="Search by GRN, PO, or vendor."></label>
             <label class="stock-issue-location-filter grn-filter-field"><span>Vendor</span><select id="grnVendorFilter"><option value="">All vendors</option></select></label>
             <button class="filter-clear-button" id="clearGrnVendorFilter" type="button" aria-label="Clear GRN vendor filter" title="Clear vendor filter" disabled><i data-lucide="x"></i></button>
+            <div class="temporal-filter-bar">
+              <span class="temporal-filter-title">Filter by</span>
+              <div class="temporal-filter-mode" role="group" aria-label="GRN filter mode">
+                <button class="temporal-filter-chip" type="button" data-temporal-mode="date" data-temporal-filter="grn">Date range</button>
+                <button class="temporal-filter-chip" type="button" data-temporal-mode="month" data-temporal-filter="grn">Month range</button>
+              </div>
+              <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="grn">
+                <span>Start date</span>
+                <input type="date" data-temporal-input="start" data-temporal-filter="grn">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="grn">
+                <span>End date</span>
+                <input type="date" data-temporal-input="end" data-temporal-filter="grn">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="grn" hidden>
+                <span>Start month</span>
+                <input type="month" data-temporal-input="monthStart" data-temporal-filter="grn">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="grn" hidden>
+                <span>End month</span>
+                <input type="month" data-temporal-input="monthEnd" data-temporal-filter="grn">
+              </label>
+              <button class="secondary temporal-filter-clear" type="button" data-temporal-clear="true" data-temporal-filter="grn">Clear</button>
+            </div>
           </div>
           <div class="grn-records-card">
             <div class="table-wrap"><table><thead><tr><th>GRN</th><th>Linked PO</th><th>Vendor</th><th>Received</th><th>Into</th><th>Units</th><th>Status</th><th></th></tr></thead><tbody id="grnTable"></tbody></table></div>
@@ -464,12 +588,60 @@
 
       <section class="view" id="transportView">
         <div class="transport-board-card">
+          <div class="temporal-filter-bar">
+            <span class="temporal-filter-title">Filter by</span>
+            <div class="temporal-filter-mode" role="group" aria-label="Transport requests filter mode">
+              <button class="temporal-filter-chip" type="button" data-temporal-mode="date" data-temporal-filter="transport">Date range</button>
+              <button class="temporal-filter-chip" type="button" data-temporal-mode="month" data-temporal-filter="transport">Month range</button>
+            </div>
+            <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="transport">
+              <span>Start date</span>
+              <input type="date" data-temporal-input="start" data-temporal-filter="transport">
+            </label>
+            <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="transport">
+              <span>End date</span>
+              <input type="date" data-temporal-input="end" data-temporal-filter="transport">
+            </label>
+            <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="transport" hidden>
+              <span>Start month</span>
+              <input type="month" data-temporal-input="monthStart" data-temporal-filter="transport">
+            </label>
+            <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="transport" hidden>
+              <span>End month</span>
+              <input type="month" data-temporal-input="monthEnd" data-temporal-filter="transport">
+            </label>
+            <button class="secondary temporal-filter-clear" type="button" data-temporal-clear="true" data-temporal-filter="transport">Clear</button>
+          </div>
           <div class="transport-board" id="transportBoard" aria-label="Transport request board"></div>
         </div>
       </section>
 
       <section class="view" id="approvalsView">
         <div class="approvals-board-card">
+          <div class="temporal-filter-bar">
+            <span class="temporal-filter-title">Filter by</span>
+            <div class="temporal-filter-mode" role="group" aria-label="Approvals filter mode">
+              <button class="temporal-filter-chip" type="button" data-temporal-mode="date" data-temporal-filter="approvals">Date range</button>
+              <button class="temporal-filter-chip" type="button" data-temporal-mode="month" data-temporal-filter="approvals">Month range</button>
+            </div>
+            <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="approvals">
+              <span>Start date</span>
+              <input type="date" data-temporal-input="start" data-temporal-filter="approvals">
+            </label>
+            <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="approvals">
+              <span>End date</span>
+              <input type="date" data-temporal-input="end" data-temporal-filter="approvals">
+            </label>
+            <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="approvals" hidden>
+              <span>Start month</span>
+              <input type="month" data-temporal-input="monthStart" data-temporal-filter="approvals">
+            </label>
+            <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="approvals" hidden>
+              <span>End month</span>
+              <input type="month" data-temporal-input="monthEnd" data-temporal-filter="approvals">
+            </label>
+            <button class="secondary temporal-filter-clear" type="button" data-temporal-clear="true" data-temporal-filter="approvals">Clear</button>
+          </div>
           <div class="approvals-board" id="approvalsBoard" aria-label="Request approval board"></div>
         </div>
       </section>
@@ -487,17 +659,41 @@
             </div>
           </div>
           <div class="audit-log-filters">
-            <label class="audit-log-search">
+            <label class="audit-log-search" data-audit-only-filter>
               <i data-lucide="search"></i>
               <input id="auditSearchInput" type="search" placeholder="Search summary or record ID...">
             </label>
-            <select id="auditActionFilter" aria-label="Filter audit logs by action">
+            <select id="auditActionFilter" aria-label="Filter audit logs by action" data-audit-only-filter>
               <option value="all">All actions</option>
             </select>
-            <input id="auditEntityFilter" type="search" placeholder="Entity (e.g. inventory.items)">
-            <select id="auditActorFilter" aria-label="Filter audit logs by actor">
+            <input id="auditEntityFilter" type="search" placeholder="Entity (e.g. inventory.items)" data-audit-only-filter>
+            <select id="auditActorFilter" aria-label="Filter audit logs by actor" data-audit-only-filter>
               <option value="all">Actors</option>
             </select>
+            <div class="temporal-filter-bar">
+              <span class="temporal-filter-title">Filter by</span>
+              <div class="temporal-filter-mode" role="group" aria-label="Audit filter mode">
+                <button class="temporal-filter-chip" type="button" data-temporal-mode="date" data-temporal-filter="audit">Date range</button>
+                <button class="temporal-filter-chip" type="button" data-temporal-mode="month" data-temporal-filter="audit">Month range</button>
+              </div>
+              <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="audit">
+                <span>Start date</span>
+                <input type="date" data-temporal-input="start" data-temporal-filter="audit">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="date" data-temporal-filter="audit">
+                <span>End date</span>
+                <input type="date" data-temporal-input="end" data-temporal-filter="audit">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="audit" hidden>
+                <span>Start month</span>
+                <input type="month" data-temporal-input="monthStart" data-temporal-filter="audit">
+              </label>
+              <label class="temporal-filter-field" data-temporal-group="month" data-temporal-filter="audit" hidden>
+                <span>End month</span>
+                <input type="month" data-temporal-input="monthEnd" data-temporal-filter="audit">
+              </label>
+              <button class="secondary temporal-filter-clear" type="button" data-temporal-clear="true" data-temporal-filter="audit">Clear</button>
+            </div>
           </div>
           <div class="audit-log-table-card">
             <div class="table-wrap">

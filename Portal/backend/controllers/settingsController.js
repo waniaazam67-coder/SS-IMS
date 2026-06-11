@@ -1,6 +1,7 @@
 const settingsService = require("../services/settingsService");
 const { ok } = require("../utils/apiResponse");
 const { validateSettingKey, validateValueType } = require("../utils/settings");
+const { cleanText } = require("../utils/validation");
 
 async function getSettings(req, res, next) {
   try {
@@ -44,9 +45,9 @@ async function updateSetting(req, res, next) {
     await settingsService.upsertSingleSetting({
       group,
       key,
-      value: req.body.value,
+      value: sanitizeSettingValue(req.body.value, valueType, key),
       valueType,
-      description: req.body.description || null,
+      description: req.body.description ? cleanText(req.body.description, "description", { max: 500 }) : null,
       updatedBy
     });
 
@@ -71,9 +72,32 @@ function validateSettingsPayload(settings) {
       throw error;
     }
     row.valueType = validateValueType(row.valueType);
+    row.value = sanitizeSettingValue(row.value, row.valueType, key);
+    row.description = row.description ? cleanText(row.description, `${key}.description`, { max: 500 }) : null;
   }
 
   return settings;
+}
+
+function sanitizeSettingValue(value, valueType, key) {
+  if (valueType === "boolean") {
+    if (![true, false, "true", "false", "1", "0", 1, 0].includes(value)) {
+      const error = new Error(`${key} must be a boolean setting value.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    return value;
+  }
+  if (valueType === "number") {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      const error = new Error(`${key} must be a number setting value.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    return number;
+  }
+  return cleanText(value, key, { max: 1000 });
 }
 
 module.exports = {

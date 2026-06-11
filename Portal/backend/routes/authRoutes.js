@@ -2,7 +2,9 @@ const express = require("express");
 const authService = require("../services/authService");
 const { PERMISSIONS } = require("../config/permissions");
 const { requireAuth, requirePermission } = require("../middleware/authMiddleware");
+const { adminWriteLimiter, signupLimiter } = require("../middleware/rateLimitMiddleware");
 const { ok } = require("../utils/apiResponse");
+const v = require("../utils/validation");
 
 const router = express.Router();
 
@@ -18,7 +20,7 @@ router.get("/users", requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), a
   }
 });
 
-router.post("/users", requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), async (req, res, next) => {
+router.post("/users", signupLimiter, requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), v.validateBody(createUserBody), async (req, res, next) => {
   try {
     const origin = `${req.protocol}://${req.get("host")}`;
     const user = await authService.createUser({ ...req.body, inviteBaseUrl: origin }, req.auth.user.id);
@@ -36,7 +38,7 @@ router.get("/roles", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), a
   }
 });
 
-router.post("/roles", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), async (req, res, next) => {
+router.post("/roles", adminWriteLimiter, requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), v.validateBody(roleBody), async (req, res, next) => {
   try {
     const role = await authService.createRole(req.body, req.auth.user.id);
     ok(res, { role, message: "Role created." }, 201);
@@ -45,7 +47,7 @@ router.post("/roles", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), 
   }
 });
 
-router.delete("/roles/:role", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), async (req, res, next) => {
+router.delete("/roles/:role", adminWriteLimiter, requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), v.validateParams(roleParam), async (req, res, next) => {
   try {
     await authService.deleteRole(req.params.role);
     ok(res, { message: "Role deleted." });
@@ -54,7 +56,7 @@ router.delete("/roles/:role", requireAuth, requirePermission(PERMISSIONS.MANAGE_
   }
 });
 
-router.post("/users/:userId/roles", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), async (req, res, next) => {
+router.post("/users/:userId/roles", adminWriteLimiter, requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), v.validateParams(userIdParam), v.validateBody(assignRoleBody), async (req, res, next) => {
   try {
     await authService.assignRoleToUser(Number(req.params.userId), req.body.role, req.auth.user.id);
     ok(res, { message: "Role assigned." });
@@ -63,7 +65,7 @@ router.post("/users/:userId/roles", requireAuth, requirePermission(PERMISSIONS.M
   }
 });
 
-router.put("/users/:userId/roles", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), async (req, res, next) => {
+router.put("/users/:userId/roles", adminWriteLimiter, requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), v.validateParams(userIdParam), v.validateBody(setRolesBody), async (req, res, next) => {
   try {
     const userId = Number(req.params.userId);
     if (userId === Number(req.auth.user.id) && !Array.isArray(req.body.roles)) {
@@ -83,7 +85,7 @@ router.put("/users/:userId/roles", requireAuth, requirePermission(PERMISSIONS.MA
   }
 });
 
-router.put("/users/:userId/status", requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), async (req, res, next) => {
+router.put("/users/:userId/status", adminWriteLimiter, requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), v.validateParams(userIdParam), v.validateBody(statusBody), async (req, res, next) => {
   try {
     const userId = Number(req.params.userId);
     const isActive = req.body.isActive === true || req.body.isActive === "true" || req.body.isActive === 1 || req.body.isActive === "1";
@@ -99,7 +101,7 @@ router.put("/users/:userId/status", requireAuth, requirePermission(PERMISSIONS.M
   }
 });
 
-router.delete("/users/:userId/roles/:role", requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), async (req, res, next) => {
+router.delete("/users/:userId/roles/:role", adminWriteLimiter, requireAuth, requirePermission(PERMISSIONS.MANAGE_ROLES), v.validateParams(userRoleParams), async (req, res, next) => {
   try {
     await authService.removeRoleFromUser(Number(req.params.userId), req.params.role);
     ok(res, { message: "Role removed." });
@@ -108,7 +110,7 @@ router.delete("/users/:userId/roles/:role", requireAuth, requirePermission(PERMI
   }
 });
 
-router.delete("/users/:userId", requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), async (req, res, next) => {
+router.delete("/users/:userId", adminWriteLimiter, requireAuth, requirePermission(PERMISSIONS.MANAGE_USERS), v.validateParams(userIdParam), async (req, res, next) => {
   try {
     const userId = Number(req.params.userId);
     if (userId === Number(req.auth.user.id)) {
@@ -124,3 +126,53 @@ router.delete("/users/:userId", requireAuth, requirePermission(PERMISSIONS.MANAG
 });
 
 module.exports = router;
+
+function userIdParam(input) {
+  return { userId: v.positiveInt(input.userId, "userId") };
+}
+
+function roleParam(input) {
+  return { role: roleName(input.role, "role") };
+}
+
+function userRoleParams(input) {
+  return { userId: v.positiveInt(input.userId, "userId"), role: roleName(input.role, "role") };
+}
+
+function roleName(value, field) {
+  const clean = v.requiredText(value, field, 80);
+  if (!/^[A-Za-z][A-Za-z0-9 _-]{1,79}$/.test(clean)) v.badRequest("contains invalid characters.", field);
+  return clean;
+}
+
+function createUserBody(input) {
+  return {
+    name: v.requiredText(input.name || input.fullName, "name", 180),
+    fullName: v.requiredText(input.fullName || input.name, "fullName", 180),
+    email: v.email(input.email, "email", { required: true }),
+    roles: Array.isArray(input.roles) ? input.roles.map((role, index) => roleName(role, `roles[${index}]`)) : undefined
+  };
+}
+
+function roleBody(input) {
+  return {
+    name: roleName(input.name || input.label, "name"),
+    label: roleName(input.label || input.name, "label"),
+    description: v.optionalText(input.description, "description", 500)
+  };
+}
+
+function assignRoleBody(input) {
+  return { role: roleName(input.role, "role") };
+}
+
+function setRolesBody(input) {
+  return { roles: v.array(input.roles, "roles", { min: 1, max: 50 }).map((role, index) => roleName(role, `roles[${index}]`)) };
+}
+
+function statusBody(input) {
+  if (![true, false, "true", "false", "1", "0", 1, 0].includes(input.isActive)) {
+    v.badRequest("must be a boolean.", "isActive");
+  }
+  return { isActive: input.isActive };
+}

@@ -7,15 +7,19 @@ const authRoutes = require("./routes/authRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const { errorHandler, notFoundHandler } = require("./middleware/errorMiddleware");
 const { corsMiddleware } = require("./middleware/corsMiddleware");
+const { generalApiLimiter } = require("./middleware/rateLimitMiddleware");
 const config = require("./config/env");
 const { initializeDatabase, testDatabaseConnection } = require("./config/database");
+const { assertFirebaseAdminReady } = require("./services/authService");
 
 const app = express();
 const PORT = config.port;
 const frontendPath = path.resolve(__dirname, "../frontend");
 const requisitionFormPath = path.resolve(__dirname, "../../Requisition-From");
 
+app.set("trust proxy", 1);
 app.use(corsMiddleware);
+app.use(securityHeaders);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(frontendPath, {
   setHeaders(res, filePath) {
@@ -39,17 +43,24 @@ app.use("/requisition-form", express.static(requisitionFormPath, {
   }
 }));
 
-app.get("/api/health", async (req, res, next) => {
+app.use("/api", generalApiLimiter);
+
+app.get("/api/health", (req, res) => {
+  res.json({ success: true, data: { status: "ok" } });
+});
+
+app.get("/api/health/deep", async (req, res, next) => {
   try {
+    if (config.isProduction) return notFoundHandler(req, res);
     await testDatabaseConnection();
-    res.json({ success: true, data: { status: "ok" } });
+    res.json({ success: true, data: { status: "ok", database: "ok" } });
   } catch (error) {
     next(error);
   }
 });
 
 app.get("/api/firebase-config", (req, res) => {
-  res.json({ success: true, firebase: config.firebase });
+  res.json({ success: true, firebase: config.firebase.web });
 });
 
 app.use("/api", imsRoutes);
@@ -67,6 +78,8 @@ app.use(errorHandler);
 
 async function startServer() {
   try {
+    config.validateEnvironmentConfig();
+    if (config.isProduction) assertFirebaseAdminReady();
     await initializeDatabase();
     await testDatabaseConnection();
     const server = app.listen(PORT, () => {
@@ -82,6 +95,11 @@ async function startServer() {
       process.exit(1);
     });
   } catch (error) {
+    if (error?.code === "ENV_VALIDATION_FAILED") {
+      console.error("IMS server configuration is invalid.");
+      console.error(error.message);
+      process.exit(1);
+    }
     console.error("Failed to initialize IMS database connection.");
     console.error(error.message);
     process.exit(1);
@@ -89,3 +107,25 @@ async function startServer() {
 }
 
 startServer();
+
+function securityHeaders(req, res, next) {
+  const csp = [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'self'",
+    "img-src 'self' data:",
+    "font-src 'self' https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    // TODO: Remove 'unsafe-inline' after generated dashboard HTML no longer emits inline onclick handlers.
+    "script-src 'self' 'unsafe-inline' https://unpkg.com https://www.gstatic.com https://www.google.com https://apis.google.com",
+    "connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://firebaseinstallations.googleapis.com https://firebaseappcheck.googleapis.com",
+    "frame-src 'self' https://www.google.com https://*.firebaseapp.com",
+    "form-action 'self'"
+  ].join("; ");
+  res.setHeader("Content-Security-Policy", csp);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  return next();
+}

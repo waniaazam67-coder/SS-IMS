@@ -2,6 +2,7 @@ const express = require("express");
 const inventoryController = require("../controllers/inventoryController");
 const { PERMISSIONS } = require("../config/permissions");
 const { requireAuth, requirePermission } = require("../middleware/authMiddleware");
+const { writeLimiter } = require("../middleware/rateLimitMiddleware");
 
 const router = express.Router();
 
@@ -11,6 +12,6 @@ router.get("/balances", requirePermission(PERMISSIONS.VIEW_INVENTORY), inventory
 
 router.get("/movements", requirePermission(PERMISSIONS.VIEW_INVENTORY), inventoryController.getStockMovements);
 
-router.post("/movements", requirePermission(PERMISSIONS.MANAGE_INVENTORY), inventoryController.createStockMovement);
+router.post("/movements", writeLimiter, requirePermission(PERMISSIONS.MANAGE_INVENTORY), inventoryController.createStockMovement);
 
 module.exports = router;

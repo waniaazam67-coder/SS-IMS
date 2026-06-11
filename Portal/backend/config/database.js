@@ -3,15 +3,6 @@ const path = require("path");
 const mysql = require("mysql2/promise");
 const config = require("./env");
 
-const databaseName = "ims_system";
-
-const requiredDatabaseVars = ["DB_HOST", "DB_NAME", "DB_USER"];
-const missingDatabaseVars = requiredDatabaseVars.filter((key) => !process.env[key]);
-
-if (missingDatabaseVars.length) {
-  console.warn(`Missing database environment variables: ${missingDatabaseVars.join(", ")}`);
-}
-
 const pool = mysql.createPool({
   host: config.database.host,
   port: config.database.port,
@@ -42,9 +33,47 @@ async function initializeDatabase() {
     for (const statement of statements) {
       await connection.query(statement);
     }
+
+    await seedAdminUserIfEnabled(connection);
   } finally {
     await connection.end();
   }
+}
+
+async function seedAdminUserIfEnabled(connection) {
+  const shouldSeed = !config.isProduction || config.enableAdminSeed;
+  const adminEmail = "wania.azam@shehersaaz.org.pk";
+  if (!shouldSeed) {
+    console.log("Admin seed skipped. Set ENABLE_ADMIN_SEED=true to apply it in production.");
+    return;
+  }
+
+  const [existing] = await connection.execute(
+    "SELECT id FROM users WHERE LOWER(email) = ? LIMIT 1",
+    [adminEmail]
+  );
+
+  await connection.execute(
+    `INSERT INTO users (full_name, email, is_line_manager, is_active)
+     VALUES ('Wania Azam', ?, 1, 1)
+     ON DUPLICATE KEY UPDATE
+       full_name = VALUES(full_name),
+       is_line_manager = VALUES(is_line_manager),
+       is_active = VALUES(is_active),
+       deleted_at = NULL`,
+    [adminEmail]
+  );
+
+  await connection.execute(
+    `INSERT IGNORE INTO user_roles (user_id, role_id, assigned_by)
+     SELECT u.id, r.id, 1
+       FROM users u
+       JOIN roles r ON r.name = 'Admin'
+      WHERE LOWER(u.email) = ?`,
+    [adminEmail]
+  );
+
+  console.log(existing.length ? `Admin seed verified for ${adminEmail}.` : `Admin seed created ${adminEmail}.`);
 }
 
 async function testDatabaseConnection() {
@@ -53,21 +82,15 @@ async function testDatabaseConnection() {
   const connection = await pool.getConnection();
   try {
     await connection.ping();
-    console.log(`Connected to database: ${databaseName}`);
+    console.log(`Connected to database: ${config.database.name}`);
   } finally {
     connection.release();
   }
 }
 
 function assertDatabaseConfig() {
-  if (missingDatabaseVars.length) {
-    const error = new Error(`Missing database environment variables: ${missingDatabaseVars.join(", ")}`);
-    error.statusCode = 500;
-    throw error;
-  }
-
-  if (config.database.name !== databaseName) {
-    const error = new Error(`Invalid database configured: ${config.database.name}. Expected ${databaseName}.`);
+  if (!config.database.name) {
+    const error = new Error("Missing database name. Set DB_NAME in your environment file.");
     error.statusCode = 500;
     throw error;
   }

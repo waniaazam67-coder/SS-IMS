@@ -5,7 +5,9 @@ node_modules/
 !.env/.env.example
 !*/.env/
 !*/.env/.env.example
+.dbg/
 .DS_Store 
+*.log
 Portal/backend/firebase-service-account.json
 **/firebase-service-account.json
 **/*service-account*.json

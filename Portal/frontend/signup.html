@@ -44,31 +44,41 @@
       <div class="auth-divider">or</div>
 
       <div class="auth-form google-only-auth">
-        <button class="secondary auth-google" type="button" onclick="handleGoogleSignup()">Continue with Google</button>
+        <button class="secondary auth-google" id="googleSignupBtn" type="button">Continue with Google</button>
       </div>
 
       <p class="auth-switch">Already have an account? <a href="login.html">Login</a></p>
+      <p class="auth-legal-links"><a href="privacy-policy.html">Privacy Policy</a><span>·</span><a href="terms-and-conditions.html">Terms &amp; Conditions</a></p>
     </section>
   </main>
 
   <script src="js/firebase-config.js?v=firebase-1"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-    import { browserLocalPersistence, createUserWithEmailAndPassword, getAuth, GoogleAuthProvider, onAuthStateChanged, sendEmailVerification, setPersistence, signInWithPopup, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+    import { initializeAppCheck, ReCaptchaV3Provider } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app-check.js";
+    import { browserLocalPersistence, createUserWithEmailAndPassword, getAuth, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, sendEmailVerification, setPersistence, signInWithPopup, signInWithRedirect, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
-    const app = initializeApp(window.IMS_FIREBASE_CONFIG);
+    const firebaseConfig = await window.imsFirebaseConfigReady.catch((error) => {
+      const errorMsg = document.getElementById("errorMsg");
+      errorMsg.textContent = error.message || "Unable to load signup configuration.";
+      errorMsg.style.display = "block";
+      document.querySelectorAll("#signupForm input, #signupForm button, .auth-google").forEach((element) => {
+        element.disabled = true;
+      });
+      return null;
+    });
+    if (!firebaseConfig) {
+      throw new Error("IMS Firebase configuration is unavailable.");
+    }
+    const app = initializeApp(firebaseConfig);
+    if (firebaseConfig.appCheckRecaptchaSiteKey) {
+      initializeAppCheck(app, {
+        provider: new ReCaptchaV3Provider(firebaseConfig.appCheckRecaptchaSiteKey),
+        isTokenAutoRefreshEnabled: true
+      });
+    }
     const auth = getAuth(app);
     await setPersistence(auth, browserLocalPersistence);
-    const initialUser = await new Promise((resolve) => {
-      const unsubscribe = onAuthStateChanged(auth, (user) => {
-        unsubscribe();
-        resolve(user);
-      });
-    });
-    if (initialUser) {
-      localStorage.removeItem('firebase_token');
-      await signOut(auth);
-    }
     const googleProvider = new GoogleAuthProvider();
     const OFFICIAL_EMAIL_MESSAGE = 'Only Shehersaaz official email addresses are allowed.';
     const loginPageUrl = window.location.protocol === 'file:'
@@ -141,6 +151,28 @@
       }
     }
 
+    try {
+      const redirectResult = await getRedirectResult(auth);
+      if (redirectResult?.user) {
+        if (!(await rejectUnauthorizedUser(redirectResult.user))) {
+          await sendPortalVerification(redirectResult.user, 'Google signup complete. Check your email for the verification link before logging in.');
+        }
+      }
+    } catch (error) {
+      showError(error.message || 'Unable to complete Google signup.');
+    }
+
+    const initialUser = await new Promise((resolve) => {
+      const unsubscribe = onAuthStateChanged(auth, (user) => {
+        unsubscribe();
+        resolve(user);
+      });
+    });
+    if (initialUser) {
+      localStorage.removeItem('firebase_token');
+      await signOut(auth);
+    }
+
     document.getElementById('signupForm').addEventListener('submit', async (event) => {
       event.preventDefault();
       const fullName = document.getElementById('signupFullName').value.trim();
@@ -162,14 +194,11 @@
         if (fullName) await updateProfile(user, { displayName: fullName });
         await sendPortalVerification(user, 'Account created. Check your email for the verification link before logging in.');
       } catch (error) {
-        // #region debug-point C:signup-create-user-error
-        fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"C",location:"signup.html:createUserWithEmailAndPassword:error",msg:"[DEBUG] signup create user failed",data:{email,code:error?.code||"",message:error?.message||""},ts:Date.now()})}).catch(()=>{});
-        // #endregion
         showError(error.message || 'Unable to create account.');
       }
     });
 
-    window.handleGoogleSignup = async function handleGoogleSignup() {
+    async function handleGoogleSignup() {
       const errorMsg = document.getElementById('errorMsg');
       const successMsg = document.getElementById('successMsg');
       errorMsg.style.display = 'none';
@@ -179,10 +208,17 @@
         if (await rejectUnauthorizedUser(user)) return;
         await sendPortalVerification(user, 'Google signup complete. Check your email for the verification link before logging in.');
       } catch (error) {
+        if (error?.code === 'auth/popup-closed-by-user' || error?.code === 'auth/cancelled-popup-request') {
+          showSuccess('Continuing Google signup...');
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        }
         errorMsg.textContent = error.message;
         errorMsg.style.display = 'block';
       }
     }
+
+    document.getElementById('googleSignupBtn')?.addEventListener('click', handleGoogleSignup);
   </script>
 </body>
 </html>

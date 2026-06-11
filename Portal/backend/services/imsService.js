@@ -2,6 +2,8 @@ const { pool } = require("../config/database");
 
 const APPROVED_LOCATIONS = ["I9 warehouse", "Secretariat", "NSR CC", "RWP CC"];
 const APPROVED_LOCATION_KEYS = new Set(APPROVED_LOCATIONS.map((location) => location.toLowerCase().replace(/[^a-z0-9]/g, "")));
+const NAMED_TABLES = new Set(["departments", "locations", "item_categories"]);
+const NUMBER_TABLES = new Set(["requests", "transport_requests", "purchase_orders", "grns", "stock_movements"]);
 
 function isApprovedLocation(location) {
   return APPROVED_LOCATION_KEYS.has(String(location || "").toLowerCase().replace(/[^a-z0-9]/g, ""));
@@ -509,7 +511,8 @@ async function ensureVendorNtnColumn(connection = pool) {
   }
 }
 
-async function listRequests() {
+async function listRequests(authContext = {}) {
+  const visibility = requestVisibility(authContext);
   const [rows] = await pool.execute(
     `SELECT r.id, r.request_number AS requestId, r.request_date AS date,
             COALESCE(u.full_name, '') AS requester, COALESCE(d.name, '') AS department,
@@ -525,7 +528,10 @@ async function listRequests() {
      LEFT JOIN locations l ON l.id = r.location_id
      LEFT JOIN request_items ri ON ri.request_id = r.id
      WHERE r.deleted_at IS NULL
+       ${visibility.whereSql}
      ORDER BY r.request_date DESC, r.id DESC, ri.line_no`
+    ,
+    visibility.params
   );
   return groupLines(rows, "requestId", "items");
 }
@@ -696,7 +702,8 @@ async function issueRequestStock(requestNumber, itemId, input, userId) {
   }
 }
 
-async function listTransportRequests() {
+async function listTransportRequests(authContext = {}) {
+  const visibility = requestVisibility(authContext);
   const [rows] = await pool.execute(
     `SELECT tr.id, tr.request_number AS requestId, tr.created_at AS date,
             COALESCE(u.full_name, '') AS requester, COALESCE(u.email, '') AS requesterEmail,
@@ -725,7 +732,11 @@ async function listTransportRequests() {
      LEFT JOIN goods_transport_requests gt ON gt.transport_request_id = tr.id
      LEFT JOIN travel_transport_requests tt ON tt.transport_request_id = tr.id
      LEFT JOIN local_meeting_transport_requests lm ON lm.transport_request_id = tr.id
+     WHERE tr.deleted_at IS NULL
+       ${visibility.whereSql.replace(/\br\./g, "tr.")}
      ORDER BY tr.created_at DESC, tr.id DESC`
+    ,
+    visibility.params
   );
   return rows.map((row) => ({
     ...row,
@@ -1549,6 +1560,7 @@ async function reconcileInventoryBalance(connection, itemId, locationId) {
 }
 
 async function ensureNamed(connection, table, name) {
+  if (!NAMED_TABLES.has(table)) throwBadRequest("Invalid lookup table.");
   const clean = String(name || "").trim();
   if (!clean) return null;
   const [result] = await connection.execute(
@@ -1674,8 +1686,45 @@ async function firstOrExistingItem(connection, code, description, userId) {
 }
 
 async function nextNumber(connection, table, column, prefix, pad = 3) {
+  if (!NUMBER_TABLES.has(table) || column !== "request_number" && column !== "po_number" && column !== "grn_number" && column !== "movement_number") {
+    throwBadRequest("Invalid sequence source.");
+  }
   const [rows] = await connection.execute(`SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM ${table}`);
   return `${prefix}-${String(rows[0].next_id).padStart(pad, "0")}`;
+}
+
+function hasPermission(authContext = {}, permission) {
+  return (authContext.permissions || []).includes(permission);
+}
+
+function hasRole(authContext = {}, roleName) {
+  return (authContext.roles || []).map((role) => String(role || "").toLowerCase()).includes(roleName);
+}
+
+function requestVisibility(authContext = {}) {
+  if (
+    hasRole(authContext, "admin") ||
+    hasPermission(authContext, "request.approve") ||
+    hasPermission(authContext, "inventory.issue") ||
+    hasPermission(authContext, "inventory.manage")
+  ) {
+    return { whereSql: "", params: [] };
+  }
+
+  const userId = Number(authContext.user?.id || 0);
+  const email = cleanEmail(authContext.user?.email);
+  const clauses = [];
+  const params = [];
+  if (userId) {
+    clauses.push("r.requester_user_id = ?");
+    params.push(userId);
+  }
+  if (email) {
+    clauses.push("LOWER(r.line_manager_email) = ?");
+    params.push(email);
+  }
+  if (!clauses.length) return { whereSql: "AND 1 = 0", params: [] };
+  return { whereSql: `AND (${clauses.join(" OR ")})`, params };
 }
 
 async function tableColumnExists(connection, table, column) {

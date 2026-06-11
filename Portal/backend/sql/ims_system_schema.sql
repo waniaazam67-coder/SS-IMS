@@ -565,6 +565,7 @@ CREATE TABLE IF NOT EXISTS transport_requests (
   approval_status ENUM('Draft', 'Pending Approval', 'Approved', 'Rejected', 'Cancelled') NOT NULL DEFAULT 'Pending Approval',
   status ENUM('Pending', 'Arranged', 'Completed', 'Cancelled') NOT NULL DEFAULT 'Pending',
   notes_remarks TEXT NULL,
+  deleted_at TIMESTAMP NULL,
   created_by INT UNSIGNED NULL,
   updated_by INT UNSIGNED NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -816,6 +817,7 @@ CALL sp_add_column_if_missing('request_items', 'source_location_id', 'source_loc
 CALL sp_add_column_if_missing('request_items', 'line_status', 'line_status VARCHAR(80) NOT NULL DEFAULT ''Pending Approval''');
 CALL sp_add_column_if_missing('transport_requests', 'request_number', 'request_number VARCHAR(80) NULL');
 CALL sp_add_column_if_missing('transport_requests', 'line_manager_email', 'line_manager_email VARCHAR(255) NULL');
+CALL sp_add_column_if_missing('transport_requests', 'deleted_at', 'deleted_at TIMESTAMP NULL');
 CALL sp_add_column_if_missing('transport_requests', 'created_by', 'created_by INT UNSIGNED NULL');
 CALL sp_add_column_if_missing('transport_requests', 'updated_by', 'updated_by INT UNSIGNED NULL');
 CALL sp_add_column_if_missing('permissions', 'created_at', 'created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP');
@@ -1141,16 +1143,3 @@ JOIN permissions p ON (
   OR (r.name = 'Approver' AND p.permission_key IN ('request.create', 'request.approve', 'inventory.view'))
 );
 
-INSERT INTO users (full_name, email, is_line_manager, is_active)
-VALUES ('Wania Azam', 'wania.azam@shehersaaz.org.pk', 1, 1)
-ON DUPLICATE KEY UPDATE
-  full_name = VALUES(full_name),
-  is_line_manager = VALUES(is_line_manager),
-  is_active = VALUES(is_active),
-  deleted_at = NULL;
-
-INSERT IGNORE INTO user_roles (user_id, role_id, assigned_by)
-SELECT u.id, r.id, 1
-FROM users u
-JOIN roles r ON r.name = 'Admin'
-WHERE LOWER(u.email) = 'wania.azam@shehersaaz.org.pk';

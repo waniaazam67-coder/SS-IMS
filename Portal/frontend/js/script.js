@@ -175,6 +175,28 @@ let auditActorFilter = "all";
 let auditEntityFilter = "";
 let activeAuditSection = "all";
 
+function createTemporalFilterState() {
+  return {
+    mode: "date",
+    start: "",
+    end: "",
+    monthStart: "",
+    monthEnd: ""
+  };
+}
+
+const temporalFilters = {
+  requisition: createTemporalFilterState(),
+  itemRequests: createTemporalFilterState(),
+  stockIssue: createTemporalFilterState(),
+  po: createTemporalFilterState(),
+  grn: createTemporalFilterState(),
+  transport: createTemporalFilterState(),
+  approvals: createTemporalFilterState(),
+  audit: createTemporalFilterState()
+};
+let activeTemporalPopover = "";
+
 function redirectToLogin() {
   const target = IS_FILE_PROTOCOL
     ? PORTAL_HOME_URL
@@ -197,6 +219,169 @@ function titleCaseWords(value = "") {
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(" ");
+}
+
+function requestDateValue(request = {}) {
+  return request.date || request.requestDate || "";
+}
+
+function transportDateValue(request = {}) {
+  return request.travelDate || request.date || request.updatedAt || "";
+}
+
+function purchaseOrderDateValue(po = {}) {
+  return po.issueDate || po.date || po.createdAt || poExpectedDate(po) || "";
+}
+
+function grnDateValue(grn = {}) {
+  return grn.date || grn.createdAt || "";
+}
+
+function historyEntryDate(entry = {}) {
+  return entry.log?.date || entry.details?.date || entry.details?.requestDate || entry.details?.travelDate || "";
+}
+
+function parseDateFilterValue(value, isEnd = false) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return null;
+  const date = new Date(`${normalized}T${isEnd ? "23:59:59.999" : "00:00:00.000"}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseMonthFilterValue(value, isEnd = false) {
+  const normalized = String(value || "").trim();
+  const match = normalized.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
+  return isEnd
+    ? new Date(year, month, 0, 23, 59, 59, 999)
+    : new Date(year, month - 1, 1, 0, 0, 0, 0);
+}
+
+function temporalFilterBounds(filter = {}) {
+  const mode = filter.mode === "month" ? "month" : "date";
+  return mode === "month"
+    ? {
+        start: parseMonthFilterValue(filter.monthStart, false),
+        end: parseMonthFilterValue(filter.monthEnd, true)
+      }
+    : {
+        start: parseDateFilterValue(filter.start, false),
+        end: parseDateFilterValue(filter.end, true)
+      };
+}
+
+function hasTemporalFilter(filter = {}) {
+  const { start, end } = temporalFilterBounds(filter);
+  return Boolean(start || end);
+}
+
+function temporalFilterButtonLabel() {
+  return "Filter by date or month";
+}
+
+function closeTemporalFilterPopovers(exceptKey = "") {
+  document.querySelectorAll(".temporal-filter-wrap").forEach((wrapper) => {
+    const key = wrapper.dataset.temporalFilterWrap || "";
+    const shouldStayOpen = exceptKey && key === exceptKey;
+    wrapper.classList.toggle("open", shouldStayOpen);
+    const trigger = wrapper.querySelector("[data-temporal-trigger]");
+    const popover = wrapper.querySelector(".temporal-filter-bar");
+    if (trigger) trigger.setAttribute("aria-expanded", shouldStayOpen ? "true" : "false");
+    if (popover) popover.hidden = !shouldStayOpen;
+  });
+  activeTemporalPopover = exceptKey || "";
+}
+
+function toggleTemporalFilterPopover(filterKey) {
+  const wrapper = document.querySelector(`[data-temporal-filter-wrap="${filterKey}"]`);
+  if (!wrapper) return;
+  const isOpen = wrapper.classList.contains("open");
+  if (isOpen) {
+    closeTemporalFilterPopovers();
+    return;
+  }
+  closeTemporalFilterPopovers();
+  wrapper.classList.add("open");
+  const trigger = wrapper.querySelector("[data-temporal-trigger]");
+  const popover = wrapper.querySelector(".temporal-filter-bar");
+  if (trigger) trigger.setAttribute("aria-expanded", "true");
+  if (popover) popover.hidden = false;
+  activeTemporalPopover = filterKey;
+}
+
+function enhanceTemporalFilterPopovers() {
+  document.querySelectorAll(".temporal-filter-bar").forEach((popover, index) => {
+    if (popover.closest(".temporal-filter-wrap")) return;
+    const filterElement = popover.querySelector("[data-temporal-filter]");
+    const filterKey = filterElement?.dataset.temporalFilter;
+    if (!filterKey) return;
+    const wrapper = document.createElement("div");
+    wrapper.className = "temporal-filter-wrap";
+    wrapper.dataset.temporalFilterWrap = filterKey;
+    if (popover.closest(".stock-issue-toolbar, .po-records-toolbar")) wrapper.classList.add("align-end");
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "secondary temporal-filter-trigger";
+    trigger.dataset.temporalTrigger = filterKey;
+    trigger.setAttribute("aria-haspopup", "dialog");
+    trigger.setAttribute("aria-expanded", "false");
+    const popoverId = `temporal-filter-popover-${filterKey}-${index}`;
+    trigger.setAttribute("aria-controls", popoverId);
+    trigger.textContent = temporalFilterButtonLabel();
+    popover.id = popoverId;
+    popover.hidden = true;
+    popover.parentNode.insertBefore(wrapper, popover);
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(popover);
+  });
+}
+
+function matchesTemporalFilterValue(value, filterKey) {
+  const filter = temporalFilters[filterKey] || createTemporalFilterState();
+  if (!hasTemporalFilter(filter)) return true;
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  const { start, end } = temporalFilterBounds(filter);
+  return (!start || date >= start) && (!end || date <= end);
+}
+
+function syncTemporalFilterControls(filterKey) {
+  const filter = temporalFilters[filterKey];
+  if (!filter) return;
+  const mode = filter.mode === "month" ? "month" : "date";
+  const hasValue = hasTemporalFilter(filter);
+  document.querySelectorAll(`[data-temporal-filter="${filterKey}"]`).forEach((element) => {
+    if (element.matches("[data-temporal-mode]")) {
+      element.classList.toggle("active", element.dataset.temporalMode === mode);
+      return;
+    }
+    if (element.matches("[data-temporal-input]")) {
+      const key = element.dataset.temporalInput;
+      element.value = filter[key] || "";
+      return;
+    }
+    if (element.matches("[data-temporal-group]")) {
+      element.hidden = element.dataset.temporalGroup !== mode;
+      return;
+    }
+    if (element.matches("[data-temporal-clear]")) {
+      element.disabled = !hasValue;
+    }
+  });
+  document.querySelectorAll(`[data-temporal-trigger="${filterKey}"]`).forEach((trigger) => {
+    trigger.textContent = temporalFilterButtonLabel();
+    trigger.classList.toggle("is-active", hasValue);
+    if (hasValue) trigger.setAttribute("data-filter-applied", "true");
+    else trigger.removeAttribute("data-filter-applied");
+  });
+}
+
+function syncAllTemporalFilterControls() {
+  Object.keys(temporalFilters).forEach(syncTemporalFilterControls);
 }
 
 function normalizeAvailableRoles(roles = []) {
@@ -281,11 +466,19 @@ function firstAccessibleView() {
 
 async function ensureFirebaseReady() {
   if (window.imsFirebaseReady) return window.imsFirebaseReady;
+  const firebaseConfig = window.IMS_FIREBASE_CONFIG || (
+    typeof window.loadImsFirebaseConfig === "function"
+      ? await window.loadImsFirebaseConfig()
+      : null
+  );
+  if (!firebaseConfig) {
+    throw new Error("IMS Firebase configuration is unavailable.");
+  }
   const [{ initializeApp }, { getAuth, onAuthStateChanged, signOut }] = await Promise.all([
     import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js"),
     import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js")
   ]);
-  const app = window.imsFirebaseApp || initializeApp(window.IMS_FIREBASE_CONFIG);
+  const app = window.imsFirebaseApp || initializeApp(firebaseConfig);
   window.imsFirebaseApp = app;
   window.imsFirebaseAuth = window.imsFirebaseAuth || getAuth(app);
   window.imsFirebaseSignOut = () => signOut(window.imsFirebaseAuth);
@@ -296,17 +489,20 @@ async function ensureFirebaseReady() {
 }
 
 async function requirePortalSession() {
-  // #region debug-point A:portal-session-start
-  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"A",location:"script.js:requirePortalSession:start",msg:"[DEBUG] requirePortalSession started",data:{seedUser:currentUser?.name||"",seedUid:currentUser?.uid||"",cachedToken:Boolean(localStorage.getItem("firebase_token")),path:window.location.pathname},ts:Date.now()})}).catch(()=>{});
-  // #endregion
+  try {
+    if (typeof window.loadImsFirebaseConfig === "function") {
+      await window.loadImsFirebaseConfig();
+    }
+  } catch (error) {
+    sessionStorage.setItem("imsAuthError", error.message || "Unable to load login configuration.");
+    redirectToLogin();
+    return null;
+  }
   if (!window.IMS_FIREBASE_CONFIG) {
     redirectToLogin();
     return null;
   }
   const user = await ensureFirebaseReady();
-  // #region debug-point B:firebase-auth-state
-  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"B",location:"script.js:requirePortalSession:firebaseUser",msg:"[DEBUG] firebase auth state resolved",data:{hasUser:Boolean(user),email:user?.email||"",uid:user?.uid||""},ts:Date.now()})}).catch(()=>{});
-  // #endregion
   if (!user) {
     localStorage.removeItem("firebase_token");
     redirectToLogin();
@@ -322,9 +518,6 @@ async function requirePortalSession() {
   const token = await user.getIdToken();
   localStorage.setItem("firebase_token", token);
   try {
-    // #region debug-point C:auth-me-request
-    fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"C",location:"script.js:requirePortalSession:authMe:start",msg:"[DEBUG] requesting /api/auth/me",data:{email:user?.email||"",uid:user?.uid||"",tokenLength:String(token||"").length},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     const response = await fetch("/api/auth/me", {
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -336,9 +529,6 @@ async function requirePortalSession() {
     }
     const session = await response.json();
     const authUser = session.user || {};
-    // #region debug-point D:auth-me-success
-    fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"D",location:"script.js:requirePortalSession:authMe:success",msg:"[DEBUG] /api/auth/me succeeded",data:{sessionUserName:authUser?.name||"",sessionUserEmail:authUser?.email||"",roles:session?.roles||[],permissionsCount:Array.isArray(session?.permissions)?session.permissions.length:0},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     currentUser = {
       ...currentUser,
       id: authUser.id || user.uid,
@@ -351,9 +541,6 @@ async function requirePortalSession() {
     };
     currentUser.role = currentUser.roles[0] || "requestor";
   } catch (error) {
-    // #region debug-point E:auth-me-error
-    fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"E",location:"script.js:requirePortalSession:authMe:error",msg:"[DEBUG] /api/auth/me failed",data:{message:error?.message||""},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     localStorage.removeItem("firebase_token");
     if (window.imsFirebaseSignOut) await window.imsFirebaseSignOut();
     redirectToLogin();
@@ -361,9 +548,6 @@ async function requirePortalSession() {
   }
   isAdmin = hasPortalAdminAccess();
   recordAuditLoginIfNeeded();
-  // #region debug-point F:portal-session-ready
-  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"F",location:"script.js:requirePortalSession:ready",msg:"[DEBUG] portal session established",data:{currentUserName:currentUser?.name||"",currentUserEmail:currentUser?.email||"",currentUserId:currentUser?.id||"",isAdmin},ts:Date.now()})}).catch(()=>{});
-  // #endregion
   return { user, access_token: token };
 }
 
@@ -909,9 +1093,6 @@ async function syncImportedInventoryToDatabase() {
 }
 
 async function refreshVerifiedUserShell() {
-  // #region debug-point I:refresh-shell-start
-  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"I",location:"script.js:refreshVerifiedUserShell:start",msg:"[DEBUG] refreshVerifiedUserShell started",data:{currentUserId:currentUser?.id||"",currentUserName:currentUser?.name||"",settingsLoadedForUser,businessDataLoadedForUser},ts:Date.now()})}).catch(()=>{});
-  // #endregion
   applyAdminVisibility();
   if (isAdmin && settingsLoadedForUser !== currentUser.id) {
     settingsLoadedForUser = currentUser.id;
@@ -928,9 +1109,6 @@ async function refreshVerifiedUserShell() {
     await loadBusinessData({ silent: true });
     lastBusinessDataSignature = businessDataSignature();
   }
-  // #region debug-point J:refresh-shell-finish
-  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"J",location:"script.js:refreshVerifiedUserShell:finish",msg:"[DEBUG] refreshVerifiedUserShell finished",data:{currentUserId:currentUser?.id||"",currentUserName:currentUser?.name||"",settingsLoadedForUser,businessDataLoadedForUser,businessDataError},ts:Date.now()})}).catch(()=>{});
-  // #endregion
   render();
   startAutoRefresh();
   startChatPolling();
@@ -1104,7 +1282,6 @@ function renderUserManagement(section) {
         <span>Email</span>
         <span>Status</span>
         <span>Role / Permissions</span>
-        <span>Last login</span>
         <span>Actions</span>
       </div>
       ${userManagementUsers.map((user) => {
@@ -1126,7 +1303,6 @@ function renderUserManagement(section) {
               <strong>${escapeHtml(primaryRole.replace(/_/g, " "))}</strong>
               <span>${roles.length > 1 ? `+${roles.length - 1} overrides` : "Standard access"}</span>
             </div>
-            <div class="settings-team-login">${escapeHtml(formatDate(user.lastLogin || user.last_login || user.updatedAt || user.updated_at || "")) || "-"}</div>
             <div class="user-management-actions">
               <button class="user-save-btn edit-user-roles" type="button" data-user-id="${escapeHtml(user.id)}"><i data-lucide="sliders-horizontal"></i>Edit permissions</button>
               <button class="user-status-btn toggle-user-status" type="button" data-user-id="${escapeHtml(user.id)}" data-next-active="${isActive ? "false" : "true"}" ${isSelf ? "disabled" : ""}>${isActive ? "Deactivate" : "Activate"}</button>
@@ -1761,13 +1937,7 @@ async function confirmDeleteUser() {
   if (!userId) return;
   const user = userManagementUsers.find((item) => String(item.id) === String(userId));
   try {
-    // #region debug-point A:frontend-delete-user-before
-    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"A",location:"script.js:confirmDeleteUser:before",msg:"[DEBUG] frontend delete user request",data:{userId,email:user?.email||"",name:user?.name||""},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     await apiRequest(`/auth/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
-    // #region debug-point A:frontend-delete-user-after
-    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"A",location:"script.js:confirmDeleteUser:after",msg:"[DEBUG] frontend delete user success",data:{userId,email:user?.email||""},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     userManagementUsers = userManagementUsers.filter((item) => String(item.id) !== String(userId));
     closeDeleteUserModal();
     renderSettings();
@@ -1781,9 +1951,6 @@ async function confirmDeleteUser() {
     });
     showToast("User deleted.");
   } catch (error) {
-    // #region debug-point A:frontend-delete-user-error
-    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"A",location:"script.js:confirmDeleteUser:error",msg:"[DEBUG] frontend delete user failed",data:{userId,message:error?.message||""},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     showToast(error.message || "Unable to delete user.", "error");
   }
 }
@@ -1824,9 +1991,6 @@ async function loadBusinessData({ silent = false } = {}) {
     Object.keys(businessDataErrors).forEach((key) => delete businessDataErrors[key]);
     render();
   }
-  // #region debug-point G:business-data-start
-  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"G",location:"script.js:loadBusinessData:start",msg:"[DEBUG] loadBusinessData started",data:{silent,currentUserId:currentUser?.id||"",currentUserName:currentUser?.name||""},ts:Date.now()})}).catch(()=>{});
-  // #endregion
   const endpoints = [
     canAccessView("inventory") ? ["items", "/items"] : null,
     canAccessView("inventory") ? ["categories", "/categories"] : null,
@@ -1861,9 +2025,6 @@ async function loadBusinessData({ silent = false } = {}) {
   });
   state = applyImportedInventoryBase(state);
   enforceApprovedLocations();
-  // #region debug-point H:business-data-finish
-  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"H",location:"script.js:loadBusinessData:finish",msg:"[DEBUG] loadBusinessData completed",data:{failed,items:state.items?.length||0,categories:state.categories?.length||0,inventoryRows:state.inventoryRows?.length||0,requests:state.requests?.length||0},ts:Date.now()})}).catch(()=>{});
-  // #endregion
   if (!silent) showToast("IMS data refreshed from database.");
   businessDataError = failed.length ? `Unable to load ${failed.join(", ")} data.` : "";
   businessDataLoading = false;
@@ -3231,7 +3392,8 @@ function renderRequests() {
     return;
   }
   const rows = state.requests.flatMap((request) => request.items.map((item) => ({ request, item })))
-    .filter(({ item }) => requestsFilter === "All" || item.approvalStatus === requestsFilter);
+    .filter(({ request, item }) => (requestsFilter === "All" || item.approvalStatus === requestsFilter)
+      && matchesTemporalFilterValue(requestDateValue(request), "itemRequests"));
   const pageCount = Math.max(1, Math.ceil(rows.length / REQUESTS_PAGE_SIZE));
   requestsPage = Math.min(Math.max(1, requestsPage), pageCount);
   const start = (requestsPage - 1) * REQUESTS_PAGE_SIZE;
@@ -3298,7 +3460,8 @@ function renderRequisition() {
     showTableSkeleton("myRequestsTable", 12, 6);
     return;
   }
-  const rows = requestLineRows(state.requests.filter(requesterMatchesCurrentUser));
+  const rows = requestLineRows(state.requests.filter((request) =>
+    requesterMatchesCurrentUser(request) && matchesTemporalFilterValue(requestDateValue(request), "requisition")));
   const table = document.getElementById("myRequestsTable");
   if (!table) return;
   const requestsError = sourceError("requests");
@@ -3715,7 +3878,7 @@ function renderIssue() {
     return;
   }
   const searchTerm = stockIssueSearchTerm.trim().toLowerCase();
-  const rows = state.requests.flatMap((request) => request.items
+  const rows = state.requests.filter((request) => matchesTemporalFilterValue(requestDateValue(request), "stockIssue")).flatMap((request) => request.items
     .filter((item) => item.approvalStatus === "Approved" && !["Issued", "Rejected", "Cancelled"].includes(item.issuanceStatus))
     .filter(() => stockIssueLocationFilter === "All" || request.location === stockIssueLocationFilter)
     .filter((item) => {
@@ -3730,10 +3893,10 @@ function renderIssue() {
       const remainingQty = Math.max(approvedQty - issuedQty, 0) || Number(item.quantity || 0);
       const remainingQtyDisplay = quantityValue(remainingQty);
       return `<tr>
-        <td>${request.requestId}</td><td>${item.itemCode} - ${item.itemName}</td><td>${request.location}</td><td>${remainingQtyDisplay}</td><td>${quantityValue(available)}</td>
-        <td><input class="table-input" type="number" min="1" max="${remainingQtyDisplay}" value="${remainingQtyDisplay}" id="qty-${item.id}"></td>
-        <td><input class="table-input" placeholder="Issued by" id="by-${item.id}"></td>
-        <td><button class="tiny success" onclick="issueItem('${request.requestId}','${item.id}')">Issue</button></td>
+        <td>${escapeHtml(request.requestId)}</td><td>${escapeHtml(item.itemCode)} - ${escapeHtml(item.itemName)}</td><td>${escapeHtml(request.location)}</td><td>${remainingQtyDisplay}</td><td>${quantityValue(available)}</td>
+        <td><input class="table-input" type="number" min="1" max="${remainingQtyDisplay}" value="${remainingQtyDisplay}" id="qty-${escapeHtml(item.id)}"></td>
+        <td><input class="table-input" placeholder="Issued by" id="by-${escapeHtml(item.id)}"></td>
+        <td><button class="tiny success" onclick="issueItem('${escapeHtml(request.requestId)}','${escapeHtml(item.id)}')">Issue</button></td>
       </tr>`;
     }));
   const emptyTitle = searchTerm ? "No matching approved stock issues" : "No approved stock to issue";
@@ -3755,6 +3918,7 @@ function renderPO() {
   renderPoStatusFilters();
   const searchTerm = poSearchTerm.trim().toLowerCase();
   const rows = state.purchaseOrders.filter((po) => {
+    if (!matchesTemporalFilterValue(purchaseOrderDateValue(po), "po")) return false;
     const status = poDisplayStatus(po);
     const matchesStatus = poStatusFilter === "All" || status === poStatusFilter;
     const matchesVendor = poVendorFilter === "All" || poVendorName(po) === poVendorFilter;
@@ -3800,8 +3964,9 @@ function poSourceReference(po = {}) {
 }
 
 function poStatusCount(status) {
-  if (status === "All") return state.purchaseOrders.length;
-  return state.purchaseOrders.filter((po) => poDisplayStatus(po) === status).length;
+  const rows = state.purchaseOrders.filter((po) => matchesTemporalFilterValue(purchaseOrderDateValue(po), "po"));
+  if (status === "All") return rows.length;
+  return rows.filter((po) => poDisplayStatus(po) === status).length;
 }
 
 function renderPoStatusFilters() {
@@ -4300,6 +4465,7 @@ function renderGRN() {
   }
   const searchTerm = grnSearchTerm.trim().toLowerCase();
   const rows = state.grns.filter((grn) => {
+    if (!matchesTemporalFilterValue(grnDateValue(grn), "grn")) return false;
     const grnRow = grnRecordDetails(grn);
     const matchesVendor = grnVendorFilter === "All" || grnRow.vendorName === grnVendorFilter;
     const matchesSearch = !searchTerm || [grn.grnNumber, grn.poNumber, grn.itemCode, grn.itemName, grn.location, grnRow.vendorName]
@@ -4509,13 +4675,15 @@ function transportDestination(row) {
 }
 
 function transportBoardRows() {
-  return state.transportRequests.map((request) => ({
+  return state.transportRequests
+    .filter((request) => matchesTemporalFilterValue(transportDateValue(request), "transport"))
+    .map((request) => ({
     kind: "transport",
     request,
     requestId: request.id,
     requester: request.requester,
     department: request.department || request.transportType || "Transport",
-    date: request.travelDate || request.date,
+    date: transportDateValue(request),
     approvalStatus: request.approvalStatus,
     arrangementStatus: request.arrangementStatus,
     label: request.transportType || "Transport Request"
@@ -4667,7 +4835,9 @@ function lineManagerMatchesCurrentUser(request = {}) {
 }
 
 function approvalBoardRows() {
-  const inventoryRows = state.requests.filter(lineManagerMatchesCurrentUser).flatMap((request) => request.items.map((item) => ({
+  const inventoryRows = state.requests
+    .filter((request) => lineManagerMatchesCurrentUser(request) && matchesTemporalFilterValue(requestDateValue(request), "approvals"))
+    .flatMap((request) => request.items.map((item) => ({
     kind: "inventory",
     request,
     item,
@@ -4681,14 +4851,16 @@ function approvalBoardRows() {
     managerEmail: request.managerEmail,
     label: "Item Request"
   })));
-  const transportRows = state.transportRequests.filter(lineManagerMatchesCurrentUser).map((request) => ({
+  const transportRows = state.transportRequests
+    .filter((request) => lineManagerMatchesCurrentUser(request) && matchesTemporalFilterValue(transportDateValue(request), "approvals"))
+    .map((request) => ({
     kind: "transport",
     request,
     id: `transport-${request.id}`,
     requestId: request.id,
     requester: request.requester,
     department: request.department || request.transportType || "Transport",
-    date: request.travelDate || request.date,
+    date: transportDateValue(request),
     status: request.approvalStatus,
     managerEmail: request.managerEmail,
     label: request.transportType || "Transport Request"
@@ -5132,11 +5304,13 @@ function historyEntries(section) {
     uniqueEntries.push(entry);
   });
 
-  return uniqueEntries.sort((a, b) => {
-    const aDate = new Date(a.log?.date || a.details?.requestDate || a.details?.travelDate || 0).getTime();
-    const bDate = new Date(b.log?.date || b.details?.requestDate || b.details?.travelDate || 0).getTime();
-    return bDate - aDate;
-  });
+  return uniqueEntries
+    .filter((entry) => matchesTemporalFilterValue(historyEntryDate(entry), "audit"))
+    .sort((a, b) => {
+      const aDate = new Date(a.log?.date || a.details?.requestDate || a.details?.travelDate || 0).getTime();
+      const bDate = new Date(b.log?.date || b.details?.requestDate || b.details?.travelDate || 0).getTime();
+      return bDate - aDate;
+    });
 }
 
 function compactDate(value) {
@@ -5281,6 +5455,7 @@ function filteredAuditLogs() {
       return !entityType.startsWith("audit.") && !entityType.startsWith("navigation.");
     })
     .filter((log) => !isAdminAuditActor(log))
+    .filter((log) => matchesTemporalFilterValue(log.date, "audit"))
     .filter((log) => auditSectionMatches(log, activeAuditSection))
     .filter((log) => auditActionFilter === "all" || String(log.action || "").toLowerCase() === auditActionFilter)
     .filter((log) => auditActorFilter === "all" || String(log.actorName || "").toLowerCase() === auditActorFilter)
@@ -5312,13 +5487,17 @@ function renderAuditPage() {
 
   if (!tableCard || !verifiedCount || !backButton) return;
 
+  document.querySelectorAll("#auditView [data-audit-only-filter]").forEach((element) => {
+    element.hidden = isSectionHistory;
+  });
+
   if (isSectionHistory) {
     const meta = historySectionMeta(activeAuditSection);
     const entries = historyEntries(activeHistorySection);
     if (heading) heading.innerHTML = `<i data-lucide="history"></i>${escapeHtml(meta.title)}`;
     if (headingDescription) headingDescription.textContent = meta.description;
     if (pageTitle) pageTitle.textContent = meta.title;
-    if (filters) filters.hidden = true;
+    if (filters) filters.hidden = false;
     backButton.hidden = false;
     verifiedCount.innerHTML = `<i data-lucide="history"></i>${entries.length} ${entries.length === 1 ? "record" : "records"}`;
     tableCard.innerHTML = entries.length
@@ -5508,6 +5687,7 @@ function sourceError(...keys) {
 
 function render() {
   syncSelectOptions();
+  syncAllTemporalFilterControls();
   renderCategoryTabs();
   updateStockOutItemId();
   renderDashboard();
@@ -6076,6 +6256,7 @@ document.addEventListener("pointerdown", unlockNotificationSound, { once: true }
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    closeTemporalFilterPopovers();
     closeDashboardMenus();
     closeApprovalColumnMenus();
     closeTransportColumnMenus();
@@ -6162,6 +6343,55 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("#savePermissionsDrawerBtn")) savePermissionsFromDrawer();
   const editButton = event.target.closest(".edit-user-roles");
   if (editButton) openPermissionsDrawer(editButton.dataset.userId);
+});
+
+document.addEventListener("click", (event) => {
+  const trigger = event.target.closest("[data-temporal-trigger]");
+  if (trigger) {
+    toggleTemporalFilterPopover(trigger.dataset.temporalTrigger);
+    return;
+  }
+  if (event.target.closest(".temporal-filter-wrap")) return;
+  closeTemporalFilterPopovers();
+});
+
+document.addEventListener("click", (event) => {
+  const modeButton = event.target.closest("[data-temporal-mode][data-temporal-filter]");
+  if (modeButton) {
+    const filterKey = modeButton.dataset.temporalFilter;
+    if (!temporalFilters[filterKey]) return;
+    temporalFilters[filterKey].mode = modeButton.dataset.temporalMode === "month" ? "month" : "date";
+    if (filterKey === "itemRequests") requestsPage = 1;
+    syncTemporalFilterControls(filterKey);
+    render();
+    return;
+  }
+
+  const clearButton = event.target.closest("[data-temporal-clear][data-temporal-filter]");
+  if (!clearButton) return;
+  const filterKey = clearButton.dataset.temporalFilter;
+  if (!temporalFilters[filterKey]) return;
+  Object.assign(temporalFilters[filterKey], {
+    start: "",
+    end: "",
+    monthStart: "",
+    monthEnd: ""
+  });
+  if (filterKey === "itemRequests") requestsPage = 1;
+  syncTemporalFilterControls(filterKey);
+  render();
+});
+
+document.addEventListener("change", (event) => {
+  const input = event.target.closest("[data-temporal-input][data-temporal-filter]");
+  if (!input) return;
+  const filterKey = input.dataset.temporalFilter;
+  const field = input.dataset.temporalInput;
+  if (!temporalFilters[filterKey] || !field) return;
+  temporalFilters[filterKey][field] = input.value || "";
+  if (filterKey === "itemRequests") requestsPage = 1;
+  syncTemporalFilterControls(filterKey);
+  render();
 });
 
 document.getElementById("settingsForm").addEventListener("change", (event) => {
@@ -6904,15 +7134,13 @@ document.addEventListener("keydown", (event) => {
 });
 
 async function initializePortal() {
-  // #region debug-point K:initialize-portal-start
-  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"K",location:"script.js:initializePortal:start",msg:"[DEBUG] initializePortal started",data:{seedUser:currentUser?.name||"",seedUid:currentUser?.uid||"",theme:localStorage.getItem(THEME_STORAGE_KEY)||""},ts:Date.now()})}).catch(()=>{});
-  // #endregion
   applyTheme(localStorage.getItem(THEME_STORAGE_KEY));
   const session = await requirePortalSession();
   if (!session) return;
   mountInventorySubsections();
   mountProcurementSubsections();
   mountRequestSubsections();
+  enhanceTemporalFilterPopovers();
   enableDatalistRefocusOptions();
   applyAdminVisibility();
   setView(document.querySelector(".app-shell")?.getAttribute("data-active-view") || "dashboard");
@@ -6922,9 +7150,6 @@ async function initializePortal() {
   render();
   await loadNotifications({ silent: true });
   syncAuthState();
-  // #region debug-point L:initialize-portal-finish
-  fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"signin-stale-user",runId:"pre-fix",hypothesisId:"L",location:"script.js:initializePortal:finish",msg:"[DEBUG] initializePortal finished",data:{currentUserName:currentUser?.name||"",currentUserEmail:currentUser?.email||"",businessDataLoadedForUser,settingsLoadedForUser},ts:Date.now()})}).catch(()=>{});
-  // #endregion
 }
 
 initializePortal();

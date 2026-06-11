@@ -1,6 +1,7 @@
+const fs = require("fs");
+const path = require("path");
 const { pool } = require("../config/database");
 const config = require("../config/env");
-const path = require("path");
 
 const DEFAULT_ROLE = "requestor";
 const ALLOWED_EMAIL_DOMAIN = "@shehersaaz.org.pk";
@@ -18,24 +19,61 @@ let firebaseAdminAuth = null;
 function getFirebaseAdminAuth() {
   if (firebaseAdminAuth) return firebaseAdminAuth;
   try {
-    const admin = require("firebase-admin");
-    if (!admin.apps.length) {
-      const serviceAccountPath = String(config.firebase.serviceAccountPath || "").trim();
-      if (!serviceAccountPath) return null;
-      const resolvedServiceAccountPath = path.isAbsolute(serviceAccountPath)
-        ? serviceAccountPath
-        : path.resolve(__dirname, "../..", serviceAccountPath);
-      const serviceAccount = require(resolvedServiceAccountPath);
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        projectId: config.firebase.projectId || serviceAccount.project_id
+    const { cert, getApps, initializeApp } = require("firebase-admin/app");
+    const { getAuth } = require("firebase-admin/auth");
+    if (!getApps().length) {
+      const credentialConfig = getFirebaseCredentialConfig();
+      if (!credentialConfig) {
+        if (config.isProduction) {
+          throw new Error("Missing Firebase Admin service account configuration.");
+        }
+        console.warn("Firebase Admin Auth is not configured; user management and token verification are limited.");
+        return null;
+      }
+      initializeApp({
+        credential: cert(credentialConfig),
+        projectId: credentialConfig.projectId
       });
     }
-    firebaseAdminAuth = admin.auth();
+    firebaseAdminAuth = getAuth();
     return firebaseAdminAuth;
   } catch (error) {
+    console.error("Firebase Admin Auth initialization failed:", error.message);
+    if (config.isProduction) throw error;
     return null;
   }
+}
+
+function getFirebaseCredentialConfig() {
+  const serviceAccountPath = String(config.firebase.admin.serviceAccountPath || "").trim();
+  if (serviceAccountPath) {
+    const resolvedPath = resolveServiceAccountPath(serviceAccountPath);
+    if (fs.existsSync(resolvedPath)) {
+      const serviceAccount = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
+      return {
+        projectId: serviceAccount.project_id,
+        clientEmail: serviceAccount.client_email,
+        privateKey: serviceAccount.private_key
+      };
+    }
+    console.error(`Firebase service account file not found: ${resolvedPath}`);
+  }
+
+  const projectId = String(config.firebase.admin.projectId || "").trim();
+  const clientEmail = String(config.firebase.admin.clientEmail || "").trim();
+  const privateKey = String(config.firebase.admin.privateKey || "").replace(/^"|"$/g, "").replace(/\\n/g, "\n");
+  if (!projectId || !clientEmail || !privateKey) return null;
+  return { projectId, clientEmail, privateKey };
+}
+
+function resolveServiceAccountPath(serviceAccountPath) {
+  if (path.isAbsolute(serviceAccountPath)) return serviceAccountPath;
+  const candidates = [
+    path.resolve(process.cwd(), serviceAccountPath),
+    path.resolve(__dirname, "..", serviceAccountPath),
+    path.resolve(__dirname, "../..", serviceAccountPath)
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[0];
 }
 
 function firebaseAuthUnavailableError() {
@@ -174,7 +212,8 @@ async function ensureUserExists(email, fallbackName) {
 async function resolveAuthContextFromToken(token) {
   if (!token) return null;
   const adminAuth = getFirebaseAdminAuth();
-  const payload = adminAuth ? await adminAuth.verifyIdToken(token) : null;
+  if (!adminAuth) throw firebaseAuthUnavailableError();
+  const payload = await adminAuth.verifyIdToken(token);
   if (!payload) return null;
   assertAllowedOfficialEmail(payload.email);
   if (!payload.email_verified) {
@@ -399,17 +438,26 @@ async function createPasswordSetupLink(email, inviteBaseUrl = "") {
     return adminAuth.generatePasswordResetLink(cleanEmail);
   }
 
-  const inviteToken = await adminAuth.createCustomToken(userRecord.uid, { inviteSetup: true });
   const setupUrl = new URL(`${cleanBaseUrl}/setup-password.html`);
-  setupUrl.searchParams.set("email", cleanEmail);
-  setupUrl.searchParams.set("inviteToken", inviteToken);
-  setupUrl.searchParams.set("mode", "createPassword");
+  const actionCodeSettings = {
+    url: setupUrl.toString(),
+    handleCodeInApp: false
+  };
+  const firebaseResetLink = await adminAuth.generatePasswordResetLink(cleanEmail, actionCodeSettings);
+  const firebaseResetUrl = new URL(firebaseResetLink);
+  const oobCode = firebaseResetUrl.searchParams.get("oobCode");
+  if (!oobCode) return firebaseResetLink;
 
-  if (!setupUrl.searchParams.get("continueUrl")) {
-    setupUrl.searchParams.set("continueUrl", `${cleanBaseUrl}/index.html`);
-  }
-
+  setupUrl.searchParams.set("mode", "resetPassword");
+  setupUrl.searchParams.set("oobCode", oobCode);
+  setupUrl.searchParams.set("continueUrl", `${cleanBaseUrl}/index.html`);
   return setupUrl.toString();
+}
+
+function assertFirebaseAdminReady() {
+  const adminAuth = getFirebaseAdminAuth();
+  if (!adminAuth) throw firebaseAuthUnavailableError();
+  return true;
 }
 
 async function assignRoleToUser(userId, roleName, assignedBy) {
@@ -510,9 +558,6 @@ async function setUserActiveStatus(userId, isActive, updatedBy) {
 }
 
 async function deleteUser(userId) {
-  // #region debug-point B:backend-delete-user-start
-  fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:start",msg:"[DEBUG] backend delete user start",data:{userId},ts:Date.now()})}).catch(()=>{});
-  // #endregion
   const [users] = await pool.execute(
     `SELECT id, email
        FROM users
@@ -528,25 +573,13 @@ async function deleteUser(userId) {
   }
 
   const email = normalizeEmail(users[0].email);
-  // #region debug-point B:backend-delete-user-email
-  fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:loaded",msg:"[DEBUG] backend delete user loaded",data:{userId,email},ts:Date.now()})}).catch(()=>{});
-  // #endregion
   if (email) {
     const adminAuth = getFirebaseAdminAuth();
     if (!adminAuth) throw firebaseAuthUnavailableError();
     try {
       const userRecord = await adminAuth.getUserByEmail(email);
-      // #region debug-point B:backend-delete-user-firebase-found
-      fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:firebase-found",msg:"[DEBUG] firebase auth user found for delete",data:{userId,email,uid:userRecord.uid,providers:(userRecord.providerData||[]).map((item)=>item.providerId)},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       await adminAuth.deleteUser(userRecord.uid);
-      // #region debug-point B:backend-delete-user-firebase-deleted
-      fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:firebase-deleted",msg:"[DEBUG] firebase auth user deleted",data:{userId,email,uid:userRecord.uid},ts:Date.now()})}).catch(()=>{});
-      // #endregion
     } catch (error) {
-      // #region debug-point B:backend-delete-user-firebase-error
-      fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:firebase-error",msg:"[DEBUG] firebase auth delete lookup/delete error",data:{userId,email,code:error?.code||"",message:error?.message||""},ts:Date.now()})}).catch(()=>{});
-      // #endregion
       if (!isFirebaseUserNotFound(error)) throw error;
     }
   }
@@ -564,14 +597,8 @@ async function deleteUser(userId) {
     }
 
     await connection.commit();
-    // #region debug-point B:backend-delete-user-db-commit
-    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:db-commit",msg:"[DEBUG] backend delete user db commit",data:{userId,email},ts:Date.now()})}).catch(()=>{});
-    // #endregion
   } catch (error) {
     await connection.rollback();
-    // #region debug-point B:backend-delete-user-db-error
-    fetch("http://127.0.0.1:7777/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"user-delete-email-in-use",runId:"pre-fix",hypothesisId:"B",location:"authService.js:deleteUser:db-error",msg:"[DEBUG] backend delete user db error",data:{userId,email,code:error?.code||"",message:error?.message||""},ts:Date.now()})}).catch(()=>{});
-    // #endregion
     throw error;
   } finally {
     connection.release();
@@ -604,6 +631,7 @@ module.exports = {
   createRole,
   createUser,
   createPasswordSetupLink,
+  assertFirebaseAdminReady,
   deleteRole,
   deleteUser,
   getUserById,

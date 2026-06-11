@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy | IMS Portal</title>
+  <link rel="icon" type="image/png" href="assets/ims-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css?v=legal-pages-1">
+</head>
+<body class="legal-document">
+  <main class="legal-page">
+    <article class="legal-shell">
+      <header class="legal-hero">
+        <a class="legal-brand" href="login.html" aria-label="Back to IMS login">
+          <img src="assets/ims-icon.png" alt="IMS">
+          <span>IMS Portal</span>
+        </a>
+        <p class="legal-kicker">Privacy Policy</p>
+        <h1>Privacy Policy for the Inventory Management System</h1>
+        <p>This Privacy Policy explains how Shehersaaz ("Company", "we", "our", or "us") handles information in the company-operated Inventory Management System ("IMS"). The IMS is an internal portal for employees, managers, approvers, procurement staff, inventory staff, and administrators.</p>
+        <p class="legal-updated">Last updated: June 10, 2026</p>
+      </header>
+
+      <section class="legal-card">
+        <h2>1. Scope</h2>
+        <p>This policy applies to authorized internal users of the IMS. The portal supports Inventory Requests, Stock Management, Purchase Orders (PO), Goods Received Notes (GRN), Vendor Records, Approval Workflows, Role-Based Access Control, notifications, and Audit Logs.</p>
+      </section>
+
+      <section class="legal-card">
+        <h2>2. Information We Collect</h2>
+        <p>The IMS collects only the information needed to operate internal inventory and procurement workflows:</p>
+        <ul>
+          <li>User details: name, official email address, department, location, role, account status, and user ID.</li>
+          <li>Authentication details: Firebase authentication token, email verification status, password reset activity, and Google sign-in details if used.</li>
+          <li>Inventory Requests: requester, requester email, line manager email, department, location, requested item, quantity, notes, approval status, issue status, and request dates.</li>
+          <li>Stock Management records: item, location, quantity, movement type, movement number, source record, notes, and user who recorded the movement.</li>
+          <li>Purchase Orders (PO): PO number, vendor, items, quantities, prices, tax, totals, delivery location, status, dates, and notes.</li>
+          <li>Goods Received Notes (GRN): GRN number, linked PO, receiving location, received/accepted/rejected quantities, item details, received-by information, and notes.</li>
+          <li>Vendor Records: vendor name, contact person, phone, email, address, NTN or tax identifier, bank name, account title, account number, and notes.</li>
+          <li>Approval Workflows: approval decisions, rejection notes, issued quantities, approver identity, and timestamps.</li>
+          <li>Audit Logs: action, affected record, user who made the change, record identifiers, changed values where recorded, and timestamp.</li>
+        </ul>
+      </section>
+
+      <section class="legal-card">
+        <h2>3. Why We Collect Information</h2>
+        <p>IMS information is used to:</p>
+        <ul>
+          <li>Verify users and restrict the IMS to authorized official accounts.</li>
+          <li>Process Inventory Requests, approvals, stock issuance, stock adjustments, PO creation, GRN posting, and Vendor Record maintenance.</li>
+          <li>Maintain reliable stock, procurement, receiving, and vendor history.</li>
+          <li>Apply Role-Based Access Control and administrative permissions.</li>
+          <li>Create Audit Logs for accountability, review, troubleshooting, and internal compliance.</li>
+        </ul>
+      </section>
+
+      <section class="legal-card">
+        <h2>4. Authentication and Session Handling</h2>
+        <p>The IMS uses Firebase Authentication for email/password login, Google sign-in, Email Verification, and Password Reset. The backend verifies Firebase bearer tokens before allowing access to protected API functions.</p>
+        <p>The browser stores the Firebase ID token in localStorage as <strong>firebase_token</strong> for authenticated API requests. Temporary authentication messages may be stored in sessionStorage as <strong>imsAuthError</strong>. The IMS does not intentionally create custom application session cookies.</p>
+      </section>
+
+      <section class="legal-card">
+        <h2>5. Password Reset and Email Verification</h2>
+        <p>Email Verification and Password Reset are handled through Firebase Authentication. Users must verify their official email address before using the IMS. Passwords are managed by Firebase and are not stored in the IMS application database.</p>
+      </section>
+
+      <section class="legal-card">
+        <h2>6. Storage, Security, and Access Controls</h2>
+        <p>IMS records are stored in a MySQL database. Authentication is managed by Firebase Authentication. Access is controlled through Role-Based Access Control, including permissions for Inventory Requests, Stock Management, approvals, stock issuance, Purchase Orders, GRNs, Vendor Records, Audit Logs, settings, users, and roles.</p>
+        <p>Security measures include authenticated API access, role and permission checks, server-side validation, parameterized database queries, rate limiting, and Audit Logs. Administrators are responsible for assigning appropriate roles and reviewing access regularly.</p>
+      </section>
+
+      <section class="legal-card">
+        <h2>7. Audit Logging</h2>
+        <p>The IMS records Audit Logs for important actions, including creating Inventory Requests, approving or rejecting requests, issuing stock, creating or cancelling POs, posting GRNs, updating Vendor Records, changing settings, and managing users or roles. Audit Logs support accountability, internal review, issue investigation, and operational reporting.</p>
+      </section>
+
+      <section class="legal-card">
+        <h2>8. Third-Party Services</h2>
+        <p>The IMS uses limited third-party services needed for authentication and interface delivery:</p>
+        <ul>
+          <li>Firebase Authentication and Firebase Admin for login, Email Verification, Password Reset, and token verification.</li>
+          <li>Google sign-in, if enabled for official accounts.</li>
+          <li>Google Fonts and Lucide icons for frontend presentation.</li>
+          <li>Company-selected hosting, reverse proxy, DNS, or CDN services where configured.</li>
+        </ul>
+        <p>The IMS does not use a custom application email service in the current codebase. Authentication-related email is handled by Firebase.</p>
+      </section>
+
+      <section class="legal-card">
+        <h2>9. Data Retention</h2>
+        <p>IMS records are retained according to Company operational, finance, procurement, audit, and legal requirements. Unless Company policy requires otherwise, recommended retention is:</p>
+        <ul>
+          <li>User accounts: for the duration of employment or authorized engagement, plus one year after deactivation unless a longer period is required by Company policy or law.</li>
+          <li>Inventory Requests, Stock Management records, Purchase Orders, GRNs, and Vendor Records: seven years, or longer where required for finance, procurement, audit, legal, or operational purposes.</li>
+          <li>Audit Logs: seven years, or longer where required for investigation, compliance, or legal purposes.</li>
+          <li>Notifications and internal messages: one year, unless linked to a retained business record or required for investigation, compliance, or legal purposes.</li>
+        </ul>
+        <p>Deletion or anonymization may be delayed where records are required for compliance, accounting, dispute resolution, or security investigation.</p>
+      </section>
+
+      <section class="legal-card">
+        <h2>10. User Rights and Account Deletion Requests</h2>
+        <p>Employees and authorized users may request correction of their account details or deactivation of their IMS account. Requests should be sent to the Company contact below. Business records, including Inventory Requests, POs, GRNs, Vendor Records, Stock Management records, and Audit Logs, may be retained where needed for internal accountability, finance, procurement, audit, or legal purposes.</p>
+      </section>
+
+      <section class="legal-card">
+        <h2>11. Hosting and System Administration</h2>
+        <p>The Company is responsible for selecting and managing hosting, database, Firebase, backup, and administrative access arrangements for the IMS. Access to production systems should be limited to authorized technical and administrative personnel.</p>
+      </section>
+
+      <section class="legal-card">
+        <h2>12. Changes to This Policy</h2>
+        <p>We may update this Privacy Policy to reflect system, operational, legal, or security changes. Updated versions will be posted in the IMS and will become effective when published unless stated otherwise.</p>
+      </section>
+
+      <section class="legal-card">
+        <h2>13. Contact</h2>
+        <p>For privacy questions, data requests, account deletion requests, or complaints, contact:</p>
+        <address>
+          Shehersaaz<br>
+          Suite No: 104, 2nd Floor, Al Zahir Plaza, Korang Road, Banigala - Islamabad<br>
+          Email: <a href="mailto:wania.azam@shehersaaz.org.pk">wania.azam@shehersaaz.org.pk</a><br>
+          Phone: 051 2613967
+        </address>
+      </section>
+
+      <footer class="legal-footer">
+        <a href="terms-and-conditions.html">Terms &amp; Conditions</a>
+        <a href="login.html">Back to Login</a>
+      </footer>
+    </article>
+  </main>
+</body>
+</html>
