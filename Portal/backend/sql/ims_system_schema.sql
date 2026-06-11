@@ -1107,7 +1107,8 @@ VALUES
   ('inventory.issue', 'inventory', 'Issue approved stock to requesters.'),
   ('purchase_order.manage', 'procurement', 'Create and update purchase orders.'),
   ('purchase_order.approve', 'procurement', 'Approve purchase orders.'),
-  ('grn.manage', 'procurement', 'Create GRNs and post accepted quantities.')
+  ('grn.manage', 'procurement', 'Create GRNs and post accepted quantities.'),
+  ('audit.view', 'audit', 'View audit logs.')
 ON DUPLICATE KEY UPDATE module = VALUES(module), description = VALUES(description);
 
 DELETE FROM permissions
@@ -1123,8 +1124,7 @@ WHERE permission_key IN (
   'manage_purchase_orders',
   'approve_purchase_orders',
   'manage_grns',
-  'view_audit_logs',
-  'audit.view'
+  'view_audit_logs'
 );
 
 INSERT IGNORE INTO role_permissions (role_id, permission_id)

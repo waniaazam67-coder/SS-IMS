@@ -9,7 +9,8 @@ const PERMISSIONS = Object.freeze({
   APPROVE_REQUESTS: "request.approve",
   MANAGE_PURCHASE_ORDERS: "purchase_order.manage",
   APPROVE_PURCHASE_ORDERS: "purchase_order.approve",
-  MANAGE_GRNS: "grn.manage"
+  MANAGE_GRNS: "grn.manage",
+  VIEW_AUDIT: "audit.view"
 });
 
 module.exports = {

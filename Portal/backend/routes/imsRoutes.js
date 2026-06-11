@@ -18,6 +18,10 @@ router.get("/notifications", v.validateQuery(notificationQuery), async (req, res
   try { ok(res, { notifications: await imsService.listNotifications(req.auth, req.query) }); } catch (error) { next(error); }
 });
 
+router.get("/audit", requirePermission(PERMISSIONS.VIEW_AUDIT), async (req, res, next) => {
+  try { ok(res, { auditLogs: await imsService.listAuditLogs() }); } catch (error) { next(error); }
+});
+
 router.patch("/notifications/read-all", writeLimiter, async (req, res, next) => {
   try { ok(res, await imsService.markAllNotificationsRead(req.auth)); } catch (error) { next(error); }
 });

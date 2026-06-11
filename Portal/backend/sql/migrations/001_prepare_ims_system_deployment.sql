@@ -226,6 +226,16 @@ CALL sp_add_fk_if_missing('notifications', 'fk_notifications_recipient', 'FOREIG
 CALL sp_add_fk_if_missing('notifications', 'fk_notifications_created_by', 'FOREIGN KEY (created_by) REFERENCES users (id) ON UPDATE CASCADE ON DELETE SET NULL');
 CALL sp_add_fk_if_missing('system_settings', 'fk_system_settings_updated_by', 'FOREIGN KEY (updated_by) REFERENCES users (id) ON UPDATE CASCADE ON DELETE SET NULL');
 
+INSERT INTO permissions (permission_key, module, description)
+VALUES ('audit.view', 'audit', 'View audit logs.')
+ON DUPLICATE KEY UPDATE module = VALUES(module), description = VALUES(description);
+
+INSERT IGNORE INTO role_permissions (role_id, permission_id)
+SELECT r.id, p.id
+FROM roles r
+JOIN permissions p ON p.permission_key = 'audit.view'
+WHERE r.name = 'Admin';
+
 INSERT INTO item_types (category_id, name)
 SELECT DISTINCT i.category_id, i.item_type
 FROM items i

@@ -1999,6 +1999,7 @@ async function loadBusinessData({ silent = false } = {}) {
     canAccessView("transport") ? ["transportRequests", "/transport-requests"] : null,
     canAccessView("po") ? ["purchaseOrders", "/purchase-orders"] : null,
     canAccessView("grn") ? ["grns", "/grn"] : null,
+    canAccessView("audit") ? ["auditLogs", "/audit"] : null,
     canAccessView("inventory") ? ["inventory", "/inventory"] : null
   ].filter(Boolean);
   const results = await Promise.allSettled(endpoints.map(([, path]) => apiRequest(path)));

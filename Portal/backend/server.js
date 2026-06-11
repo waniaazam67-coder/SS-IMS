@@ -43,8 +43,6 @@ app.use("/requisition-form", express.static(requisitionFormPath, {
   }
 }));
 
-app.use("/api", generalApiLimiter);
-
 app.get("/api/health", (req, res) => {
   res.json({ success: true, data: { status: "ok" } });
 });
@@ -62,6 +60,8 @@ app.get("/api/health/deep", async (req, res, next) => {
 app.get("/api/firebase-config", (req, res) => {
   res.json({ success: true, firebase: config.firebase.web });
 });
+
+app.use("/api", generalApiLimiter);
 
 app.use("/api", imsRoutes);
 app.use("/api/auth", authRoutes);

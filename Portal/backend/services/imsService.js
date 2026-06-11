@@ -309,11 +309,11 @@ async function listCategories() {
   const [rows] = await pool.execute(
     `SELECT c.id, c.name,
             COUNT(DISTINCT i.id) AS itemRows,
-            COALESCE(SUM(ib.on_hand_qty), 0) AS totalStock,
+            COALESCE(SUM(ib.quantity_on_hand), 0) AS totalStock,
             SUM(
               CASE
-                WHEN COALESCE(ib.available_qty, ib.on_hand_qty, 0) <= 0 THEN 1
-                WHEN COALESCE(ib.available_qty, ib.on_hand_qty, 0) < 10 THEN 1
+                WHEN COALESCE(ib.quantity_available, ib.quantity_on_hand, 0) <= 0 THEN 1
+                WHEN COALESCE(ib.quantity_available, ib.quantity_on_hand, 0) < 10 THEN 1
                 ELSE 0
               END
             ) AS lowOrOutStock
@@ -1529,6 +1529,63 @@ async function listInventory() {
   return rows;
 }
 
+async function listAuditLogs() {
+  const [rows] = await pool.execute(
+    `SELECT al.id,
+            al.table_name AS tableName,
+            al.record_id AS recordId,
+            al.action,
+            al.new_values AS newValues,
+            al.changed_at AS changedAt,
+            u.full_name AS actorName,
+            u.email AS actorEmail
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.changed_by
+      ORDER BY al.changed_at DESC, al.id DESC
+      LIMIT 1500`
+  );
+  return rows.map((row) => {
+    let details = {};
+    if (row.newValues) {
+      try {
+        details = typeof row.newValues === "string" ? JSON.parse(row.newValues) : row.newValues;
+      } catch {
+        details = { value: row.newValues };
+      }
+    }
+    const entityType = String(row.tableName || "").replace(/_/g, ".");
+    const entityId = details.requestNumber || details.poNumber || details.grnNumber || details.movementNumber || row.recordId || "";
+    return {
+      id: `db-audit-${row.id}`,
+      date: row.changedAt,
+      actorName: row.actorName || "System",
+      actorEmail: row.actorEmail || "",
+      action: String(row.action || "").toLowerCase(),
+      entityType,
+      entityId,
+      section: auditSectionForTable(row.tableName),
+      summary: auditSummary(row, entityId),
+      details
+    };
+  });
+}
+
+function auditSectionForTable(tableName) {
+  const table = String(tableName || "").toLowerCase();
+  if (["requests", "request_items"].includes(table)) return "requests";
+  if (table === "transport_requests") return "transport";
+  if (["purchase_orders", "purchase_order_lines", "vendors"].includes(table)) return "procurement";
+  if (["grns", "grn_lines", "items", "item_categories", "stock_movements"].includes(table)) return "inventory";
+  return table || "system";
+}
+
+function auditSummary(row, entityId) {
+  const action = String(row.action || "activity").toLowerCase().replace(/_/g, " ");
+  const table = String(row.tableName || "record").replace(/_/g, " ");
+  const actor = row.actorName || "System";
+  return `${actor} recorded ${action} on ${table}${entityId ? ` ${entityId}` : ""}`;
+}
+
 async function reconcileInventoryBalance(connection, itemId, locationId) {
   const [rows] = await connection.execute(
     `SELECT
@@ -1818,6 +1875,7 @@ module.exports = {
   listNotifications,
   markNotificationRead,
   markAllNotificationsRead,
+  listAuditLogs,
   listInventory,
   postStockMovement,
   postStockAdjustment,
