@@ -15,6 +15,11 @@ const AUTO_REFRESH_INTERVAL_MS = 10000;
 const CHAT_POLL_INTERVAL_MS = 5000;
 const OFFICIAL_EMAIL_DOMAIN = "@shehersaaz.org.pk";
 const OFFICIAL_EMAIL_MESSAGE = "Only Shehersaaz official email addresses are allowed.";
+const FIREBASE_AUTH_EXPIRATION_CODES = new Set([
+  "auth/id-token-expired",
+  "auth/user-token-expired",
+  "auth/invalid-id-token"
+]);
 const DEFAULT_USER_ROLES = [
   { key: "admin", label: "admin" },
   { key: "requestor", label: "requestor" },
@@ -203,6 +208,38 @@ function redirectToLogin() {
     : `${window.location.pathname}${window.location.search}${window.location.hash}`;
   const returnTo = encodeURIComponent(target);
   window.location.replace(`${LOGIN_PAGE_URL}?returnTo=${returnTo}`);
+}
+
+function isFirebaseAuthExpirationResponse(response, data = {}) {
+  const code = data.error?.code || data.code;
+  const message = `${data.error?.message || data.message || ""} ${code || ""}`;
+  return response.status === 401 && (
+    FIREBASE_AUTH_EXPIRATION_CODES.has(code)
+    || /auth\/(?:id-token-expired|user-token-expired|invalid-id-token)/i.test(message)
+  );
+}
+
+async function refreshFirebaseToken() {
+  const user = window.imsFirebaseAuth?.currentUser || await ensureFirebaseReady();
+  if (!user) throw new Error("No active Firebase user.");
+  const token = await user.getIdToken(true);
+  localStorage.setItem("firebase_token", token);
+  return token;
+}
+
+async function expirePortalSession() {
+  showToast("Session Expired\n\nYour login session has expired.\nPlease sign in again to continue.", "error");
+  localStorage.removeItem("firebase_token");
+  sessionStorage.removeItem(AUDIT_LOGIN_SESSION_KEY);
+  sessionStorage.setItem("imsAuthError", "Your login session has expired. Please sign in again to continue.");
+  if (window.imsFirebaseSignOut) {
+    try {
+      await window.imsFirebaseSignOut();
+    } catch (error) {
+      console.warn("Firebase sign-out failed after session expiry:", error);
+    }
+  }
+  setTimeout(redirectToLogin, 900);
 }
 
 function normalizeRoleKey(role) {
@@ -518,16 +555,9 @@ async function requirePortalSession() {
   const token = await user.getIdToken();
   localStorage.setItem("firebase_token", token);
   try {
-    const response = await fetch("/api/auth/me", {
+    const session = await authenticatedFetch("/api/auth/me", {
       headers: { Authorization: `Bearer ${token}` }
     });
-    if (!response.ok) {
-      const responseData = await response.json().catch(() => ({}));
-      const message = responseData.error?.message || "Unable to load your IMS permissions.";
-      if (response.status === 403) sessionStorage.setItem("imsAuthError", message);
-      throw new Error(message);
-    }
-    const session = await response.json();
     const authUser = session.user || {};
     currentUser = {
       ...currentUser,
@@ -541,6 +571,7 @@ async function requirePortalSession() {
     };
     currentUser.role = currentUser.roles[0] || "requestor";
   } catch (error) {
+    if (error.statusCode === 403) sessionStorage.setItem("imsAuthError", error.message || "Unable to load your IMS permissions.");
     localStorage.removeItem("firebase_token");
     if (window.imsFirebaseSignOut) await window.imsFirebaseSignOut();
     redirectToLogin();
@@ -1050,9 +1081,9 @@ function initialsFor(nameOrEmail) {
   return parts.slice(0, 2).map((part) => part[0] || "").join("").toUpperCase() || "IM";
 }
 
-async function apiRequest(path, options = {}) {
+async function authenticatedFetch(url, options = {}, { retryOnAuthExpiration = true } = {}) {
   const token = localStorage.getItem("firebase_token");
-  const response = await fetch(`${BUSINESS_DATA_API_BASE}${path}`, {
+  const response = await fetch(url, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -1067,6 +1098,24 @@ async function apiRequest(path, options = {}) {
   } catch {
     data = {};
   }
+  if (!response.ok && retryOnAuthExpiration && isFirebaseAuthExpirationResponse(response, data)) {
+    let refreshedToken = "";
+    try {
+      refreshedToken = await refreshFirebaseToken();
+    } catch (error) {
+      await expirePortalSession();
+      error.message = "Session Expired";
+      error.sessionExpired = true;
+      throw error;
+    }
+    return authenticatedFetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        Authorization: `Bearer ${refreshedToken}`
+      }
+    }, { retryOnAuthExpiration: false });
+  }
   if (!response.ok) {
     const fallbackMessage = responseText && !responseText.trim().startsWith("<")
       ? responseText.trim()
@@ -1077,6 +1126,10 @@ async function apiRequest(path, options = {}) {
     throw error;
   }
   return data;
+}
+
+async function apiRequest(path, options = {}) {
+  return authenticatedFetch(`${BUSINESS_DATA_API_BASE}${path}`, options);
 }
 
 async function syncImportedInventoryToDatabase() {
@@ -1159,23 +1212,17 @@ function normalizeSettings(rows) {
 }
 
 async function requestSettings(path = "", options = {}) {
-  const token = localStorage.getItem("firebase_token");
-  const response = await fetch(`${SETTINGS_API_BASE}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {})
+  try {
+    return await authenticatedFetch(`${SETTINGS_API_BASE}${path}`, options);
+  } catch (error) {
+    if (error.statusCode === 403) {
+      error.message = "Admin access is required.";
+      error.accessDenied = true;
+    } else if (!error.sessionExpired) {
+      error.message = "Settings API is unavailable.";
     }
-  });
-  if (response.status === 403) {
-    const error = new Error("Admin access is required.");
-    error.statusCode = 403;
-    error.accessDenied = true;
     throw error;
   }
-  if (!response.ok) throw new Error("Settings API is unavailable.");
-  return response.json();
 }
 
 async function loadSettings(options = {}) {

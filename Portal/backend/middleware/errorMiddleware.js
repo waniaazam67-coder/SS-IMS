@@ -15,7 +15,8 @@ function errorHandler(error, req, res, next) {
   return res.status(statusCode).json({
     success: false,
     error: {
-      message: statusCode >= 500 ? "Server error while processing the request." : error.message
+      message: statusCode >= 500 ? "Server error while processing the request." : error.message,
+      ...(error.code ? { code: error.code } : {})
     }
   });
 }

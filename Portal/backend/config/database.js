@@ -21,6 +21,7 @@ async function initializeDatabase() {
   const connection = await mysql.createConnection({
     host: config.database.host,
     port: config.database.port,
+    database: config.database.name,
     user: config.database.user,
     password: config.database.password,
     multipleStatements: false
@@ -126,6 +127,7 @@ function splitSqlStatements(sql) {
     buffer = [];
 
     if (!statement) return;
+    if (/^USE\s+/i.test(statement)) return;
 
     const withoutDelimiter = statement.endsWith(delimiter)
       ? statement.slice(0, -delimiter.length).trim()

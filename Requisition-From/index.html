@@ -394,17 +394,29 @@ body.page-exit-back .login-card {
       signOut
     } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
 
-    const BACKEND_ORIGIN = "http://localhost:3000";
     async function loadFirebaseConfig() {
-      const configUrl = window.location.protocol === "file:"
-        ? `${BACKEND_ORIGIN}/api/firebase-config`
-        : new URL("/api/firebase-config", BACKEND_ORIGIN).toString();
-      const response = await fetch(configUrl, {
-        headers: { Accept: "application/json" },
-        cache: "no-store"
-      });
+      const configUrl = "/api/firebase-config";
+      let response;
+      try {
+        response = await fetch(configUrl, {
+          headers: { Accept: "application/json" },
+          cache: "no-store"
+        });
+      } catch (error) {
+        console.error("Firebase config request failed", {
+          endpoint: configUrl,
+          status: "network-error",
+          message: error.message
+        });
+        throw new Error("Unable to load Firebase configuration. Please check your network connection.");
+      }
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.success || !payload?.firebase) {
+        console.error("Firebase config request returned an error", {
+          endpoint: configUrl,
+          status: response.status,
+          response: payload
+        });
         throw new Error("Unable to load Firebase configuration.");
       }
       return payload.firebase;

@@ -66,6 +66,21 @@ function isFirebaseUserNotFound(error) {
   return error?.code === "auth/user-not-found";
 }
 
+function isFirebaseTokenVerificationError(error) {
+  return [
+    "auth/id-token-expired",
+    "auth/user-token-expired",
+    "auth/invalid-id-token"
+  ].includes(error?.code);
+}
+
+function firebaseTokenVerificationError(error) {
+  const authError = new Error("Authentication token expired or invalid.");
+  authError.statusCode = 401;
+  authError.code = error.code;
+  return authError;
+}
+
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
@@ -193,7 +208,13 @@ async function resolveAuthContextFromToken(token) {
   if (!token) return null;
   const adminAuth = getFirebaseAdminAuth();
   if (!adminAuth) throw firebaseAuthUnavailableError();
-  const payload = await adminAuth.verifyIdToken(token);
+  let payload = null;
+  try {
+    payload = await adminAuth.verifyIdToken(token);
+  } catch (error) {
+    if (isFirebaseTokenVerificationError(error)) throw firebaseTokenVerificationError(error);
+    throw error;
+  }
   if (!payload) return null;
   assertAllowedOfficialEmail(payload.email);
   if (!payload.email_verified) {

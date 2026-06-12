@@ -1834,9 +1834,7 @@ window.onload = function() {
 
     setActiveStep(document.querySelectorAll('.form-container')[0]);
 };
-const API_BASE_URL = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
-  ? "http://localhost:3000/api"
-  : "https://requests.shehersaaz.org.pk/api";
+const API_BASE_URL = "/api";
 const PRINT_URL = "";
 let lastSubmittedRequestId = "";
 let lastSubmittedPayload = null;
@@ -1847,6 +1845,44 @@ function authHeaders() {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {})
   };
+}
+
+async function requestJson(endpoint, options = {}) {
+  const url = `${API_BASE_URL}${endpoint}`;
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    console.error("Requisition API request failed", {
+      endpoint: url,
+      status: "network-error",
+      method: options.method || "GET",
+      message: error.message
+    });
+    throw new Error(`Unable to reach ${url}. Please check your connection and try again.`);
+  }
+
+  const responseText = await response.text();
+  let data = {};
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    console.error("Requisition API request returned an error", {
+      endpoint: url,
+      status: response.status,
+      method: options.method || "GET",
+      response: data,
+      responseText
+    });
+    const fallback = `Request to ${url} failed with status ${response.status}.`;
+    throw new Error(data.error?.message || data.message || fallback);
+  }
+
+  return data;
 }
 
 function showSuccessRequest(requestId) {
@@ -2206,7 +2242,7 @@ async function submitToSheets() {
 
     // Submit inventory request if there are inventory items
     if (payload.items.length > 0) {
-      const response = await fetch(`${API_BASE_URL}/requests`, {
+      const data = await requestJson("/requests", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -2225,19 +2261,12 @@ async function submitToSheets() {
           }))
         })
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || error.message || "Failed to submit inventory request.");
-      }
-
-      const data = await response.json();
       submittedRequestId = data.data?.requestId || data.requestId || "";
     }
 
     // Submit transport requests
     for (const transport of payload.transportItems) {
-      const response = await fetch(`${API_BASE_URL}/transport-requests`, {
+      const data = await requestJson("/transport-requests", {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -2265,13 +2294,6 @@ async function submitToSheets() {
           notes: transport.purpose || null
         })
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || error.message || "Failed to submit transport request.");
-      }
-
-      const data = await response.json();
       if (!submittedRequestId) {
         submittedRequestId = data.data?.requestId || data.requestId || "";
       }
