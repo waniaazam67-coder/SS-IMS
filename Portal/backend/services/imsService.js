@@ -20,7 +20,7 @@ async function audit(tableName, recordId, action, changedBy, newValues = null, c
 function isAdminContext(auth = {}) {
   const roles = (auth.roles || []).map((role) => String(role).toLowerCase());
   const permissions = new Set(auth.permissions || []);
-  return roles.includes("admin") || permissions.has("setting.manage") || permissions.has("user.manage");
+  return roles.includes("superadmin") || roles.includes("admin") || permissions.has("setting.manage") || permissions.has("user.manage");
 }
 
 function notificationVisibilityWhere(auth = {}, alias = "n") {
@@ -1686,7 +1686,7 @@ async function getTransportForUpdate(connection, id) {
 
 function assertLineManagerApprovalAccess(record = {}, authContext = {}) {
   const roles = (authContext.roles || []).map((role) => String(role || "").toLowerCase());
-  if (roles.includes("admin")) return;
+  if (roles.includes("superadmin") || roles.includes("admin")) return;
 
   const userEmail = cleanEmail(authContext.user?.email);
   const managerEmail = cleanEmail(record.managerEmail || record.line_manager_email);
@@ -1755,7 +1755,8 @@ function hasPermission(authContext = {}, permission) {
 }
 
 function hasRole(authContext = {}, roleName) {
-  return (authContext.roles || []).map((role) => String(role || "").toLowerCase()).includes(roleName);
+  const roles = (authContext.roles || []).map((role) => String(role || "").toLowerCase());
+  return roles.includes("superadmin") || roles.includes(roleName);
 }
 
 function requestVisibility(authContext = {}) {

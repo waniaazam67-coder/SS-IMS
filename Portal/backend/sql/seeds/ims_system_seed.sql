@@ -35,6 +35,7 @@ ON DUPLICATE KEY UPDATE
 
 INSERT INTO roles (name, description, is_system)
 VALUES
+  ('Super Admin', 'System owner role with full administrative access.', 1),
   ('Admin', 'Full system administration access.', 1),
   ('Requester', 'Can create and track own inventory and transport requests.', 1),
   ('Approver', 'Can approve or reject assigned requests.', 1),
@@ -55,7 +56,8 @@ VALUES
   ('inventory.issue', 'inventory', 'Issue stock against approved requests.'),
   ('purchase_order.manage', 'procurement', 'Manage vendors and purchase orders.'),
   ('purchase_order.approve', 'procurement', 'Approve purchase orders.'),
-  ('grn.manage', 'procurement', 'Create goods received notes and post accepted stock.')
+  ('grn.manage', 'procurement', 'Create goods received notes and post accepted stock.'),
+  ('audit.view', 'audit', 'View audit logs.')
 ON DUPLICATE KEY UPDATE
   module = VALUES(module),
   description = VALUES(description);
@@ -64,7 +66,7 @@ INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
 JOIN permissions p
-WHERE r.name = 'Admin';
+WHERE r.name IN ('Super Admin', 'Admin');
 
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
@@ -85,7 +87,7 @@ JOIN permissions p ON p.permission_key IN ('request.create', 'inventory.view', '
 WHERE r.name = 'Inventory Manager';
 
 INSERT INTO users (full_name, email, department_id, location_id, is_line_manager, is_active)
-VALUES ('IMS Admin Placeholder', 'admin@example.com', 5, 1, 1, 1)
+VALUES ('Super Admin', 'superadmin059@gmail.com', 5, 1, 1, 1)
 ON DUPLICATE KEY UPDATE
   full_name = VALUES(full_name),
   department_id = VALUES(department_id),
@@ -97,8 +99,8 @@ ON DUPLICATE KEY UPDATE
 INSERT IGNORE INTO user_roles (user_id, role_id)
 SELECT u.id, r.id
 FROM users u
-JOIN roles r ON r.name = 'Admin'
-WHERE u.email = 'admin@example.com';
+JOIN roles r ON r.name = 'Super Admin'
+WHERE u.email = 'superadmin059@gmail.com';
 
 INSERT INTO item_types (category_id, name)
 SELECT DISTINCT i.category_id, i.item_type

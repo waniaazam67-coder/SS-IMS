@@ -81,12 +81,14 @@
     await setPersistence(auth, browserLocalPersistence);
     const googleProvider = new GoogleAuthProvider();
     const OFFICIAL_EMAIL_MESSAGE = 'Only Shehersaaz official email addresses are allowed.';
+    const SUPER_ADMIN_EMAIL = 'superadmin059@gmail.com';
     const loginPageUrl = window.location.protocol === 'file:'
       ? 'http://localhost:3000/login.html'
       : new URL('login.html', window.location.href).toString();
 
     function isOfficialEmail(email) {
-      return String(email || '').trim().toLowerCase().endsWith('@shehersaaz.org.pk');
+      const cleanEmail = String(email || '').trim().toLowerCase();
+      return cleanEmail === SUPER_ADMIN_EMAIL || cleanEmail.endsWith('@shehersaaz.org.pk');
     }
 
     function showError(message) {

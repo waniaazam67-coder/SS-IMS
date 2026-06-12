@@ -27,8 +27,10 @@ async function requireAuth(req, res, next) {
 function requirePermission(permission) {
   return function permissionMiddleware(req, res, next) {
     const permissions = new Set(req.auth?.permissions || []);
+    const roles = new Set((req.auth?.roles || []).map((role) => String(role || "").toLowerCase()));
 
-    if (!permissions.has(permission)) {
+    // superadmin is the system owner role and is allowed through every admin permission gate.
+    if (!roles.has("superadmin") && !permissions.has(permission)) {
       const error = new Error("You do not have permission to perform this action.");
       error.statusCode = 403;
       return next(error);

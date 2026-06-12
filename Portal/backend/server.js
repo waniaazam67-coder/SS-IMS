@@ -1,5 +1,6 @@
 const path = require("path");
 const express = require("express");
+const config = require("./config/env");
 const settingsRoutes = require("./routes/settingsRoutes");
 const inventoryRoutes = require("./routes/inventoryRoutes");
 const imsRoutes = require("./routes/imsRoutes");
@@ -8,7 +9,6 @@ const chatRoutes = require("./routes/chatRoutes");
 const { errorHandler, notFoundHandler } = require("./middleware/errorMiddleware");
 const { corsMiddleware } = require("./middleware/corsMiddleware");
 const { generalApiLimiter } = require("./middleware/rateLimitMiddleware");
-const config = require("./config/env");
 const { initializeDatabase, testDatabaseConnection } = require("./config/database");
 const { assertFirebaseAdminReady } = require("./services/authService");
 
@@ -17,6 +17,8 @@ const PORT = config.port;
 const frontendPath = path.resolve(__dirname, "../frontend");
 const requisitionFormPath = path.resolve(__dirname, "../../Requisition-From");
 
+// Hostinger sits in front of Node as a reverse proxy. Trust exactly one proxy hop so Express derives req.ip
+// from the proxy-provided client IP, without blindly trusting arbitrary client-supplied forwarding chains.
 app.set("trust proxy", 1);
 app.use(corsMiddleware);
 app.use(securityHeaders);
@@ -61,6 +63,11 @@ app.get("/api/firebase-config", (req, res) => {
   res.json({ success: true, firebase: config.firebase.web });
 });
 
+// Rate limiting strategy:
+// - generalApiLimiter: lenient GET/HEAD/OPTIONS read safety net only; skips /api/auth/me.
+// - sessionLimiter: applied in authRoutes to /api/auth/me refresh/profile checks.
+// - signupLimiter/passwordResetLimiter/loginLimiter: public auth-sensitive buckets when those endpoints exist.
+// - writeLimiter/adminWriteLimiter: applied inside route modules to mutation endpoints.
 app.use("/api", generalApiLimiter);
 
 app.use("/api", imsRoutes);

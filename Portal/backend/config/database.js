@@ -43,7 +43,7 @@ async function initializeDatabase() {
 
 async function seedAdminUserIfEnabled(connection) {
   const shouldSeed = !config.isProduction || config.enableAdminSeed;
-  const adminEmail = "wania.azam@shehersaaz.org.pk";
+  const adminEmail = "superadmin059@gmail.com";
   if (!shouldSeed) {
     console.log("Admin seed skipped. Set ENABLE_ADMIN_SEED=true to apply it in production.");
     return;
@@ -56,7 +56,7 @@ async function seedAdminUserIfEnabled(connection) {
 
   await connection.execute(
     `INSERT INTO users (full_name, email, is_line_manager, is_active)
-     VALUES ('Wania Azam', ?, 1, 1)
+     VALUES ('Super Admin', ?, 1, 1)
      ON DUPLICATE KEY UPDATE
        full_name = VALUES(full_name),
        is_line_manager = VALUES(is_line_manager),
@@ -69,7 +69,7 @@ async function seedAdminUserIfEnabled(connection) {
     `INSERT IGNORE INTO user_roles (user_id, role_id, assigned_by)
      SELECT u.id, r.id, 1
        FROM users u
-       JOIN roles r ON r.name = 'Admin'
+       JOIN roles r ON r.name = 'Super Admin'
       WHERE LOWER(u.email) = ?`,
     [adminEmail]
   );

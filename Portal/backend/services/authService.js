@@ -7,6 +7,7 @@ const DEFAULT_ROLE = "requestor";
 const ALLOWED_EMAIL_DOMAIN = "@shehersaaz.org.pk";
 const OFFICIAL_EMAIL_MESSAGE = "Only Shehersaaz official email addresses are allowed.";
 const ROLE_DEFINITIONS = Object.freeze([
+  { key: "superadmin", dbName: "Super Admin", label: "Super Admin" },
   { key: "admin", dbName: "Admin", label: "Admin" },
   { key: "requestor", dbName: "Requester", label: "Requestor" },
   { key: "approver", dbName: "Approver", label: "Approver" },
@@ -86,7 +87,8 @@ function normalizeEmail(email) {
 }
 
 function isAllowedOfficialEmail(email) {
-  return normalizeEmail(email).endsWith(ALLOWED_EMAIL_DOMAIN);
+  const cleanEmail = normalizeEmail(email);
+  return cleanEmail === "superadmin059@gmail.com" || cleanEmail.endsWith(ALLOWED_EMAIL_DOMAIN);
 }
 
 function assertAllowedOfficialEmail(email) {
@@ -273,8 +275,8 @@ async function createRole(input = {}, createdBy) {
   }
 
   const normalizedKey = normalizeRoleKey(label);
-  if (normalizedKey === "admin") {
-    const error = new Error("Admin role already exists.");
+  if (["admin", "superadmin"].includes(normalizedKey)) {
+    const error = new Error("System role already exists.");
     error.statusCode = 400;
     throw error;
   }

@@ -15,12 +15,14 @@ const AUTO_REFRESH_INTERVAL_MS = 10000;
 const CHAT_POLL_INTERVAL_MS = 5000;
 const OFFICIAL_EMAIL_DOMAIN = "@shehersaaz.org.pk";
 const OFFICIAL_EMAIL_MESSAGE = "Only Shehersaaz official email addresses are allowed.";
+const SUPER_ADMIN_EMAIL = "superadmin059@gmail.com";
 const FIREBASE_AUTH_EXPIRATION_CODES = new Set([
   "auth/id-token-expired",
   "auth/user-token-expired",
   "auth/invalid-id-token"
 ]);
 const DEFAULT_USER_ROLES = [
+  { key: "superadmin", label: "superadmin" },
   { key: "admin", label: "admin" },
   { key: "requestor", label: "requestor" },
   { key: "approver", label: "approver" },
@@ -452,7 +454,8 @@ function getAvailableUserRoles() {
 }
 
 function isOfficialEmail(email) {
-  return String(email || "").trim().toLowerCase().endsWith(OFFICIAL_EMAIL_DOMAIN);
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  return cleanEmail === SUPER_ADMIN_EMAIL || cleanEmail.endsWith(OFFICIAL_EMAIL_DOMAIN);
 }
 
 function userRoles() {
@@ -461,7 +464,8 @@ function userRoles() {
 
 function hasRole(role) {
   const roles = userRoles();
-  return roles.includes("admin") || roles.includes(normalizeRoleKey(role));
+  // superadmin is the system owner role and inherits every admin-only UI permission.
+  return roles.includes("superadmin") || roles.includes("admin") || roles.includes(normalizeRoleKey(role));
 }
 
 function userPermissions() {
@@ -473,7 +477,7 @@ function hasPermission(permission) {
 }
 
 function hasPortalAdminAccess() {
-  return hasRole("admin") || hasPermission("setting.manage");
+  return hasRole("superadmin") || hasRole("admin") || hasPermission("setting.manage");
 }
 
 function canAccessView(view) {
@@ -1488,7 +1492,7 @@ function renderRolesManagement(section) {
     { module: "Settings", label: "Settings", view: "settings" },
     { module: "History", label: "History", view: "history" }
   ];
-  const roleCanAccess = (roleKey, view) => roleKey === "admin" || (VIEW_ROLE_ACCESS[view] || []).includes(roleKey);
+  const roleCanAccess = (roleKey, view) => roleKey === "superadmin" || roleKey === "admin" || (VIEW_ROLE_ACCESS[view] || []).includes(roleKey);
   const groupedRoleAccess = (roleKey) => roleAccessSections.reduce((groups, sectionInfo) => {
     if (!roleCanAccess(roleKey, sectionInfo.view)) return groups;
     if (!groups[sectionInfo.module]) groups[sectionInfo.module] = [];
@@ -1840,8 +1844,9 @@ async function saveUserRoles(userId, rolesOverride = null) {
     ? rolesOverride
     : Array.from(document.querySelectorAll(`input[name="roles-${escapeCssIdentifier(userId)}"]:checked`)).map((input) => input.value);
   if (!checkedRoles.length) return showToast("Select at least one role.", "error");
-  if (String(userId) === String(currentUser.id) && !checkedRoles.includes("admin")) {
-    return showToast("Keep admin selected for your own account.", "error");
+  const normalizedCheckedRoles = checkedRoles.map(normalizeRoleKey);
+  if (String(userId) === String(currentUser.id) && !normalizedCheckedRoles.some((role) => role === "admin" || role === "superadmin")) {
+    return showToast("Keep admin or superadmin selected for your own account.", "error");
   }
 
   try {

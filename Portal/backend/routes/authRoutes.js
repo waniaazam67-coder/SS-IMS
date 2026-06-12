@@ -2,13 +2,14 @@ const express = require("express");
 const authService = require("../services/authService");
 const { PERMISSIONS } = require("../config/permissions");
 const { requireAuth, requirePermission } = require("../middleware/authMiddleware");
-const { adminWriteLimiter, signupLimiter } = require("../middleware/rateLimitMiddleware");
+const { adminWriteLimiter, sessionLimiter, signupLimiter } = require("../middleware/rateLimitMiddleware");
 const { ok } = require("../utils/apiResponse");
 const v = require("../utils/validation");
 
 const router = express.Router();
 
-router.get("/me", requireAuth, (req, res) => {
+// Session/profile checks are frequent during normal portal use, so they use a lenient bucket separate from login/signup.
+router.get("/me", sessionLimiter, requireAuth, (req, res) => {
   ok(res, req.auth);
 });
 
@@ -73,8 +74,9 @@ router.put("/users/:userId/roles", adminWriteLimiter, requireAuth, requirePermis
       error.statusCode = 400;
       throw error;
     }
-    if (userId === Number(req.auth.user.id) && !req.body.roles.map((role) => String(role).toLowerCase()).includes("admin")) {
-      const error = new Error("You cannot remove admin from your own account.");
+    const selfRoles = req.body.roles.map((role) => String(role).toLowerCase().replace(/[\s-]+/g, "_"));
+    if (userId === Number(req.auth.user.id) && !selfRoles.some((role) => role === "admin" || role === "superadmin")) {
+      const error = new Error("You cannot remove admin or superadmin from your own account.");
       error.statusCode = 400;
       throw error;
     }

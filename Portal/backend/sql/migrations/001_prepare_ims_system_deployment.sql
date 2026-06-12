@@ -234,7 +234,7 @@ INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
 JOIN permissions p ON p.permission_key = 'audit.view'
-WHERE r.name = 'Admin';
+WHERE r.name IN ('Super Admin', 'Admin');
 
 INSERT INTO item_types (category_id, name)
 SELECT DISTINCT i.category_id, i.item_type

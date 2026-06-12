@@ -1089,6 +1089,7 @@ ON DUPLICATE KEY UPDATE code = VALUES(code), name = VALUES(name), is_active = VA
 
 INSERT INTO roles (name, description, is_system)
 VALUES
+  ('Super Admin', 'System owner role with full administrative access.', 1),
   ('Admin', 'Full administrative access.', 1),
   ('Inventory Manager', 'Manage inventory, stock movements, GRNs, and issuance.', 1),
   ('Approver', 'Approve or reject requests and purchase orders.', 1),
@@ -1131,7 +1132,7 @@ INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
 JOIN permissions p ON (
-  r.name = 'Admin'
+  r.name IN ('Super Admin', 'Admin')
   OR (r.name = 'Requester' AND p.permission_key IN ('request.create', 'inventory.view'))
   OR (r.name = 'Inventory Manager' AND p.permission_key IN ('request.create', 'inventory.view', 'inventory.manage', 'inventory.issue', 'grn.manage', 'purchase_order.manage', 'purchase_order.approve'))
   OR (r.name = 'Approver' AND p.permission_key IN ('request.create', 'request.approve', 'inventory.view'))
