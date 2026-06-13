@@ -13,6 +13,8 @@ const AUDIT_LOG_LIMIT = 1500;
 const BUSINESS_DATA_API_BASE = IS_FILE_PROTOCOL ? `${BACKEND_ORIGIN}/api` : "/api";
 const AUTO_REFRESH_INTERVAL_MS = 10000;
 const CHAT_POLL_INTERVAL_MS = 5000;
+const GRN_INVOICE_MAX_BYTES = 5 * 1024 * 1024;
+const GRN_INVOICE_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".pdf"];
 const OFFICIAL_EMAIL_DOMAIN = "@shehersaaz.org.pk";
 const OFFICIAL_EMAIL_MESSAGE = "Only Shehersaaz official email addresses are allowed.";
 const SUPER_ADMIN_EMAIL = "superadmin059@gmail.com";
@@ -41,6 +43,7 @@ const VIEW_ROLE_ACCESS = {
   vendors: ["admin", "inventory_manager"],
   itemRequests: ["admin", "inventory_manager"],
   transport: ["admin", "inventory_manager"],
+  reports: ["admin", "inventory_manager", "approver", "requestor"],
   audit: ["admin"],
   settings: ["admin"],
   history: ["admin"]
@@ -68,7 +71,11 @@ const businessDataErrors = {};
 let dashboardDefaultHtml = "";
 let dashboardPickerOpen = false;
 let dashboardWidgetIds = loadDashboardWidgetIds();
-const APPROVED_LOCATIONS = ["I9 warehouse", "Secretariat", "NSR CC", "RWP CC"];
+let dashboardKpiStartDate = "";
+let dashboardKpiEndDate = "";
+let dashboardKpiLoading = false;
+let dashboardKpiError = "";
+const APPROVED_LOCATIONS = ["I-9 warehouse", "Secretariat", "NSR CC", "RWP CC"];
 const APPROVED_LOCATION_LOOKUP = new Map(APPROVED_LOCATIONS.map((location) => [
   location.toLowerCase().replace(/[^a-z0-9]/g, ""),
   location
@@ -79,6 +86,7 @@ const seedState = {
   categories: [],
   items: [],
   vendors: [],
+  stockMovements: [],
   requests: [],
   transportRequests: [],
   purchaseOrders: [],
@@ -110,23 +118,23 @@ let procurementModuleTab = "po";
 let activeInventoryDetailCode = "";
 let lastAppliedGrnPoNumber = "";
 const INVENTORY_VIEW_TABS = {
-  issue: "issue",
-  grn: "grn"
+  issue: "issue"
 };
 const INVENTORY_TAB_LABELS = {
   items: "Items",
   warehouses: "Warehouses",
   categories: "Categories",
-  issue: "Stock Issue",
-  grn: "GRN"
+  issue: "Stock Issue"
 };
 const PROCUREMENT_VIEW_TABS = {
   po: "po",
-  vendors: "vendors"
+  vendors: "vendors",
+  grn: "grn"
 };
 const PROCUREMENT_TAB_LABELS = {
   po: "PO",
-  vendors: "Vendors"
+  vendors: "Vendors",
+  grn: "GRN"
 };
 const REQUEST_VIEW_TABS = {
   requisition: "requisition",
@@ -157,6 +165,7 @@ let activeRoleAccessPreviewRole = "";
 let activeSettingsGroup = "team";
 let activeNotificationTab = "direct";
 let unreadOnly = false;
+let notificationCenterExpanded = false;
 let notifications = [];
 let notificationsLoaded = false;
 let chatUsers = [];
@@ -169,6 +178,9 @@ let chatSearchTerm = "";
 let chatPollTimer = null;
 const knownUnreadNotificationIds = new Set();
 let notificationSoundUnlocked = false;
+let notificationEventSource = null;
+let notificationStreamRestartTimer = null;
+const streamedNotificationIds = new Set();
 let pendingPurchaseOrder = null;
 let pendingCancelPoNumber = "";
 let pendingDeleteUserId = "";
@@ -181,6 +193,37 @@ let auditActionFilter = "all";
 let auditActorFilter = "all";
 let auditEntityFilter = "";
 let activeAuditSection = "all";
+let activeReportCategory = "inventory";
+let activeReportKey = "stock-balance";
+let reportRows = [];
+let reportLoading = false;
+let reportError = "";
+let reportSearchTerm = "";
+let reportPage = 1;
+const REPORT_PAGE_SIZE = 12;
+const reportFilters = { startDate: "", endDate: "", item: "", category: "", warehouse: "", vendor: "", department: "", status: "", user: "" };
+
+const REPORT_CATEGORIES = [
+  { key: "inventory", label: "Inventory Reports" },
+  { key: "procurement", label: "Procurement Reports" },
+  { key: "requests", label: "Request Reports" },
+  { key: "audit", label: "Audit Reports" }
+];
+
+const REPORTS = {
+  "stock-balance": { category: "inventory", title: "Stock Balance Report", description: "Current stock by item, category, and warehouse.", endpoint: "/reports/stock-balance", columns: [["itemName", "Item Name"], ["category", "Category"], ["warehouse", "Warehouse"], ["availableQuantity", "Available Quantity"], ["unit", "Unit"], ["minimumStockLevel", "Minimum Stock Level"], ["stockStatus", "Stock Status"]], filters: ["item", "category", "warehouse", "status"] },
+  "stock-movement": { category: "inventory", title: "Stock Movement Report", description: "Ledger of GRN, request, manual, and adjustment movements.", endpoint: "/reports/stock-movement", columns: [["date", "Date"], ["item", "Item"], ["warehouse", "Warehouse"], ["movementType", "Movement Type"], ["quantity", "Quantity"], ["reference", "Reference"], ["createdBy", "Created By"]], filters: ["startDate", "endDate", "item", "warehouse", "status", "user"] },
+  "low-stock": { category: "inventory", title: "Low Stock Report", description: "Items below the configured minimum stock level. Minimum level uses the current IMS default until item-level thresholds are added.", endpoint: "/reports/low-stock", columns: [["itemName", "Item Name"], ["category", "Category"], ["warehouse", "Warehouse"], ["currentQuantity", "Current Quantity"], ["minimumLevel", "Minimum Level"], ["shortageQuantity", "Shortage Quantity"], ["status", "Status"]], filters: ["item", "category", "warehouse", "status"] },
+  "inventory-valuation": { category: "inventory", title: "Inventory Valuation Report", description: "Quantity on hand multiplied by available movement or PO unit cost.", endpoint: "/reports/inventory-valuation", columns: [["itemName", "Item Name"], ["category", "Category"], ["quantity", "Quantity"], ["unitCost", "Unit Cost"], ["totalValue", "Total Value"], ["warehouse", "Warehouse"]], filters: ["item", "category", "warehouse"] },
+  "purchase-orders": { category: "procurement", title: "Purchase Order Report", description: "PO status, value, vendor, and creator.", endpoint: "/reports/purchase-orders", columns: [["poNumber", "PO Number"], ["vendor", "Vendor"], ["createdDate", "Created Date"], ["status", "Status"], ["totalAmount", "Total Amount"], ["createdBy", "Created By"]], filters: ["startDate", "endDate", "vendor", "status", "user"] },
+  "po-vs-grn": { category: "procurement", title: "PO vs GRN Report", description: "Ordered, received, and pending quantities by PO.", endpoint: "/reports/po-vs-grn", columns: [["poNumber", "PO Number"], ["vendor", "Vendor"], ["orderedQuantity", "Ordered Quantity"], ["receivedQuantity", "Received Quantity"], ["pendingQuantity", "Pending Quantity"], ["grnNumbers", "GRN Numbers"], ["status", "Status"]], filters: ["vendor", "status"] },
+  "vendor-spend": { category: "procurement", title: "Vendor Spend Report", description: "Total PO volume and spend by vendor.", endpoint: "/reports/vendor-spend", columns: [["vendorName", "Vendor Name"], ["totalPOs", "Total POs"], ["totalSpend", "Total Spend"], ["lastPODate", "Last PO Date"], ["status", "Status"]], filters: ["vendor", "status"] },
+  "requisitions": { category: "requests", title: "Requisition Report", description: "Request number, department, requester, and approval status.", endpoint: "/reports/requisitions", columns: [["requestNumber", "Request Number"], ["department", "Department"], ["requestedBy", "Requested By"], ["requestDate", "Request Date"], ["status", "Status"], ["approvedBy", "Approved By"]], filters: ["startDate", "endDate", "department", "status", "user"] },
+  "department-consumption": { category: "requests", title: "Department Consumption Report", description: "Issued quantities and estimated value by department.", endpoint: "/reports/department-consumption", columns: [["department", "Department"], ["totalRequests", "Total Requests"], ["totalIssuedItems", "Total Issued Items"], ["estimatedValue", "Estimated Value"]], filters: ["department"] },
+  "stock-adjustments": { category: "audit", title: "Stock Adjustment / Manual Change Report", description: "Manual and adjustment movements with actor and remarks.", endpoint: "/reports/stock-adjustments", columns: [["date", "Date"], ["item", "Item"], ["warehouse", "Warehouse"], ["action", "Action"], ["quantity", "Quantity"], ["user", "User"], ["remarks", "Remarks"]], filters: ["startDate", "endDate", "item", "warehouse", "status", "user"] },
+  "approval-history": { category: "audit", title: "Approval History Report", description: "Approval-related activity from the audit trail.", endpoint: "/reports/approval-history", columns: [["referenceNumber", "Reference Number"], ["type", "Type"], ["action", "Action"], ["approver", "Approver"], ["date", "Date"], ["remarks", "Remarks"]], filters: ["startDate", "endDate", "status", "user"] },
+  "user-activity": { category: "audit", title: "User Activity Report", description: "Available user activity from audit log data.", endpoint: "/reports/user-activity", columns: [["date", "Date"], ["user", "User"], ["action", "Action"], ["area", "Area"], ["reference", "Reference"]], filters: ["startDate", "endDate", "status", "user"] }
+};
 
 function createTemporalFilterState() {
   return {
@@ -780,13 +823,14 @@ function approvedLocationName(location) {
 }
 
 function enforceApprovedLocations() {
-  state.locations = [...APPROVED_LOCATIONS];
+  state.locations = [...new Set([...(state.locations || []), ...APPROVED_LOCATIONS].filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
   if (Array.isArray(state.inventoryRows)) {
     state.inventoryRows = state.inventoryRows
-      .map((row) => ({ ...row, location: approvedLocationName(row.location) }))
+      .map((row) => ({ ...row, location: approvedLocationName(row.location) || row.location }))
       .filter((row) => row.location);
   }
-  if (!APPROVED_LOCATIONS.includes(inventoryLocationFilter)) inventoryLocationFilter = "All";
+  if (!state.locations.includes(inventoryLocationFilter)) inventoryLocationFilter = "All";
 }
 
 function saveState() {
@@ -806,10 +850,16 @@ function findItem(code) {
   return state.items.find((item) => item.code === code);
 }
 
+function normalizeCategoryName(name = "") {
+  const clean = String(name || "").trim();
+  return clean.toLowerCase() === "progressive" ? "PROGRESSIVE" : clean;
+}
+
 function findItemBySelection(name, typeOrCode, category = "") {
+  const normalizedCategory = normalizeCategoryName(category);
   return state.items.find((item) =>
     item.name === name &&
-    (!category || item.category === category) &&
+    (!normalizedCategory || normalizeCategoryName(item.category) === normalizedCategory) &&
     (item.code === typeOrCode || item.type === typeOrCode)
   );
 }
@@ -818,7 +868,7 @@ function categories() {
   const categoryNames = [
     ...(Array.isArray(state.categories) ? state.categories.map((category) => category?.name || category) : []),
     ...state.items.map((item) => item.category)
-  ];
+  ].map(normalizeCategoryName);
   return [...new Set(categoryNames.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
@@ -827,16 +877,18 @@ function itemLabel(item) {
 }
 
 function itemNamesForCategory(category) {
+  const normalizedCategory = normalizeCategoryName(category);
   return [...new Set(state.items
-    .filter((item) => !category || item.category === category)
+    .filter((item) => !normalizedCategory || normalizeCategoryName(item.category) === normalizedCategory)
     .map((item) => item.name)
     .filter(Boolean))]
     .sort((a, b) => a.localeCompare(b));
 }
 
 function itemTypesForName(name, category = "") {
+  const normalizedCategory = normalizeCategoryName(category);
   return state.items
-    .filter((item) => item.name === name && (!category || item.category === category))
+    .filter((item) => item.name === name && (!normalizedCategory || normalizeCategoryName(item.category) === normalizedCategory))
     .filter((item) => {
       const type = String(item.type || "").trim();
       const code = String(item.code || "").trim();
@@ -872,7 +924,11 @@ function normalizeVendorRecord(vendor = {}) {
 
   return {
     ...vendor,
+    primaryPhone: vendor.primaryPhone || vendor.primary_phone || vendor.phone || "",
+    secondaryPhone: vendor.secondaryPhone || vendor.secondary_phone || "",
+    phone: vendor.phone || vendor.primaryPhone || vendor.primary_phone || "",
     ntn: vendor.ntn || vendor.vendorNtn || "",
+    stn: vendor.stn || vendor.vendorStn || "",
     bankName: vendor.bankName || vendor.bank_name || savedDetails.bankName || "",
     accountTitle: vendor.accountTitle || vendor.account_title || savedDetails.accountTitle || "",
     accountNo: vendor.accountNo || vendor.account_no || savedDetails.accountNo || ""
@@ -1087,10 +1143,11 @@ function initialsFor(nameOrEmail) {
 
 async function authenticatedFetch(url, options = {}, { retryOnAuthExpiration = true } = {}) {
   const token = localStorage.getItem("firebase_token");
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   const response = await fetch(url, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {})
     }
@@ -1136,6 +1193,17 @@ async function apiRequest(path, options = {}) {
   return authenticatedFetch(`${BUSINESS_DATA_API_BASE}${path}`, options);
 }
 
+async function apiBlobRequest(path) {
+  const token = localStorage.getItem("firebase_token");
+  const response = await fetch(path.startsWith("/api") || path.startsWith("/uploads") ? path : `${BUSINESS_DATA_API_BASE}${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  });
+  if (!response.ok) throw new Error(`Unable to load file (${response.status}).`);
+  return response.blob();
+}
+
 async function syncImportedInventoryToDatabase() {
   const imported = importedInventoryState();
   if (!imported.items.length) return;
@@ -1146,6 +1214,37 @@ async function syncImportedInventoryToDatabase() {
     });
   } catch (error) {
     console.warn("Imported inventory sync failed:", error);
+  }
+}
+
+function dashboardSummaryQueryString() {
+  const params = new URLSearchParams();
+  if (dashboardKpiStartDate) params.set("startDate", dashboardKpiStartDate);
+  if (dashboardKpiEndDate) params.set("endDate", dashboardKpiEndDate);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function dashboardRangeMessage() {
+  if (!dashboardKpiStartDate) return "Showing default KPI values";
+  const endDate = dashboardKpiEndDate || dashboardKpiStartDate;
+  return `Showing KPIs from ${dashboardKpiStartDate} to ${endDate}`;
+}
+
+async function refreshDashboardSummary() {
+  if (!canAccessView("dashboard")) return;
+  dashboardKpiLoading = true;
+  dashboardKpiError = "";
+  renderDashboard();
+  try {
+    const data = await apiRequest(`/dashboard/summary${dashboardSummaryQueryString()}`);
+    state.dashboardSummary = data.summary || null;
+  } catch (error) {
+    dashboardKpiError = error.message || "Unable to refresh dashboard KPIs.";
+    showToast(dashboardKpiError, "error");
+  } finally {
+    dashboardKpiLoading = false;
+    renderDashboard();
   }
 }
 
@@ -1169,9 +1268,10 @@ async function refreshVerifiedUserShell() {
   render();
   startAutoRefresh();
   startChatPolling();
+  startNotificationStream();
 }
 
-function syncAuthState() {
+async function syncAuthState() {
   document.querySelectorAll(".profile").forEach((button) => {
     button.setAttribute("aria-label", currentUser.name || currentUser.email || "IMS User");
     button.dataset.profileName = currentUser.name || currentUser.email || "IMS User";
@@ -1182,7 +1282,7 @@ function syncAuthState() {
   document.querySelectorAll(".avatar").forEach((avatar) => {
     avatar.textContent = initialsFor(currentUser.name || currentUser.email);
   });
-  refreshVerifiedUserShell();
+  await refreshVerifiedUserShell();
 }
 
 function escapeHtml(value) {
@@ -1486,7 +1586,7 @@ function renderRolesManagement(section) {
     { module: "Inventory", label: "Warehouses", view: "inventory" },
     { module: "Inventory", label: "Categories", view: "inventory" },
     { module: "Inventory", label: "Stock Issue", view: "issue" },
-    { module: "Inventory", label: "GRN", view: "grn" },
+    { module: "Procurement", label: "GRN", view: "grn" },
     { module: "Procurement", label: "Purchase Orders", view: "po" },
     { module: "Procurement", label: "Vendors", view: "vendors" },
     { module: "Settings", label: "Settings", view: "settings" },
@@ -2046,11 +2146,14 @@ async function loadBusinessData({ silent = false } = {}) {
   const endpoints = [
     canAccessView("inventory") ? ["items", "/items"] : null,
     canAccessView("inventory") ? ["categories", "/categories"] : null,
+    canAccessView("inventory") ? ["locations", "/locations"] : null,
+    canAccessView("inventory") ? ["stockMovements", "/inventory/movements?pageSize=100"] : null,
     canAccessView("vendors") ? ["vendors", "/vendors"] : null,
     canAccessView("requests") ? ["requests", "/requests"] : null,
     canAccessView("transport") ? ["transportRequests", "/transport-requests"] : null,
     canAccessView("po") ? ["purchaseOrders", "/purchase-orders"] : null,
     canAccessView("grn") ? ["grns", "/grn"] : null,
+    canAccessView("dashboard") ? ["dashboardSummary", `/dashboard/summary${dashboardSummaryQueryString()}`] : null,
     canAccessView("audit") ? ["auditLogs", "/audit"] : null,
     canAccessView("inventory") ? ["inventory", "/inventory"] : null
   ].filter(Boolean);
@@ -2071,6 +2174,20 @@ async function loadBusinessData({ silent = false } = {}) {
     }
     if (key === "items") {
       state.items = result.value.items || state.items || [];
+      return;
+    }
+    if (key === "locations") {
+      state.locations = (result.value.locations || []).map((location) => location.name || location).filter(Boolean);
+      state.locationRows = result.value.locations || [];
+      return;
+    }
+    if (key === "stockMovements") {
+      state.stockMovements = result.value.movements || [];
+      return;
+    }
+    if (key === "dashboardSummary") {
+      state.dashboardSummary = result.value.summary || null;
+      dashboardKpiError = "";
       return;
     }
     state[key] = result.value[key] || state[key] || [];
@@ -2123,7 +2240,6 @@ async function autoRefreshBusinessData() {
       render();
       showToast("Portal updated with latest activity.");
     }
-    await loadNotifications({ silent: true });
     if (document.getElementById("notificationCenter").classList.contains("show")) renderNotificationCenter();
   } catch (error) {
     console.warn("Auto-refresh failed:", error);
@@ -2232,10 +2348,12 @@ function openNotificationTarget(item = {}) {
 
 function unlockNotificationSound() {
   notificationSoundUnlocked = true;
+  if (window.IMSNotificationSound?.unlock) window.IMSNotificationSound.unlock();
 }
 
 function playNotificationSound() {
   if (!notificationSoundUnlocked) return;
+  if (window.IMSNotificationSound?.play?.()) return;
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   if (!AudioContext) return;
   const context = new AudioContext();
@@ -2265,6 +2383,73 @@ function syncNotificationSoundState(nextNotifications = [], { allowSound = true 
   knownUnreadNotificationIds.clear();
   unreadIds.forEach((id) => knownUnreadNotificationIds.add(id));
   if (allowSound && hasNewUnread) playNotificationSound();
+}
+
+function notificationStreamUrl() {
+  const token = localStorage.getItem("firebase_token");
+  if (!token) return "";
+  return `${BUSINESS_DATA_API_BASE}/notifications/stream?token=${encodeURIComponent(token)}`;
+}
+
+function normalizeRealtimeNotification(item = {}) {
+  return {
+    ...item,
+    id: item.id,
+    title: item.title || "IMS notification",
+    message: item.message || item.body || "",
+    unread: item.unread !== false,
+    status: item.status || (item.unread === false ? "read" : "unread")
+  };
+}
+
+function handleRealtimeNotification(item = {}) {
+  const normalized = normalizeRealtimeNotification(item);
+  if (!normalized.id) return;
+  const id = String(normalized.id);
+  if (streamedNotificationIds.has(id)) return;
+  streamedNotificationIds.add(id);
+  notifications = [
+    normalized,
+    ...notifications.filter((row) => String(row.id) !== id)
+  ].slice(0, 100);
+  notificationsLoaded = true;
+  if (normalized.unread) knownUnreadNotificationIds.add(id);
+  updateNotificationBadge();
+  if (document.getElementById("notificationCenter").classList.contains("show")) renderNotificationCenter();
+  window.IMSNotificationToastManager?.show?.(normalized, {
+    onOpen: (notification) => openNotificationTarget(notification)
+  });
+  playNotificationSound();
+}
+
+function stopNotificationStream() {
+  if (notificationStreamRestartTimer) {
+    clearTimeout(notificationStreamRestartTimer);
+    notificationStreamRestartTimer = null;
+  }
+  if (notificationEventSource) {
+    notificationEventSource.close();
+    notificationEventSource = null;
+  }
+}
+
+function startNotificationStream() {
+  const url = notificationStreamUrl();
+  if (!url || !window.EventSource) return;
+  stopNotificationStream();
+  notificationEventSource = new EventSource(url);
+  notificationEventSource.addEventListener("notification", (event) => {
+    try {
+      handleRealtimeNotification(JSON.parse(event.data));
+    } catch (error) {
+      console.warn("Unable to read real-time notification:", error);
+    }
+  });
+  notificationEventSource.addEventListener("error", () => {
+    if (!notificationEventSource || notificationEventSource.readyState !== EventSource.CLOSED) return;
+    stopNotificationStream();
+    notificationStreamRestartTimer = setTimeout(startNotificationStream, 5000);
+  });
 }
 
 async function loadNotifications({ silent = false } = {}) {
@@ -2311,7 +2496,8 @@ function renderNotificationCenter() {
     list.innerHTML = `<div class="notification-empty">Loading notifications...</div>`;
     return;
   }
-  list.innerHTML = `${rows.slice(0, 6).map((item) => `
+  const visibleRows = notificationCenterExpanded ? rows : rows.slice(0, 6);
+  list.innerHTML = `${visibleRows.map((item) => `
     <article class="notification-item ${item.unread ? "" : "read"}" data-notification-id="${escapeHtml(item.id)}" title="${escapeHtml(item.message || item.body || "")}">
       <div class="notification-avatar ${notificationTone(item)}">${escapeHtml(notificationInitials(item))}</div>
       <div class="notification-body">
@@ -2322,7 +2508,7 @@ function renderNotificationCenter() {
       ${item.unread ? `<span class="notification-dot"></span>` : ""}
     </article>
   `).join("") || `<div class="notification-empty">${unreadOnly ? "No unread notifications." : "No notifications yet."}</div>`}
-  ${rows.length ? `<button class="notification-see-all" type="button">See all</button>` : ""}`;
+  ${rows.length > 6 ? `<button class="notification-see-all" type="button" data-notification-see-all="true">${notificationCenterExpanded ? "Show recent" : `See all ${rows.length}`}</button>` : ""}`;
   if (window.lucide) lucide.createIcons();
 }
 
@@ -2346,6 +2532,7 @@ async function openNotificationCenter() {
 
 function closeNotificationCenter() {
   const panel = document.getElementById("notificationCenter");
+  notificationCenterExpanded = false;
   panel.classList.remove("show");
   panel.setAttribute("aria-hidden", "true");
   document.getElementById("notificationBtn").setAttribute("aria-expanded", "false");
@@ -2582,6 +2769,10 @@ function money(value) {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function currency(value) {
+  return `PKR ${money(value)}`;
+}
+
 function quantityValue(value) {
   if (value === null || value === undefined || value === "") return "0";
   const number = Number(value || 0);
@@ -2658,7 +2849,7 @@ function setChoiceOptions(field, placeholder, values, getValue = (row) => row, g
     return;
   }
   if (!field.id) field.id = `choice-${Math.random().toString(36).slice(2)}`;
-  const listId = field.getAttribute("list") || `${field.id}Options`;
+  const listId = field.dataset.nativeList || field.getAttribute("list") || `${field.id}Options`;
   field.setAttribute("list", listId);
   field.placeholder = placeholder;
   let list = document.getElementById(listId);
@@ -2713,7 +2904,8 @@ function syncSelectOptions(scope = document) {
     const selected = field.value;
     const categorySourceId = field.dataset.categorySource;
     const category = categorySourceId ? document.getElementById(categorySourceId)?.value : "";
-    const items = category ? state.items.filter((item) => item.category === category) : state.items;
+    const normalizedCategory = normalizeCategoryName(category);
+    const items = normalizedCategory ? state.items.filter((item) => normalizeCategoryName(item.category) === normalizedCategory) : state.items;
     setChoiceOptions(field, "Select item", items, (item) => item.code, itemLabel);
     if (selected && items.some((item) => item.code === selected)) field.value = selected;
   });
@@ -2773,6 +2965,155 @@ function enableDatalistRefocusOptions() {
     delete field.dataset.datalistChanged;
   });
 }
+
+function disableNativeAutocomplete(scope = document) {
+  scope.querySelectorAll("input, textarea, select").forEach((field) => {
+    if (field.matches("[data-allow-autocomplete]")) return;
+    field.setAttribute("autocomplete", "off");
+    field.setAttribute("spellcheck", "false");
+    if (field.type === "search" && !field.getAttribute("name")) {
+      field.setAttribute("name", `${field.id || "portal-search"}-no-browser-history`);
+    }
+    if (field instanceof HTMLInputElement && field.getAttribute("list")) {
+      field.dataset.nativeList = field.getAttribute("list");
+      field.removeAttribute("list");
+    }
+  });
+}
+
+let customDropdownField = null;
+
+function isCustomDropdownField(field) {
+  return field instanceof HTMLSelectElement
+    || field instanceof HTMLInputElement && Boolean(field.dataset.nativeList);
+}
+
+function customDropdownOptions(field) {
+  if (field instanceof HTMLSelectElement) {
+    return Array.from(field.options).map((option) => ({
+      value: option.value,
+      label: option.textContent || option.label || option.value,
+      disabled: option.disabled
+    }));
+  }
+  const list = document.getElementById(field.dataset.nativeList || "");
+  return Array.from(list?.options || []).map((option) => ({
+    value: option.value,
+    label: option.label || option.value,
+    disabled: false
+  }));
+}
+
+function closeCustomDropdown() {
+  document.getElementById("portalCustomDropdown")?.remove();
+  customDropdownField?.classList.remove("custom-dropdown-open");
+  customDropdownField = null;
+}
+
+function positionCustomDropdown(menu, field) {
+  const rect = field.getBoundingClientRect();
+  const gap = 8;
+  const maxHeight = Math.min(320, window.innerHeight - rect.bottom - gap - 12);
+  menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))}px`;
+  menu.style.top = `${rect.bottom + gap}px`;
+  menu.style.width = `${Math.max(rect.width, 220)}px`;
+  menu.style.maxHeight = `${Math.max(maxHeight, 160)}px`;
+}
+
+function renderCustomDropdownOptions(menu, field) {
+  const query = field instanceof HTMLInputElement ? field.value.trim().toLowerCase() : "";
+  const options = customDropdownOptions(field).filter((option) => {
+    if (!query) return true;
+    return `${option.label} ${option.value}`.toLowerCase().includes(query);
+  });
+  menu.innerHTML = options.map((option) => `
+    <button class="portal-custom-dropdown-option ${String(field.value) === String(option.value) ? "active" : ""}" type="button" data-custom-dropdown-value="${escapeHtml(option.value)}" ${option.disabled ? "disabled" : ""}>
+      ${escapeHtml(option.label || option.value || "Option")}
+    </button>
+  `).join("") || `<div class="portal-custom-dropdown-empty">No options</div>`;
+}
+
+function openCustomDropdown(field) {
+  if (!isCustomDropdownField(field)) return;
+  closeCustomDropdown();
+  customDropdownField = field;
+  field.classList.add("custom-dropdown-open");
+  const menu = document.createElement("div");
+  menu.id = "portalCustomDropdown";
+  menu.className = "portal-custom-dropdown-menu";
+  menu.setAttribute("role", "listbox");
+  document.body.appendChild(menu);
+  renderCustomDropdownOptions(menu, field);
+  positionCustomDropdown(menu, field);
+}
+
+function chooseCustomDropdownOption(value) {
+  const field = customDropdownField;
+  if (!field) return;
+  field.value = value;
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+  closeCustomDropdown();
+}
+
+function handleCustomDropdownPointer(event) {
+  const option = event.target.closest("[data-custom-dropdown-value]");
+  if (option) {
+    event.preventDefault();
+    event.stopPropagation();
+    chooseCustomDropdownOption(option.dataset.customDropdownValue || "");
+    return;
+  }
+  const field = event.target.closest("select, input[data-native-list]");
+  if (!field || !isCustomDropdownField(field)) {
+    if (!event.target.closest("#portalCustomDropdown")) closeCustomDropdown();
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  field.focus();
+  openCustomDropdown(field);
+}
+
+document.addEventListener("pointerdown", handleCustomDropdownPointer, true);
+document.addEventListener("mousedown", handleCustomDropdownPointer, true);
+document.addEventListener("click", (event) => {
+  const field = event.target.closest("select, input[data-native-list]");
+  if (!field || !isCustomDropdownField(field)) return;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
+
+document.addEventListener("focusin", (event) => {
+  const field = event.target;
+  if (!isCustomDropdownField(field)) return;
+  openCustomDropdown(field);
+});
+
+document.addEventListener("input", (event) => {
+  const field = event.target;
+  if (!isCustomDropdownField(field) || field !== customDropdownField) return;
+  const menu = document.getElementById("portalCustomDropdown");
+  if (menu) renderCustomDropdownOptions(menu, field);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (!customDropdownField) return;
+  if (event.key === "Escape") closeCustomDropdown();
+  if (event.key === "Enter") {
+    const first = document.querySelector("#portalCustomDropdown [data-custom-dropdown-value]:not(:disabled)");
+    if (!first) return;
+    event.preventDefault();
+    chooseCustomDropdownOption(first.dataset.customDropdownValue || "");
+  }
+});
+
+window.addEventListener("resize", () => {
+  const menu = document.getElementById("portalCustomDropdown");
+  if (menu && customDropdownField) positionCustomDropdown(menu, customDropdownField);
+});
+
+window.addEventListener("scroll", closeCustomDropdown, true);
 
 function renderCategoryTabs() {
   const tabs = document.getElementById("categoryTabs");
@@ -2861,8 +3202,7 @@ function closeVendorDrawer() {
 
 function mountInventorySubsections() {
   [
-    ["issueView", "inventoryIssuePanel"],
-    ["grnView", "inventoryGrnPanel"]
+    ["issueView", "inventoryIssuePanel"]
   ].forEach(([sourceId, targetId]) => {
     const source = document.getElementById(sourceId);
     const target = document.getElementById(targetId);
@@ -2876,7 +3216,8 @@ function mountInventorySubsections() {
 function mountProcurementSubsections() {
   [
     ["poView", "procurementPoPanel"],
-    ["vendorsView", "procurementVendorsPanel"]
+    ["vendorsView", "procurementVendorsPanel"],
+    ["grnView", "procurementGrnPanel"]
   ].forEach(([sourceId, targetId]) => {
     const source = document.getElementById(sourceId);
     const target = document.getElementById(targetId);
@@ -2907,12 +3248,13 @@ const breadcrumbByView = {
   requests: ["Requests"],
   inventory: ["Inventory"],
   issue: ["Inventory", "Stock Issue"],
-  grn: ["Inventory", "GRN"],
+  grn: ["Procurement", "GRN"],
   procurement: ["Procurement"],
   po: ["Procurement", "PO"],
   vendors: ["Procurement", "Vendors"],
   transport: ["Requests", "Transport Requests"],
   approvals: ["Approvals"],
+  reports: ["Reports"],
   audit: ["Audit Logs"],
   settings: ["Settings"],
   history: ["Audit Logs"]
@@ -2981,6 +3323,22 @@ function setView(view) {
     : view === "audit" ? "Audit Logs" : active ? active.textContent : "Dashboard";
   updateTopbarBreadcrumb(isHistoryView ? "history" : view);
   render();
+  if (!isHistoryView && view === "reports" && !reportRows.length && !reportLoading) loadActiveReport();
+  closeMobileSidebar();
+}
+
+function closeMobileSidebar() {
+  const shell = document.querySelector(".app-shell");
+  const toggle = document.getElementById("mobileSidebarToggle");
+  shell?.classList.remove("sidebar-open");
+  toggle?.setAttribute("aria-expanded", "false");
+}
+
+function toggleMobileSidebar() {
+  const shell = document.querySelector(".app-shell");
+  const toggle = document.getElementById("mobileSidebarToggle");
+  const isOpen = shell?.classList.toggle("sidebar-open");
+  toggle?.setAttribute("aria-expanded", String(Boolean(isOpen)));
 }
 
 function openHistoryPage(section) {
@@ -3251,6 +3609,23 @@ function handleDashboardAction(action) {
 }
 
 function dashboardMetricState() {
+  const apiMetrics = state.dashboardSummary?.metrics;
+  if (apiMetrics) {
+    return {
+      requests: Number(apiMetrics.requests || 0),
+      transportRequests: Number(apiMetrics.transportRequests || 0),
+      pendingApprovals: Number(apiMetrics.pendingApprovals || 0),
+      approvedRequests: Number(apiMetrics.approvedRequests || 0),
+      lowStock: Number(apiMetrics.lowStock || 0),
+      outOfStock: Number(apiMetrics.outOfStock || 0),
+      openPOs: Number(apiMetrics.openPOs || 0),
+      orderedPOs: Number(apiMetrics.orderedPOs || 0),
+      activeVendors: Number(apiMetrics.activeVendors || 0),
+      totalGRNs: Number(apiMetrics.totalGRNs || 0),
+      inventoryItems: Number(apiMetrics.inventoryItems || 0),
+      itemCategories: Number(apiMetrics.itemCategories || 0)
+    };
+  }
   const currentStockRows = stockRows();
   const approvedRequests = state.requests.filter((request) => requestOverallStatus(request) === "Approved" || requestOverallStatus(request) === "Issued");
   const pendingRequests = state.requests.filter((request) => request.items.some((item) => item.approvalStatus === "Pending"));
@@ -3275,19 +3650,20 @@ function dashboardMetricState() {
 
 function dashboardWidgetCatalog() {
   const metrics = dashboardMetricState();
+  const value = (metric) => dashboardKpiLoading ? "..." : metric;
   return [
-    { id: "requests-count", group: "Requests", title: "Inventory Requests", description: "Total requests recorded in IMS.", value: metrics.requests, note: "Track incoming inventory demand.", action: "view-requests", actionLabel: "Open requests", view: "requests" },
-    { id: "transport-count", group: "Transport", title: "Transport Requests", description: "All submitted transport requests.", value: metrics.transportRequests, note: "Monitor transport workload.", action: "transport-requests", actionLabel: "Open transport", view: "transport" },
-    { id: "pending-approvals", group: "Approvals", title: "Pending Approvals", description: "Requests still waiting for approval.", value: metrics.pendingApprovals, note: "Follow up on delayed approvals.", action: "pending-approvals", actionLabel: "Open approvals", view: "approvals" },
-    { id: "approved-requests", group: "Requests", title: "Approved Requests", description: "Requests already approved or issued.", value: metrics.approvedRequests, note: "See fulfilled demand progress.", action: "view-requests", actionLabel: "Review requests", view: "requests" },
-    { id: "low-stock", group: "Inventory", title: "Low Stock Items", description: "Items currently flagged as low stock.", value: metrics.lowStock, note: "Restock before operations are affected.", action: "low-stock", actionLabel: "Open inventory", view: "inventory" },
-    { id: "out-of-stock", group: "Inventory", title: "Out of Stock Items", description: "Items with no available stock.", value: metrics.outOfStock, note: "Critical inventory shortages.", action: "out-of-stock", actionLabel: "Open inventory", view: "inventory" },
-    { id: "open-po", group: "Procurement", title: "Open POs", description: "Purchase orders still open.", value: metrics.openPOs, note: "Track active procurement commitments.", action: "open-po", actionLabel: "Open procurement", view: "po" },
-    { id: "ordered-po", group: "Procurement", title: "Ordered POs", description: "POs sent or pending vendor fulfilment.", value: metrics.orderedPOs, note: "Monitor expected deliveries.", action: "open-po", actionLabel: "Open procurement", view: "po" },
-    { id: "active-vendors", group: "Vendors", title: "Active Vendors", description: "Vendors currently available for procurement.", value: metrics.activeVendors, note: "Keep supplier coverage visible.", action: "procurement-export", actionLabel: "Export procurement", view: "vendors" },
-    { id: "total-grns", group: "GRN", title: "Total GRNs", description: "Goods received notes recorded in IMS.", value: metrics.totalGRNs, note: "View receiving activity at a glance.", action: "pending-grns", actionLabel: "Open GRN", view: "grn" },
-    { id: "inventory-items", group: "Inventory", title: "Inventory Items", description: "Total item types available in IMS.", value: metrics.inventoryItems, note: "Overall catalog size.", action: "inventory-items", actionLabel: "Open items", view: "inventory" },
-    { id: "item-categories", group: "Inventory", title: "Item Categories", description: "Categories currently defined in IMS.", value: metrics.itemCategories, note: "Review catalog structure.", action: "inventory-items", actionLabel: "Open inventory", view: "inventory" }
+    { id: "requests-count", group: "Requests", title: "Inventory Requests", description: "Total requests recorded in IMS.", value: value(metrics.requests), note: "Track incoming inventory demand.", action: "view-requests", actionLabel: "Open requests", view: "requests" },
+    { id: "transport-count", group: "Transport", title: "Transport Requests", description: "All submitted transport requests.", value: value(metrics.transportRequests), note: "Monitor transport workload.", action: "transport-requests", actionLabel: "Open transport", view: "transport" },
+    { id: "pending-approvals", group: "Approvals", title: "Pending Approvals", description: "Requests still waiting for approval.", value: value(metrics.pendingApprovals), note: "Follow up on delayed approvals.", action: "pending-approvals", actionLabel: "Open approvals", view: "approvals" },
+    { id: "approved-requests", group: "Requests", title: "Approved Requests", description: "Requests already approved or issued.", value: value(metrics.approvedRequests), note: "See fulfilled demand progress.", action: "view-requests", actionLabel: "Review requests", view: "requests" },
+    { id: "low-stock", group: "Inventory", title: "Low Stock Items", description: "Items currently flagged as low stock.", value: value(metrics.lowStock), note: "Restock before operations are affected.", action: "low-stock", actionLabel: "Open inventory", view: "inventory" },
+    { id: "out-of-stock", group: "Inventory", title: "Out of Stock Items", description: "Items with no available stock.", value: value(metrics.outOfStock), note: "Critical inventory shortages.", action: "out-of-stock", actionLabel: "Open inventory", view: "inventory" },
+    { id: "open-po", group: "Procurement", title: "Open POs", description: "Purchase orders still open.", value: value(metrics.openPOs), note: "Track active procurement commitments.", action: "open-po", actionLabel: "Open procurement", view: "po" },
+    { id: "ordered-po", group: "Procurement", title: "Ordered POs", description: "POs sent or pending vendor fulfilment.", value: value(metrics.orderedPOs), note: "Monitor expected deliveries.", action: "open-po", actionLabel: "Open procurement", view: "po" },
+    { id: "active-vendors", group: "Vendors", title: "Active Vendors", description: "Vendors currently available for procurement.", value: value(metrics.activeVendors), note: "Keep supplier coverage visible.", action: "procurement-export", actionLabel: "Export procurement", view: "vendors" },
+    { id: "total-grns", group: "GRN", title: "Total GRNs", description: "Goods received notes recorded in IMS.", value: value(metrics.totalGRNs), note: "View receiving activity at a glance.", action: "pending-grns", actionLabel: "Open GRN", view: "grn" },
+    { id: "inventory-items", group: "Inventory", title: "Inventory Items", description: "Total item types available in IMS.", value: value(metrics.inventoryItems), note: "Overall catalog size.", action: "inventory-items", actionLabel: "Open items", view: "inventory" },
+    { id: "item-categories", group: "Inventory", title: "Item Categories", description: "Categories currently defined in IMS.", value: value(metrics.itemCategories), note: "Review catalog structure.", action: "inventory-items", actionLabel: "Open inventory", view: "inventory" }
   ].filter((widget) => !widget.view || canAccessView(widget.view));
 }
 
@@ -3404,21 +3780,134 @@ function renderDashboardWidgetCanvas() {
   `;
 }
 
+function renderDashboardKpiFilterState() {
+  const form = document.getElementById("dashboardKpiFilter");
+  if (!form) return;
+  const startInput = document.getElementById("dashboardKpiStartDate");
+  const endInput = document.getElementById("dashboardKpiEndDate");
+  const range = document.getElementById("dashboardKpiRange");
+  const applyButton = form.querySelector("button[type='submit']");
+  const resetButton = form.querySelector("[data-dashboard-kpi-reset]");
+  let error = form.querySelector(".dashboard-kpi-error");
+  if (startInput && startInput.value !== dashboardKpiStartDate) startInput.value = dashboardKpiStartDate;
+  if (endInput && endInput.value !== dashboardKpiEndDate) endInput.value = dashboardKpiEndDate;
+  if (range) range.textContent = dashboardRangeMessage();
+  if (applyButton) {
+    applyButton.disabled = dashboardKpiLoading;
+    applyButton.textContent = dashboardKpiLoading ? "Applying..." : "Apply";
+  }
+  if (resetButton) resetButton.disabled = dashboardKpiLoading;
+  if (dashboardKpiError) {
+    if (!error) {
+      error = document.createElement("p");
+      error.className = "dashboard-kpi-error";
+      error.setAttribute("role", "alert");
+      form.appendChild(error);
+    }
+    error.textContent = dashboardKpiError;
+  } else if (error) {
+    error.remove();
+  }
+}
+
+function dashboardShellHtml() {
+  return `
+    <div class="dashboard-hero">
+      <div>
+        <h1>Welcome back</h1>
+        <p>Pin IMS metrics you want to track every day.</p>
+      </div>
+      <div class="dashboard-actions">
+        <button class="primary dashboard-add-widget" type="button" data-dashboard-picker-open><i data-lucide="plus"></i>Add widget</button>
+      </div>
+    </div>
+    <form class="dashboard-kpi-filter" id="dashboardKpiFilter" aria-label="Dashboard KPI date range">
+      <label>
+        <span>Start Date</span>
+        <input type="date" id="dashboardKpiStartDate" name="startDate" value="${escapeHtml(dashboardKpiStartDate)}">
+      </label>
+      <label>
+        <span>End Date</span>
+        <input type="date" id="dashboardKpiEndDate" name="endDate" value="${escapeHtml(dashboardKpiEndDate)}">
+      </label>
+      <div class="dashboard-kpi-filter-actions">
+        <button class="primary" type="submit" ${dashboardKpiLoading ? "disabled" : ""}>${dashboardKpiLoading ? "Applying..." : "Apply"}</button>
+        <button class="secondary" type="button" data-dashboard-kpi-reset ${dashboardKpiLoading ? "disabled" : ""}>Reset</button>
+      </div>
+      <p class="dashboard-kpi-range" id="dashboardKpiRange">${escapeHtml(dashboardRangeMessage())}</p>
+      ${dashboardKpiError ? `<p class="dashboard-kpi-error" role="alert">${escapeHtml(dashboardKpiError)}</p>` : ""}
+    </form>
+    <div class="dashboard-widget-canvas" id="dashboardWidgetCanvas" aria-live="polite"></div>
+    <aside class="dashboard-widget-picker" id="dashboardWidgetPicker" aria-hidden="true">
+      <div class="dashboard-widget-picker-backdrop" data-dashboard-picker-close></div>
+      <section class="dashboard-widget-picker-card" role="dialog" aria-modal="true" aria-label="Add dashboard widgets">
+        <div class="dashboard-widget-picker-head">
+          <div>
+            <h2>Add widgets</h2>
+            <p>Select IMS metrics and pin them to your dashboard.</p>
+          </div>
+          <button class="icon-btn" type="button" data-dashboard-picker-close aria-label="Close widget picker"><i data-lucide="x"></i></button>
+        </div>
+        <div class="dashboard-widget-picker-list" id="dashboardWidgetPickerList"></div>
+      </section>
+    </aside>
+  `;
+}
+
+function showDashboardSkeleton() {
+  const dashboard = document.getElementById("dashboardView");
+  if (!dashboard) return;
+  dashboard.classList.add("loading", "empty-dashboard");
+  dashboard.classList.remove("dashboard-managing");
+  dashboard.innerHTML = `
+    <div class="dashboard-widget-canvas" id="dashboardWidgetCanvas" aria-live="polite">
+      <div class="skeleton-card">
+        <div class="skeleton skeleton-line short"></div>
+        <div class="skeleton skeleton-line wide"></div>
+        <div class="skeleton-grid">
+          ${Array.from({ length: 6 }, () => `
+            <div class="skeleton-card compact">
+              <span class="skeleton skeleton-circle"></span>
+              <span class="skeleton skeleton-line"></span>
+              <span class="skeleton skeleton-line short"></span>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function showStartupError(error) {
+  businessDataLoading = false;
+  businessDataError = error?.message || "Unable to start the IMS portal.";
+  const dashboard = document.getElementById("dashboardView");
+  if (!dashboard) return;
+  dashboard.classList.add("empty-dashboard");
+  dashboard.classList.remove("loading", "dashboard-managing");
+  dashboard.innerHTML = `
+    <div class="dashboard-widget-canvas" id="dashboardWidgetCanvas" aria-live="polite">
+      <div class="dashboard-empty-state">
+        <span class="dashboard-empty-icon"><i data-lucide="triangle-alert"></i></span>
+        <strong>Unable to start IMS</strong>
+        <p>${escapeHtml(businessDataError)}</p>
+      </div>
+    </div>
+  `;
+  if (window.lucide) window.lucide.createIcons();
+}
+
 function renderDashboard() {
-  if (!dashboardDefaultHtml) dashboardDefaultHtml = document.getElementById("dashboardView")?.innerHTML || "";
+  if (businessDataLoading) {
+    showDashboardSkeleton();
+    return;
+  }
+  if (!dashboardDefaultHtml) dashboardDefaultHtml = dashboardShellHtml();
+  restoreDashboardShell();
+  renderDashboardKpiFilterState();
   renderDashboardWidgetPicker();
   const canvas = document.getElementById("dashboardWidgetCanvas");
   if (!canvas) return;
-  if (businessDataLoading) {
-    canvas.innerHTML = `
-      <div class="dashboard-empty-state">
-        <span class="dashboard-empty-icon"><i data-lucide="loader-circle"></i></span>
-        <strong>Loading dashboard</strong>
-        <p>Fetching the latest IMS metrics for your widgets.</p>
-      </div>
-    `;
-    return;
-  }
   if (businessDataError && !state.requests.length && !state.items.length && !state.purchaseOrders.length && !state.grns.length) {
     canvas.innerHTML = `
       <div class="dashboard-empty-state">
@@ -3539,7 +4028,7 @@ function renderInventory() {
   const searchTerm = inventorySearchTerm.trim().toLowerCase();
   const allStockRows = stockRows();
   const filteredStockRows = allStockRows.filter((row) => {
-    const matchesCategory = inventoryCategoryFilter === "All" || row.category === inventoryCategoryFilter;
+    const matchesCategory = inventoryCategoryFilter === "All" || normalizeCategoryName(row.category) === inventoryCategoryFilter;
     const matchesLocation = inventoryLocationFilter === "All" || row.location === inventoryLocationFilter;
     const matchesSearch = !searchTerm || [row.code, row.name, row.type, row.category, row.location, row.status]
       .some((value) => String(value || "").toLowerCase().includes(searchTerm));
@@ -3583,7 +4072,7 @@ function inventoryItemCards(rows) {
         code: row.code,
         name: row.name,
         type: row.type,
-        category: row.category,
+        category: normalizeCategoryName(row.category),
         totalStock: 0,
         available: 0,
         locations: []
@@ -3602,7 +4091,7 @@ function inventoryItemCards(rows) {
   const byCategory = categories().map((category) => ({
     category,
     items: items
-      .filter((item) => item.category === category)
+      .filter((item) => normalizeCategoryName(item.category) === category)
       .sort((a, b) => String(a.name || a.code).localeCompare(String(b.name || b.code)))
   }));
   const mixed = [];
@@ -3616,7 +4105,7 @@ function inventoryItemCards(rows) {
 }
 
 function inventoryCardGradient(item = {}) {
-  const category = item.category || "";
+  const category = normalizeCategoryName(item.category || "");
   const key = String(category).toLowerCase();
   if (key.includes("station")) return "linear-gradient(135deg,#fb8a45,#d94b0d)";
   if (key.includes("rwh")) return "linear-gradient(135deg,#37a665,#00602d)";
@@ -3660,7 +4149,7 @@ function renderInventoryCards(items) {
     const stockLabel = status.className === "low" ? `${quantityValue(item.totalStock)} - min ${lowStockThreshold()}` : quantityValue(item.totalStock);
     return `<button class="inventory-item-card" type="button" data-item-code="${escapeHtml(item.code)}">
       <span class="inventory-card-visual" style="background:${inventoryCardGradient(item)}">
-        <span>${escapeHtml(item.category || "Item")}</span>
+        <span>${escapeHtml(normalizeCategoryName(item.category) || "Item")}</span>
         <strong>${escapeHtml(itemInitials(item))}</strong>
       </span>
       <span class="inventory-card-head">
@@ -3685,7 +4174,7 @@ function openInventoryItemDetail(itemCode) {
   const body = document.getElementById("inventoryDetailBody");
   if (!modal || !title || !subtitle || !body) return;
   title.textContent = item.name || item.code;
-  subtitle.textContent = `${item.code} · ${item.category || "Uncategorized"}`;
+  subtitle.textContent = `${item.code} · ${normalizeCategoryName(item.category) || "Uncategorized"}`;
   const locationRows = APPROVED_LOCATIONS.map((location) => {
     const row = rows.find((entry) => entry.location === location);
     const stock = Number(row?.stock || 0);
@@ -3699,12 +4188,12 @@ function openInventoryItemDetail(itemCode) {
   body.innerHTML = `
     <div class="inventory-detail-summary">
       <span class="inventory-card-visual" style="background:${inventoryCardGradient(item)}">
-        <span>${escapeHtml(item.category || "Item")}</span>
+        <span>${escapeHtml(normalizeCategoryName(item.category) || "Item")}</span>
         <strong>${escapeHtml(itemInitials(item))}</strong>
       </span>
       <div class="inventory-detail-facts">
         <div><span>Item ID</span><strong>${escapeHtml(item.code)}</strong></div>
-        <div><span>Category</span><strong>${escapeHtml(item.category || "NA")}</strong></div>
+        <div><span>Category</span><strong>${escapeHtml(normalizeCategoryName(item.category) || "NA")}</strong></div>
         <div><span>Type / Specification</span><strong>${escapeHtml(item.type || "NA")}</strong></div>
         <div><span>Total stock</span><strong>${quantityValue(item.totalStock)}</strong></div>
       </div>
@@ -3823,9 +4312,6 @@ function renderInventoryModuleTabs(allStockRows = stockRows()) {
   document.querySelectorAll("[data-inventory-categories-only]").forEach((element) => {
     element.hidden = activeView !== "inventory" || inventoryModuleTab !== "categories";
   });
-  document.querySelectorAll("[data-inventory-grn-only]").forEach((element) => {
-    element.hidden = inventoryModuleTab !== "grn";
-  });
   const itemCount = new Set(allStockRows.map((row) => row.code).filter(Boolean)).size;
   const setText = (id, value) => {
     const element = document.getElementById(id);
@@ -3848,7 +4334,8 @@ function renderInventoryWarehouses(allStockRows = stockRows()) {
     const rows = allStockRows.filter((row) => row.location === location);
     const totalStock = rows.reduce((sum, row) => sum + (Number(row.stock) || 0), 0);
     const lowCount = rows.filter(isLowOrOutStock).length;
-    const code = location === "I9 warehouse" ? "I9" : location.replace(/\s*CC$/i, "").slice(0, 3).toUpperCase();
+    const locationRecord = (state.locationRows || []).find((row) => row.name === location);
+    const code = locationRecord?.code || (location === "I-9 warehouse" ? "I-9" : location.replace(/\s*CC$/i, "").slice(0, 3).toUpperCase());
     return `<tr><td>${escapeHtml(location)}</td><td>${escapeHtml(code)}</td><td>${rows.length}</td><td>${quantityValue(totalStock)}</td><td>${lowCount}</td></tr>`;
   }).join("") || emptyStateRow(5, "No warehouses found", "Approved locations will appear here.");
 }
@@ -3864,12 +4351,21 @@ function renderInventoryCategories(allStockRows = stockRows()) {
   const tbody = document.getElementById("inventoryCategoriesTable");
   if (!tbody) return;
   tbody.innerHTML = categories().map((category) => {
-    const rows = allStockRows.filter((row) => row.category === category);
+    const categoryRecord = (state.categories || []).find((row) => normalizeCategoryName(row.name || row) === category);
+    const rows = allStockRows.filter((row) => normalizeCategoryName(row.category) === category);
     const uniqueItems = new Set(rows.map((row) => row.code).filter(Boolean)).size;
     const totalStock = rows.reduce((sum, row) => sum + (Number(row.stock) || 0), 0);
     const lowCount = rows.filter(isLowOrOutStock).length;
-    return `<tr><td>${escapeHtml(category)}</td><td>${escapeHtml(categoryCode(category))}</td><td>${uniqueItems}</td><td>${quantityValue(totalStock)}</td><td>${lowCount}</td></tr>`;
-  }).join("") || emptyStateRow(5, "No categories found", "Inventory categories will appear here.");
+    const deleteDisabled = !categoryRecord?.id;
+    return `<tr>
+      <td>${escapeHtml(category)}</td>
+      <td>${escapeHtml(categoryCode(category))}</td>
+      <td>${uniqueItems}</td>
+      <td>${quantityValue(totalStock)}</td>
+      <td>${lowCount}</td>
+      <td><button class="tiny danger" type="button" data-delete-category-id="${escapeHtml(categoryRecord?.id || "")}" data-delete-category-name="${escapeHtml(category)}" ${deleteDisabled ? "disabled" : ""}>Delete</button></td>
+    </tr>`;
+  }).join("") || emptyStateRow(6, "No categories found", "Inventory categories will appear here.");
 }
 
 function openCategoryModal() {
@@ -3882,13 +4378,37 @@ function closeCategoryModal() {
   document.getElementById("categoryModal").setAttribute("aria-hidden", "true");
 }
 
+function openWarehouseModal() {
+  document.getElementById("warehouseModal").classList.add("show");
+  document.getElementById("warehouseModal").setAttribute("aria-hidden", "false");
+}
+
+function closeWarehouseModal() {
+  document.getElementById("warehouseModal").classList.remove("show");
+  document.getElementById("warehouseModal").setAttribute("aria-hidden", "true");
+}
+
+async function deleteCategory(categoryId, categoryName) {
+  if (!categoryId) return showToast("Category cannot be deleted because it is not synced with the database.", "error");
+  if (!confirm(`Delete category "${categoryName}"? This is only allowed when no active items use it.`)) return;
+  try {
+    await apiRequest(`/categories/${encodeURIComponent(categoryId)}`, { method: "DELETE" });
+    await loadBusinessData({ silent: true });
+    inventoryModuleTab = "categories";
+    render();
+    showToast("Category deleted.");
+  } catch (error) {
+    showToast(error.message || "Unable to delete category.", "error");
+  }
+}
+
 function renderProcurement() {
   if (!PROCUREMENT_TAB_LABELS[procurementModuleTab]) procurementModuleTab = "po";
   document.querySelectorAll("#procurementView [data-procurement-tab]").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.procurementTab === procurementModuleTab);
   });
   document.querySelectorAll("#procurementView .procurement-panel").forEach((panel) => {
-    const panelTab = panel.id === "procurementVendorsPanel" ? "vendors" : "po";
+    const panelTab = panel.id === "procurementVendorsPanel" ? "vendors" : panel.id === "procurementGrnPanel" ? "grn" : "po";
     panel.classList.toggle("active", panelTab === procurementModuleTab);
   });
   document.querySelectorAll("[data-procurement-po-only]").forEach((element) => {
@@ -3896,6 +4416,9 @@ function renderProcurement() {
   });
   document.querySelectorAll("[data-procurement-vendors-only]").forEach((element) => {
     element.hidden = procurementModuleTab !== "vendors";
+  });
+  document.querySelectorAll("[data-procurement-grn-only]").forEach((element) => {
+    element.hidden = procurementModuleTab !== "grn";
   });
 }
 
@@ -3945,9 +4468,10 @@ function renderIssue() {
       const issuedQty = Number(item.quantityIssued || 0);
       const remainingQty = Math.max(approvedQty - issuedQty, 0) || Number(item.quantity || 0);
       const remainingQtyDisplay = quantityValue(remainingQty);
+      const stockClass = stockAvailabilityClass(available, remainingQty);
       return `<tr>
-        <td>${escapeHtml(request.requestId)}</td><td>${escapeHtml(item.itemCode)} - ${escapeHtml(item.itemName)}</td><td>${escapeHtml(request.location)}</td><td>${remainingQtyDisplay}</td><td>${quantityValue(available)}</td>
-        <td><input class="table-input" type="number" min="1" max="${remainingQtyDisplay}" value="${remainingQtyDisplay}" id="qty-${escapeHtml(item.id)}"></td>
+        <td>${escapeHtml(request.requestId)}</td><td>${escapeHtml(item.itemCode)} - ${escapeHtml(item.itemName)}</td><td>${escapeHtml(request.location)}</td><td>${remainingQtyDisplay}</td><td><span class="stock-availability-badge ${stockClass}">${quantityValue(available)}</span></td>
+        <td><input class="table-input" type="number" min="1" max="${remainingQty}" value="${remainingQty}" id="qty-${escapeHtml(item.id)}"></td>
         <td><input class="table-input" placeholder="Issued by" id="by-${escapeHtml(item.id)}"></td>
         <td><button class="tiny success" onclick="issueItem('${escapeHtml(request.requestId)}','${escapeHtml(item.id)}')">Issue</button></td>
       </tr>`;
@@ -3955,6 +4479,14 @@ function renderIssue() {
   const emptyTitle = searchTerm ? "No matching approved stock issues" : "No approved stock to issue";
   const emptyBody = searchTerm ? "Try another request ID, location, or item name." : "Approved request items ready for issuance will appear here.";
   setTableContent("issueTable", rows.join("") || emptyStateRow(8, emptyTitle, emptyBody));
+}
+
+function stockAvailabilityClass(available, requested) {
+  const stock = Number(available || 0);
+  const needed = Number(requested || 0);
+  if (stock >= needed && needed > 0) return "stock-available";
+  if (stock > 0) return "stock-partial";
+  return "stock-unavailable";
 }
 
 function renderPO() {
@@ -4004,8 +4536,18 @@ function poDisplayStatus(po = {}) {
   if (status.includes("partial")) return "Partial";
   if (status.includes("received") || (ordered > 0 && received >= ordered)) return "Received";
   if (received > 0) return "Partial";
-  if (status.includes("confirm") || status.includes("approved") || status.includes("sent") || status.includes("pending approval") || status.includes("open") || status.includes("ordered") || status.includes("closed")) return "Confirmed";
+  if (status.includes("closed") || status.includes("completed") || status.includes("fully delivered")) return "Received";
   return "Draft";
+}
+
+function poStatusClass(po = {}) {
+  const status = String(po.status || poDisplayStatus(po) || "").toLowerCase();
+  const ordered = Number(po.quantityOrdered ?? po.quantity ?? 0);
+  const received = Number(po.quantityReceived || 0);
+  if (status.includes("cancel")) return "status-danger";
+  if (status.includes("partial") || (received > 0 && ordered > 0 && received < ordered)) return "status-warning";
+  if (status.includes("received") || status.includes("fully delivered") || status.includes("closed") || status.includes("completed") || (ordered > 0 && received >= ordered)) return "status-success";
+  return "status-neutral";
 }
 
 function poExpectedDate(po = {}) {
@@ -4025,7 +4567,7 @@ function poStatusCount(status) {
 function renderPoStatusFilters() {
   const container = document.getElementById("poStatusFilters");
   if (!container) return;
-  const statuses = ["All", "Draft", "Confirmed", "Partial", "Received", "Cancelled"];
+  const statuses = ["All", "Draft", "Partial", "Received", "Cancelled"];
   if (!statuses.includes(poStatusFilter)) poStatusFilter = "All";
   container.innerHTML = statuses.map((status) => `
     <button class="po-status-filter ${status === poStatusFilter ? "active" : ""}" type="button" data-po-status="${status}">
@@ -4070,16 +4612,18 @@ function clearVendorFilter(type) {
 
 function renderPoRecordRow(po) {
   const status = poDisplayStatus(po);
+  const linkedGrnCount = state.grns.filter((grn) => String(grn.poNumber || "").trim().toLowerCase() === String(po.poNumber || "").trim().toLowerCase()).length;
   return `
     <tr class="po-clickable-row" data-reference-id="${escapeHtml(po.poNumber)}" data-po-number="${escapeHtml(po.poNumber)}">
       <td><strong>${escapeHtml(po.poNumber)}</strong></td>
       <td>${escapeHtml(poVendorName(po))}</td>
       <td>${formatDate(po.issueDate || po.date)}</td>
-      <td><span class="po-status-select">${escapeHtml(status)}<i data-lucide="chevron-down"></i></span></td>
-      <td><strong>$${money(po.poAmount ?? po.total)}</strong></td>
+      <td><span class="po-status-select ${poStatusClass(po)}">${escapeHtml(status)}<i data-lucide="chevron-down"></i></span></td>
+      <td><strong>${escapeHtml(currency(po.poAmount ?? po.total))}</strong></td>
       <td class="button-cell">
         <span class="po-row-actions">
           <button class="tiny" onclick="printPO('${escapeHtml(po.poNumber)}')" title="Print PO" aria-label="Print PO"><i data-lucide="clipboard-list"></i></button>
+          <button class="tiny" type="button" onclick="showLinkedGRNs('${escapeHtml(po.poNumber)}')" title="Linked GRNs" aria-label="Linked GRNs"><i data-lucide="link"></i>${linkedGrnCount ? `<span>${linkedGrnCount}</span>` : ""}</button>
           <button class="tiny" type="button" title="Receive PO" aria-label="Receive PO" onclick="setView('grn')"><i data-lucide="package-open"></i></button>
           ${canCancelPo(po) ? `<button class="tiny danger" onclick="cancelPO('${escapeHtml(po.poNumber)}')" title="Cancel PO" aria-label="Cancel PO"><i data-lucide="trash-2"></i></button>` : ""}
         </span>
@@ -4103,6 +4647,8 @@ function poDetailMarkup(po) {
         <div><span>Issue date</span><strong>${escapeHtml(formatDate(po.issueDate || po.date) || "-")}</strong></div>
         <div><span>Location</span><strong>${escapeHtml(po.location || "-")}</strong></div>
         <div><span>Vendor</span><strong>${escapeHtml(poVendorName(po))}</strong></div>
+        <div><span>Budget line</span><strong>${escapeHtml(po.budgetLine || "-")}</strong></div>
+        <div><span>Donor</span><strong>${escapeHtml(po.donor || "-")}</strong></div>
         <div><span>Quotation reference</span><strong>${escapeHtml(po.quotationReference || "-")}</strong></div>
         <div><span>Approved by</span><strong>${escapeHtml(po.approvedBy || "-")}</strong></div>
         <div><span>Delivery terms</span><strong>${escapeHtml(po.deliveryTerms || "-")}</strong></div>
@@ -4138,8 +4684,8 @@ function poDetailMarkup(po) {
                   <span>Qty ordered: ${quantityValue(quantity)}</span>
                   <span>Qty received: ${quantityValue(item.quantityReceived || 0)}</span>
                   <span>Remaining: ${quantityValue(remaining)}</span>
-                  <span>Unit price: $${money(unitPrice)}</span>
-                  <span>Total: $${money(lineTotal)}</span>
+                  <span>Unit price: ${escapeHtml(currency(unitPrice))}</span>
+                  <span>Total: ${escapeHtml(currency(lineTotal))}</span>
                 </div>
                 ${item.specifications ? `<p>${escapeHtml(item.specifications)}</p>` : ""}
               </article>
@@ -4148,9 +4694,9 @@ function poDetailMarkup(po) {
         </div>
       </section>
       <div class="po-detail-totals">
-        <div><span>Subtotal</span><strong>$${money(subtotal)}</strong></div>
-        <div><span>GST ${money(taxRate)}%</span><strong>$${money(taxAmount)}</strong></div>
-        <div><span>Total</span><strong>$${money(grandTotal)}</strong></div>
+        <div><span>Subtotal</span><strong>${escapeHtml(currency(subtotal))}</strong></div>
+        <div><span>GST ${money(taxRate)}%</span><strong>${escapeHtml(currency(taxAmount))}</strong></div>
+        <div><span>Total</span><strong>${escapeHtml(currency(grandTotal))}</strong></div>
       </div>
       ${po.notesRemarks ? `<section class="po-detail-section"><h3>Notes</h3><div class="po-detail-note">${escapeHtml(po.notesRemarks)}</div></section>` : ""}
       <div class="approval-detail-actions">
@@ -4186,8 +4732,53 @@ function closePoDetail() {
   modal.setAttribute("aria-hidden", "true");
 }
 
+function highlightLinkedRecords(selector, message) {
+  requestAnimationFrame(() => {
+    const rows = [...document.querySelectorAll(selector)];
+    rows.forEach((row) => {
+      row.classList.add("linked-record-highlight");
+      window.setTimeout(() => row.classList.remove("linked-record-highlight"), 5000);
+    });
+    rows[0]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (message) showToast(message);
+  });
+}
+
+function openLinkedPO(poNumber) {
+  const cleanPoNumber = String(poNumber || "").trim();
+  if (!cleanPoNumber || cleanPoNumber.toLowerCase() === "manual") return showToast("This GRN is not linked to a PO.", "error");
+  const po = state.purchaseOrders.find((row) => String(row.poNumber || "").trim().toLowerCase() === cleanPoNumber.toLowerCase());
+  if (!po) return showToast("Linked PO was not found.", "error");
+  procurementModuleTab = "po";
+  poStatusFilter = "All";
+  poSearchTerm = "";
+  document.getElementById("poSearchInput") && (document.getElementById("poSearchInput").value = "");
+  setView("po");
+  highlightLinkedRecords(`[data-po-number="${CSS.escape(po.poNumber)}"]`, `Linked PO ${po.poNumber} highlighted.`);
+}
+
+function showLinkedGRNs(poNumber) {
+  const cleanPoNumber = String(poNumber || "").trim();
+  if (!cleanPoNumber) return showToast("PO number is missing.", "error");
+  const linked = state.grns.filter((grn) => String(grn.poNumber || "").trim().toLowerCase() === cleanPoNumber.toLowerCase());
+  inventoryModuleTab = "grn";
+  grnSearchTerm = cleanPoNumber;
+  const searchInput = document.getElementById("grnSearchInput");
+  if (searchInput) searchInput.value = cleanPoNumber;
+  setView("grn");
+  if (!linked.length) {
+    showToast(`No GRNs found for ${cleanPoNumber}.`, "error");
+    return;
+  }
+  highlightLinkedRecords(`[data-po-number="${CSS.escape(cleanPoNumber)}"]`, `${linked.length} linked GRN${linked.length === 1 ? "" : "s"} highlighted.`);
+}
+
 window.openPoDetail = openPoDetail;
 window.closePoDetail = closePoDetail;
+window.openLinkedPO = openLinkedPO;
+window.showLinkedGRNs = showLinkedGRNs;
+window.openGrnInvoice = openGrnInvoice;
+window.downloadGrnInvoice = downloadGrnInvoice;
 
 function collectPurchaseOrder(formElement) {
   const form = new FormData(formElement);
@@ -4229,10 +4820,10 @@ function collectPurchaseOrder(formElement) {
     focalPerson: String(form.get("focalPerson") || "").trim(),
     deliveryNtn: String(form.get("deliveryNtn") || "424701-0").trim(),
     budgetLine: String(form.get("budgetLine") || "").trim(),
+    donor: String(form.get("donor") || "").trim(),
     bankName: String(form.get("bankName") || "").trim(),
     accountTitle: String(form.get("accountTitle") || "").trim(),
     accountNo: String(form.get("accountNo") || "").trim(),
-    status: form.get("status"),
     location: form.get("location"),
     arrivedBy: form.get("arrivedBy") || "",
     serviceStartDate: form.get("serviceStartDate"),
@@ -4315,6 +4906,8 @@ function renderPurchaseOrderSheet(po) {
             <dt>PO Number:</dt><dd>${escapeHtml(po.poNumber)}</dd>
             <dt>Service Start Date:</dt><dd>${formatDate(po.serviceStartDate || po.issueDate)}</dd>
             <dt>Service Completion Date:</dt><dd>${formatDate(po.serviceCompletionDate || po.arrivedBy)}</dd>
+            <dt>Budget Line:</dt><dd>${escapeHtml(po.budgetLine || "")}</dd>
+            <dt>Donor:</dt><dd>${escapeHtml(po.donor || "")}</dd>
             <dt>Payment Terms:</dt><dd>${escapeHtml(po.paymentTerms)}</dd>
             <dt>Delivery Terms:</dt><dd>${escapeHtml(po.deliveryTerms)}</dd>
           </dl>
@@ -4337,7 +4930,7 @@ function renderPurchaseOrderSheet(po) {
             <tr>
               <th>Description &amp; Specifications</th>
               <th>Qty</th>
-              <th>Unit Price</th>
+              <th>Unit Price (PKR)</th>
               <th>Total</th>
             </tr>
           </thead>
@@ -4353,16 +4946,16 @@ function renderPurchaseOrderSheet(po) {
                   ${item.itemCode ? `<span>Item ID: ${escapeHtml(item.itemCode)}</span>` : ""}
                 </td>
                 <td>${quantityValue(item.quantityOrdered ?? item.quantity)}</td>
-                <td>Rs. ${money(item.unitPrice)}</td>
-                <td>Rs. ${money(lineTotal)}</td>
+                <td>${escapeHtml(currency(item.unitPrice))}</td>
+                <td>${escapeHtml(currency(lineTotal))}</td>
               </tr>`;
             }).join("")}
           </tbody>
         </table>
         <div class="po-total-lines">
-          <p><span>SUB TOTAL:</span><strong>Rs. ${money(subTotal)}</strong></p>
-          <p><span>GST ${money(taxRate)}%:</span><strong>Rs. ${money(taxAmount)}</strong></p>
-          <p><span>TOTAL:</span><strong>Rs. ${money(grandTotal)}</strong></p>
+          <p><span>SUB TOTAL:</span><strong>${escapeHtml(currency(subTotal))}</strong></p>
+          <p><span>GST ${money(taxRate)}%:</span><strong>${escapeHtml(currency(taxAmount))}</strong></p>
+          <p><span>TOTAL:</span><strong>${escapeHtml(currency(grandTotal))}</strong></p>
         </div>
       </div>
 
@@ -4430,8 +5023,7 @@ function resetPoForm() {
   form.elements.vendorContact.value = "";
   form.elements.vendorAddress.value = "";
   form.elements.deliveryNtn.value = "424701-0";
-  form.elements.status.value = "";
-  form.elements.poAmount.value = "0";
+  form.elements.poAmount.value = currency(0);
   document.getElementById("poItems").innerHTML = "";
   addPoItemLine();
   syncSelectOptions(form);
@@ -4449,11 +5041,77 @@ function resetGrnForm() {
   document.getElementById("grnItemType").value = "";
   document.getElementById("grnItemCode").value = "";
   document.getElementById("grnPoLineItem").innerHTML = `<option value="">Select PO item</option>`;
-  ["qtyReceived", "qtyAccepted"].forEach((name) => {
+  updateGrnInvoiceFileNote();
+  ["qtyReceived"].forEach((name) => {
     form.elements[name].removeAttribute("max");
     form.elements[name].placeholder = "";
   });
   syncSelectOptions(form);
+}
+
+function fileSizeLabel(bytes) {
+  const size = Number(bytes || 0);
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.ceil(size / 1024)} KB`;
+  return `${size} B`;
+}
+
+function selectedGrnInvoiceFile() {
+  return document.getElementById("grnInvoiceFile")?.files?.[0] || null;
+}
+
+function validateGrnInvoiceFile(file = selectedGrnInvoiceFile()) {
+  if (!file) return "";
+  const name = String(file.name || "");
+  const ext = name.includes(".") ? `.${name.split(".").pop().toLowerCase()}` : "";
+  if (!GRN_INVOICE_ALLOWED_EXTENSIONS.includes(ext)) return "Invoice must be JPG, PNG, WEBP, or PDF.";
+  if (file.size > GRN_INVOICE_MAX_BYTES) return "Invoice file must be 5MB or smaller.";
+  return "";
+}
+
+function updateGrnInvoiceFileNote() {
+  const note = document.getElementById("grnInvoiceFileNote");
+  if (!note) return;
+  const file = selectedGrnInvoiceFile();
+  const error = validateGrnInvoiceFile(file);
+  note.classList.toggle("error", Boolean(error));
+  note.textContent = file
+    ? error || `${file.name} (${fileSizeLabel(file.size)})`
+    : "No invoice selected";
+}
+
+async function uploadGrnInvoice(grnNumber, file) {
+  const formData = new FormData();
+  formData.append("invoiceFile", file);
+  return apiRequest(`/grns/${encodeURIComponent(grnNumber)}/invoice`, {
+    method: "POST",
+    body: formData
+  });
+}
+
+async function openGrnInvoice(url) {
+  try {
+    const blob = await apiBlobRequest(url);
+    const objectUrl = URL.createObjectURL(blob);
+    window.open(objectUrl, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  } catch (error) {
+    showToast(error.message || "Unable to open invoice.", "error");
+  }
+}
+
+async function downloadGrnInvoice(url, filename = "grn-invoice") {
+  try {
+    const blob = await apiBlobRequest(url);
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename || "grn-invoice";
+    link.click();
+    URL.revokeObjectURL(objectUrl);
+  } catch (error) {
+    showToast(error.message || "Unable to download invoice.", "error");
+  }
 }
 
 function clearGrnPoDetails() {
@@ -4463,7 +5121,7 @@ function clearGrnPoDetails() {
   document.getElementById("grnItemCode").value = "";
   document.getElementById("grnPoLineItem").innerHTML = `<option value="">Select PO item</option>`;
   const form = document.getElementById("grnForm");
-  ["qtyReceived", "qtyAccepted"].forEach((name) => {
+  ["qtyReceived"].forEach((name) => {
     form.elements[name].removeAttribute("max");
     form.elements[name].placeholder = "";
     form.elements[name].value = "";
@@ -4508,12 +5166,12 @@ async function savePendingPO() {
 
 function renderGRN() {
   if (businessDataLoading) {
-    showTableSkeleton("grnTable", 8, 6);
+    showTableSkeleton("grnTable", 9, 6);
     return;
   }
   const grnError = sourceError("grns", "purchaseOrders");
   if (grnError) {
-    setTableContent("grnTable", errorStateRow(8, grnError));
+    setTableContent("grnTable", errorStateRow(9, grnError));
     return;
   }
   const searchTerm = grnSearchTerm.trim().toLowerCase();
@@ -4527,7 +5185,7 @@ function renderGRN() {
   });
   setTableContent("grnTable", rows.map((grn) => `
     ${renderGrnRecordRow(grn)}
-  `).join("") || emptyStateRow(8, "No matching GRN records", "Try another GRN, PO, vendor, or filter."));
+  `).join("") || emptyStateRow(9, "No matching GRN records", "Try another GRN, PO, vendor, or filter."));
   if (window.lucide) lucide.createIcons();
 }
 
@@ -4543,16 +5201,24 @@ function renderGrnRecordRow(grn) {
   const received = Number(grn.qtyReceived || 0);
   const accepted = Number(grn.qtyAccepted || 0);
   const status = accepted < received ? "Rejected" : (grn.status || "Received");
+  const statusClass = String(status).toLowerCase().includes("received") || accepted >= received ? "status-success" : "status-danger";
+  const hasInvoice = Boolean(grn.invoiceFileUrl);
   return `
-    <tr data-reference-id="${escapeHtml(grn.grnNumber)}">
+    <tr data-reference-id="${escapeHtml(grn.grnNumber)}" data-grn-number="${escapeHtml(grn.grnNumber)}" data-po-number="${escapeHtml(grn.poNumber || "")}">
       <td>${escapeHtml(grn.grnNumber)}</td>
       <td>${escapeHtml(grn.poNumber || "Manual")}</td>
       <td>${escapeHtml(vendorName)}</td>
       <td>${formatDate(grn.date)}</td>
       <td>${escapeHtml(grn.location || "-")}</td>
       <td>${quantityValue(accepted || received)}</td>
-      <td><span class="grn-status-pill">${escapeHtml(status)}</span></td>
-      <td class="button-cell"><span class="grn-row-actions"><button class="tiny" onclick="printGRN('${escapeHtml(grn.grnNumber)}')" title="Print GRN" aria-label="Print GRN"><i data-lucide="clipboard-list"></i></button></span></td>
+      <td><span class="grn-invoice-pill ${hasInvoice ? "has-invoice" : "missing-invoice"}">${hasInvoice ? "Has Invoice" : "Missing Invoice"}</span></td>
+      <td><span class="grn-status-pill ${statusClass}">${escapeHtml(status)}</span></td>
+      <td class="button-cell"><span class="grn-row-actions">
+        <button class="tiny" type="button" onclick="openLinkedPO('${escapeHtml(grn.poNumber || "")}')" title="View linked PO" aria-label="View linked PO"><i data-lucide="file-search"></i></button>
+        ${hasInvoice ? `<button class="tiny" type="button" onclick="openGrnInvoice('${escapeHtml(grn.invoiceFileUrl)}')" title="View Invoice" aria-label="View Invoice"><i data-lucide="file-text"></i></button>` : ""}
+        ${hasInvoice ? `<button class="tiny" type="button" onclick="downloadGrnInvoice('${escapeHtml(grn.invoiceFileUrl)}', '${escapeHtml(grn.invoiceFileName || `${grn.grnNumber}-invoice`)}')" title="Download Invoice" aria-label="Download Invoice"><i data-lucide="download"></i></button>` : ""}
+        <button class="tiny" onclick="printGRN('${escapeHtml(grn.grnNumber)}')" title="Print GRN" aria-label="Print GRN"><i data-lucide="clipboard-list"></i></button>
+      </span></td>
     </tr>
   `;
 }
@@ -4581,6 +5247,8 @@ function renderGrnSheet(grn) {
             <dt>GRN Number:</dt><dd>${escapeHtml(grn.grnNumber)}</dd>
             <dt>GRN Date:</dt><dd>${formatDate(grn.date)}</dd>
             <dt>PO Number:</dt><dd>${escapeHtml(grn.poNumber || "Manual")}</dd>
+            <dt>Invoice:</dt><dd>${grn.invoiceFileName ? escapeHtml(grn.invoiceFileName) : "No invoice uploaded"}</dd>
+            <dt>Invoice Uploaded:</dt><dd>${grn.invoiceUploadedAt ? escapeHtml(formatDate(grn.invoiceUploadedAt)) : "-"}</dd>
           </dl>
         </div>
         <div class="po-form-party">
@@ -4671,7 +5339,6 @@ function applySelectedPoLineToGrn() {
   const itemCodeInput = document.getElementById("grnItemCode");
   const locationSelect = document.querySelector("#grnForm [name='location']");
   const receivedInput = document.querySelector("#grnForm [name='qtyReceived']");
-  const acceptedInput = document.querySelector("#grnForm [name='qtyAccepted']");
   const item = findItem(selectedLine.itemCode) || {};
   itemNameInput.value = selectedLine.itemName || item.name || "";
   itemTypeInput.value = selectedLine.itemType || item.type || "";
@@ -4679,11 +5346,8 @@ function applySelectedPoLineToGrn() {
   if (po.location) locationSelect.value = po.location;
   const remaining = remainingPoLineQuantity(selectedLine);
   receivedInput.max = remaining || "";
-  acceptedInput.max = remaining || "";
   receivedInput.placeholder = remaining ? `Remaining: ${quantityValue(remaining)}` : "No quantity remaining";
-  acceptedInput.placeholder = remaining ? `Remaining: ${quantityValue(remaining)}` : "No quantity remaining";
   receivedInput.value = remaining > 0 ? remaining : "";
-  acceptedInput.value = remaining > 0 ? remaining : "";
 }
 
 function openGrnDrawer() {
@@ -4711,7 +5375,7 @@ function applySelectedVendorToPo() {
   const form = document.getElementById("poForm");
   const vendorValue = String(form.elements.vendorId.value || "").trim().toLowerCase();
   const vendor = state.vendors.find((row) => String(row.id) === String(form.elements.vendorId.value) || String(row.name || "").trim().toLowerCase() === vendorValue);
-  form.elements.vendorContact.value = vendor ? [vendor.contact, vendor.phone, vendor.email].filter(Boolean).join(" / ") : "";
+  form.elements.vendorContact.value = vendor ? [vendor.contact, vendor.primaryPhone || vendor.phone, vendor.secondaryPhone, vendor.email].filter(Boolean).join(" / ") : "";
   form.elements.vendorAddress.value = vendor?.address || "";
   form.elements.bankName.value = vendor?.bankName || vendor?.bank_name || "";
   form.elements.accountTitle.value = vendor?.accountTitle || vendor?.account_title || "";
@@ -4788,7 +5452,7 @@ function renderTransport() {
     { key: "pending", title: "Pending", icon: "timer" },
     { key: "approved", title: "Approved", icon: "check-circle-2" },
     { key: "arranged", title: "Arranged", icon: "route" },
-    { key: "completed", title: "Completed", icon: "flag-checkered" },
+    { key: "completed", title: "Completed", icon: "flag" },
     { key: "cancelled", title: "Cancelled", icon: "x-circle" }
   ];
   const grouped = columns.reduce((acc, column) => ({ ...acc, [column.key]: [] }), {});
@@ -5035,26 +5699,28 @@ function openApprovalColumnHistory(columnKey) {
 
 function renderVendors() {
   if (businessDataLoading) {
-    showTableSkeleton("vendorsTable", 9, 6);
+    showTableSkeleton("vendorsTable", 11, 6);
     return;
   }
   const vendorsError = sourceError("vendors");
   if (vendorsError) {
-    setTableContent("vendorsTable", errorStateRow(9, vendorsError));
+    setTableContent("vendorsTable", errorStateRow(11, vendorsError));
     return;
   }
   const searchTerm = vendorSearchTerm.trim().toLowerCase();
   const rows = state.vendors.filter((vendor) => {
     if (!searchTerm) return true;
-    return [vendor.name, vendor.phone, vendor.contact, vendor.ntn, vendor.bankName, vendor.accountTitle, vendor.accountNo, vendor.address]
+    return [vendor.name, vendor.primaryPhone, vendor.secondaryPhone, vendor.phone, vendor.contact, vendor.ntn, vendor.stn, vendor.bankName, vendor.accountTitle, vendor.accountNo, vendor.address]
       .some((value) => String(value || "").toLowerCase().includes(searchTerm));
   });
   setTableContent("vendorsTable", rows.map((vendor) => `
     <tr>
       <td>${escapeHtml(vendor.name)}</td>
-      <td>${escapeHtml(vendor.phone || "")}</td>
+      <td>${escapeHtml(vendor.primaryPhone || vendor.phone || "")}</td>
+      <td>${escapeHtml(vendor.secondaryPhone || "")}</td>
       <td>${escapeHtml(vendor.contact || "")}</td>
       <td>${escapeHtml(vendor.ntn || "")}</td>
+      <td>${escapeHtml(vendor.stn || "")}</td>
       <td>${escapeHtml(vendor.bankName || "")}</td>
       <td>${escapeHtml(vendor.accountTitle || "")}</td>
       <td>${escapeHtml(vendor.accountNo || "")}</td>
@@ -5066,7 +5732,7 @@ function renderVendors() {
         </span>
       </td>
     </tr>
-  `).join("") || emptyStateRow(9, searchTerm ? "No matching vendors" : "No vendors added yet", searchTerm ? "Try another name, phone, contact, NTN, bank, account, or address." : "Vendor records used by purchase orders will appear here."));
+  `).join("") || emptyStateRow(11, searchTerm ? "No matching vendors" : "No vendors added yet", searchTerm ? "Try another name, phone, contact, tax, bank, account, or address." : "Vendor records used by purchase orders will appear here."));
 }
 
 function resetVendorForm() {
@@ -5086,9 +5752,11 @@ window.editVendor = function (vendorId) {
   const form = document.getElementById("vendorForm");
   form.elements.id.value = vendor.id;
   form.elements.name.value = vendor.name || "";
-  form.elements.phone.value = vendor.phone || "";
+  form.elements.primaryPhone.value = vendor.primaryPhone || vendor.phone || "";
+  form.elements.secondaryPhone.value = vendor.secondaryPhone || "";
   form.elements.contact.value = vendor.contact || "";
   form.elements.ntn.value = vendor.ntn || "";
+  form.elements.stn.value = vendor.stn || "";
   form.elements.bankName.value = vendor.bankName || "";
   form.elements.accountTitle.value = vendor.accountTitle || "";
   form.elements.accountNo.value = vendor.accountNo || "";
@@ -5264,6 +5932,38 @@ function historySectionMeta(section) {
 }
 
 function recordHistoryEntries(section) {
+  if (section === "stockOut") {
+    return (state.stockMovements || [])
+      .filter((row) => ["REQUEST_ISSUE", "MANUAL_OUT", "ADJUSTMENT_OUT", "TRANSFER_OUT"].includes(String(row.movement_type || row.movementType || "").toUpperCase()))
+      .map((row) => {
+        const movementType = String(row.movement_type || row.movementType || "").toUpperCase();
+        const movementNumber = row.movement_number || row.movementNumber || `MOV-${row.id}`;
+        const notes = row.notes_remarks || row.notes || "";
+        const requestId = row.request_number || row.requestNumber || (movementType === "REQUEST_ISSUE" ? (row.source_id || row.sourceId || "") : "");
+        return {
+          id: `stock-movement-${row.id || movementNumber}`,
+          kind: "items",
+          ref: movementNumber,
+          title: `${movementNumber} stock issued`,
+          subtitle: `${row.item_name || row.itemName || row.item_id || row.itemCode || "Item"} issued from ${row.location_name || row.location || "warehouse"}`,
+          log: { date: row.created_at || row.createdAt },
+          details: {
+            movementNumber,
+            requestId,
+            itemCode: row.item_id || row.itemCode,
+            itemName: row.item_name || row.itemName,
+            type: movementType,
+            location: row.location_name || row.location,
+            quantityIssued: row.quantity,
+            quantity: row.quantity_requested || row.quantityRequested || row.quantity,
+            issuedBy: row.created_by_name || row.createdByName,
+            status: movementType.replace(/_/g, " "),
+            notes
+          }
+        };
+      });
+  }
+
   if (section === "requests") {
     return state.requests.flatMap((request) => request.items
       .filter(isRequestLineHistory)
@@ -5473,6 +6173,8 @@ function historyDetailGrid(entry) {
     ["Item ID", item?.itemCode || d.itemCode || d.itemId],
     ["Type", item?.type || d.type],
     ["Requested quantity", quantityValue(item?.quantity ?? d.quantity)],
+    ["Issued quantity", quantityValue(d.quantityIssued)],
+    ["Issued by", d.issuedBy],
     ["Movement", d.movementNumber],
     ["Notes", d.notes || d.details]
   ];
@@ -5529,6 +6231,7 @@ function filteredAuditLogs() {
 }
 
 function renderAuditPage() {
+  const auditView = document.getElementById("auditView");
   const tableCard = document.querySelector("#auditView .audit-log-table-card");
   const filters = document.querySelector("#auditView .audit-log-filters");
   const heading = document.querySelector("#auditView .audit-log-heading h2");
@@ -5537,6 +6240,9 @@ function renderAuditPage() {
   const backButton = document.getElementById("auditBackBtn");
   const isSectionHistory = activeAuditSection !== "all";
   const pageTitle = document.getElementById("pageTitle");
+  const activeView = document.querySelector(".app-shell")?.getAttribute("data-active-view") || "";
+
+  if (!auditView?.classList.contains("active") && activeView !== "history") return;
 
   if (!tableCard || !verifiedCount || !backButton) return;
 
@@ -5694,7 +6400,7 @@ function setTableContent(tbodyId, html) {
 function restoreDashboardShell() {
   const dashboard = document.getElementById("dashboardView");
   if (!dashboard) return;
-  if (!dashboardDefaultHtml) dashboardDefaultHtml = dashboard.innerHTML;
+  if (!dashboardDefaultHtml) dashboardDefaultHtml = dashboardShellHtml();
   if (dashboard.classList.contains("loading")) {
     dashboard.innerHTML = dashboardDefaultHtml;
     dashboard.classList.remove("loading");
@@ -5738,7 +6444,165 @@ function sourceError(...keys) {
   return keys.map((key) => businessDataErrors[key]).find(Boolean) || "";
 }
 
+function availableReports() {
+  return Object.entries(REPORTS).filter(([, report]) => canAccessReport(report));
+}
+
+function canAccessReport(report) {
+  if (report.category === "procurement") return canAccessView("po");
+  if (report.endpoint?.includes("user-activity")) return hasPortalAdminAccess() || hasPermission("audit.view");
+  if (report.endpoint?.includes("stock-adjustments")) return hasPortalAdminAccess() || hasPermission("inventory.manage");
+  if (report.endpoint?.includes("approval-history")) return hasPortalAdminAccess() || hasPermission("request.approve");
+  if (report.category === "requests") return canAccessView("requests") || canAccessView("requisition");
+  return canAccessView("inventory");
+}
+
+function activeReport() {
+  if (!REPORTS[activeReportKey] || !canAccessReport(REPORTS[activeReportKey])) {
+    const first = availableReports()[0];
+    activeReportKey = first?.[0] || "stock-balance";
+  }
+  activeReportCategory = REPORTS[activeReportKey]?.category || "inventory";
+  return REPORTS[activeReportKey];
+}
+
+async function loadActiveReport() {
+  const report = activeReport();
+  if (!report) return;
+  reportLoading = true;
+  reportError = "";
+  renderReports();
+  const params = new URLSearchParams();
+  (report.filters || []).forEach((key) => {
+    const value = String(reportFilters[key] || "").trim();
+    if (value) params.set(key, value);
+  });
+  try {
+    const data = await apiRequest(`${report.endpoint}${params.toString() ? `?${params}` : ""}`);
+    reportRows = Array.isArray(data.rows) ? data.rows : [];
+  } catch (error) {
+    reportRows = [];
+    reportError = error.message || "Unable to load report.";
+  } finally {
+    reportLoading = false;
+    reportPage = 1;
+    renderReports();
+  }
+}
+
+function renderReports() {
+  if (!document.getElementById("reportsView")) return;
+  const report = activeReport();
+  const categoryTabs = document.getElementById("reportCategoryTabs");
+  const library = document.getElementById("reportLibrary");
+  const title = document.getElementById("activeReportTitle");
+  const description = document.getElementById("activeReportDescription");
+  const filters = document.getElementById("reportFilters");
+  if (!report || !categoryTabs || !library || !title || !description || !filters) return;
+
+  const available = availableReports();
+  categoryTabs.innerHTML = REPORT_CATEGORIES
+    .filter((category) => available.some(([, item]) => item.category === category.key))
+    .map((category) => `<button class="report-category-tab ${category.key === activeReportCategory ? "active" : ""}" type="button" data-report-category="${escapeHtml(category.key)}">${escapeHtml(category.label)}</button>`)
+    .join("");
+  library.innerHTML = available
+    .filter(([, item]) => item.category === activeReportCategory)
+    .map(([key, item]) => `
+      <button class="report-card ${key === activeReportKey ? "active" : ""}" type="button" data-report-key="${escapeHtml(key)}">
+        <span><i data-lucide="file-bar-chart"></i></span>
+        <strong>${escapeHtml(item.title)}</strong>
+        <small>${escapeHtml(item.description)}</small>
+      </button>
+    `).join("");
+  title.textContent = report.title;
+  description.textContent = report.description;
+  filters.innerHTML = renderReportFilterControls(report);
+  const search = document.getElementById("reportSearchInput");
+  if (search && search.value !== reportSearchTerm) search.value = reportSearchTerm;
+  renderReportTable(report);
+  if (window.lucide) window.lucide.createIcons();
+}
+
+function renderReportFilterControls(report) {
+  const labels = { startDate: "Start date", endDate: "End date", item: "Item", category: "Category", warehouse: "Warehouse", vendor: "Vendor", department: "Department", status: "Status", user: "User" };
+  return (report.filters || []).map((key) => {
+    const type = key === "startDate" || key === "endDate" ? "date" : "search";
+    return `<label><span>${escapeHtml(labels[key] || key)}</span><input type="${type}" value="${escapeHtml(reportFilters[key] || "")}" data-report-filter="${escapeHtml(key)}" placeholder="${escapeHtml(labels[key] || key)}"></label>`;
+  }).join("") + `<button class="secondary" type="button" id="applyReportFilters"><i data-lucide="filter"></i>Apply</button><button class="secondary" type="button" id="clearReportFilters">Clear</button>`;
+}
+
+function filteredReportRows(report) {
+  const term = reportSearchTerm.trim().toLowerCase();
+  if (!term) return reportRows;
+  return reportRows.filter((row) => report.columns.some(([key]) => String(row[key] ?? "").toLowerCase().includes(term)));
+}
+
+function renderReportTable(report) {
+  const head = document.getElementById("reportTableHead");
+  const body = document.getElementById("reportTableBody");
+  const info = document.getElementById("reportPageInfo");
+  const prev = document.getElementById("reportPrevPage");
+  const next = document.getElementById("reportNextPage");
+  if (!head || !body || !info || !prev || !next) return;
+  head.innerHTML = `<tr>${report.columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("")}</tr>`;
+  if (reportLoading) {
+    showTableSkeleton("reportTableBody", report.columns.length, 6);
+    info.textContent = "Loading";
+    prev.disabled = true;
+    next.disabled = true;
+    return;
+  }
+  if (reportError) {
+    setTableContent("reportTableBody", errorStateRow(report.columns.length, reportError));
+    info.textContent = "Page 1 of 1";
+    prev.disabled = true;
+    next.disabled = true;
+    return;
+  }
+  const rows = filteredReportRows(report);
+  const totalPages = Math.max(Math.ceil(rows.length / REPORT_PAGE_SIZE), 1);
+  reportPage = Math.min(Math.max(reportPage, 1), totalPages);
+  const pageRows = rows.slice((reportPage - 1) * REPORT_PAGE_SIZE, reportPage * REPORT_PAGE_SIZE);
+  setTableContent("reportTableBody", pageRows.map((row) => `<tr>${report.columns.map(([key]) => `<td>${escapeHtml(formatReportValue(key, row[key]))}</td>`).join("")}</tr>`).join("") || emptyStateRow(report.columns.length, "No report data found", "Try changing filters or search. If this stays empty, the IMS table may not have records for this report yet."));
+  info.textContent = `Page ${reportPage} of ${totalPages} - ${rows.length} row${rows.length === 1 ? "" : "s"}`;
+  prev.disabled = reportPage <= 1;
+  next.disabled = reportPage >= totalPages;
+}
+
+function formatReportValue(key, value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (/date/i.test(key)) return formatDate(value);
+  if (/amount|spend|value|cost/i.test(key)) return currency(value);
+  if (/quantity|level|shortage|totalPOs|totalRequests|totalIssued/i.test(key)) return quantityValue(value);
+  return value;
+}
+
+function exportActiveReport(extension = "csv") {
+  const report = activeReport();
+  const rows = filteredReportRows(report);
+  const lines = [
+    report.columns.map(([, label]) => label),
+    ...rows.map((row) => report.columns.map(([key]) => formatReportValue(key, row[key])))
+  ];
+  const csv = lines.map((line) => line.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], { type: extension === "xls" ? "application/vnd.ms-excel" : "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${activeReportKey}.${extension}`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function printActiveReport() {
+  const report = activeReport();
+  const rows = filteredReportRows(report);
+  const html = `<h1>${escapeHtml(report.title)}</h1><table><thead><tr>${report.columns.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${report.columns.map(([key]) => `<td>${escapeHtml(formatReportValue(key, row[key]))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  printHtml(html);
+}
+
 function render() {
+  disableNativeAutocomplete();
   syncSelectOptions();
   syncAllTemporalFilterControls();
   renderCategoryTabs();
@@ -5755,10 +6619,12 @@ function render() {
   renderTransport();
   renderApprovals();
   renderVendors();
+  renderReports();
   renderAuditPage();
   if (document.getElementById("settingsView").classList.contains("active")) renderSettings();
   if (document.getElementById("notificationCenter").classList.contains("show")) renderNotificationCenter();
   updateNotificationBadge();
+  disableNativeAutocomplete();
   if (window.lucide) window.lucide.createIcons();
 }
 
@@ -6131,6 +6997,15 @@ document.querySelector(".sidebar")?.addEventListener("click", (event) => {
 });
 
 document.getElementById("dashboardView").addEventListener("click", (event) => {
+  const resetTrigger = event.target.closest("[data-dashboard-kpi-reset]");
+  if (resetTrigger) {
+    event.preventDefault();
+    event.stopPropagation();
+    dashboardKpiStartDate = "";
+    dashboardKpiEndDate = "";
+    refreshDashboardSummary();
+    return;
+  }
   const pickerOpenTrigger = event.target.closest("[data-dashboard-picker-open]");
   if (pickerOpenTrigger) {
     event.stopPropagation();
@@ -6172,6 +7047,16 @@ document.getElementById("dashboardView").addEventListener("click", (event) => {
   const row = event.target.closest("[data-dashboard-request]");
   if (!row) return;
   setView("requests");
+});
+
+document.getElementById("dashboardView").addEventListener("submit", (event) => {
+  const form = event.target.closest("#dashboardKpiFilter");
+  if (!form) return;
+  event.preventDefault();
+  const formData = new FormData(form);
+  dashboardKpiStartDate = String(formData.get("startDate") || "").trim();
+  dashboardKpiEndDate = String(formData.get("endDate") || "").trim();
+  refreshDashboardSummary();
 });
 
 document.getElementById("dashboardView").addEventListener("keydown", (event) => {
@@ -6257,7 +7142,14 @@ document.getElementById("notificationCenter").addEventListener("click", (event) 
   if (tab) {
     activeNotificationTab = "direct";
     unreadOnly = tab.dataset.notificationTab === "watching";
+    notificationCenterExpanded = false;
     document.getElementById("unreadOnlyToggle").checked = unreadOnly;
+    renderNotificationCenter();
+    return;
+  }
+  const seeAll = event.target.closest("[data-notification-see-all]");
+  if (seeAll) {
+    notificationCenterExpanded = !notificationCenterExpanded;
     renderNotificationCenter();
     return;
   }
@@ -6272,6 +7164,7 @@ document.getElementById("notificationCenter").addEventListener("click", (event) 
 
 document.getElementById("unreadOnlyToggle").addEventListener("change", async (event) => {
   unreadOnly = event.target.checked;
+  notificationCenterExpanded = false;
   await loadNotifications();
   renderNotificationCenter();
 });
@@ -6284,6 +7177,7 @@ document.getElementById("markNotificationsRead").addEventListener("click", async
     showToast(error.message || "Unable to mark notifications as read.", "error");
   }
   unreadOnly = false;
+  notificationCenterExpanded = false;
   document.getElementById("unreadOnlyToggle").checked = false;
   await loadNotifications({ silent: true });
   renderNotificationCenter();
@@ -6321,6 +7215,7 @@ document.addEventListener("keydown", (event) => {
     closeAddUserDrawer();
     closePermissionsDrawer();
     closeRoleModal();
+    closeMobileSidebar();
   }
 });
 
@@ -6341,9 +7236,15 @@ document.getElementById("logoutBtn")?.addEventListener("click", async () => {
     section: "auth"
   });
   sessionStorage.removeItem(AUDIT_LOGIN_SESSION_KEY);
+  stopNotificationStream();
   localStorage.removeItem("firebase_token");
   if (window.imsFirebaseSignOut) await window.imsFirebaseSignOut();
   window.location.replace("login.html");
+});
+
+document.getElementById("mobileSidebarToggle")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleMobileSidebar();
 });
 
 document.getElementById("settingsTabs").addEventListener("click", (event) => {
@@ -6388,6 +7289,10 @@ document.getElementById("settingsForm").addEventListener("click", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  const shell = document.querySelector(".app-shell");
+  if (shell?.classList.contains("sidebar-open") && !event.target.closest(".sidebar") && !event.target.closest("#mobileSidebarToggle")) {
+    closeMobileSidebar();
+  }
   if (event.target.closest("#openAddUserDrawerBtn")) openAddUserDrawer();
   if (event.target.closest("#closeAddUserDrawerBtn")) closeAddUserDrawer();
   if (event.target.closest("#closePermissionsDrawerBtn")) closePermissionsDrawer();
@@ -6483,7 +7388,7 @@ document.getElementById("procurementModuleTabs")?.addEventListener("click", (eve
   if (!button) return;
   procurementModuleTab = button.dataset.procurementTab;
   renderProcurement();
-  updateTopbarBreadcrumb("procurement");
+  updateTopbarBreadcrumb(procurementModuleTab === "grn" ? "grn" : "procurement");
 });
 
 document.getElementById("requestModuleTabs")?.addEventListener("click", (event) => {
@@ -6579,6 +7484,12 @@ document.getElementById("poTable")?.addEventListener("click", (event) => {
   openPoDetail(row.dataset.poNumber);
 });
 
+document.getElementById("grnTable")?.addEventListener("click", (event) => {
+  const row = event.target.closest("tr[data-grn-number]");
+  if (!row || event.target.closest("button")) return;
+  openLinkedPO(row.dataset.poNumber);
+});
+
 document.getElementById("inventoryPrev").addEventListener("click", () => {
   inventoryPage -= 1;
   renderInventory();
@@ -6614,9 +7525,7 @@ document.getElementById("addRequestItem").addEventListener("click", addRequestLi
 document.getElementById("addItemType").addEventListener("click", addItemTypeLine);
 document.getElementById("openItemModal").addEventListener("click", openItemModal);
 document.getElementById("openCategoryModal")?.addEventListener("click", openCategoryModal);
-document.getElementById("openWarehouseModal")?.addEventListener("click", () => {
-  showToast("Add warehouse will be wired to warehouse creation next.", "error");
-});
+document.getElementById("openWarehouseModal")?.addEventListener("click", openWarehouseModal);
 document.getElementById("openManualStockIssue")?.addEventListener("click", openManualStockIssue);
 document.getElementById("closeManualStockIssue")?.addEventListener("click", closeManualStockIssue);
 document.getElementById("openPoDrawer")?.addEventListener("click", openPoDrawer);
@@ -6630,11 +7539,16 @@ document.getElementById("closeItemModal").addEventListener("click", closeItemMod
 document.getElementById("cancelItemModal").addEventListener("click", closeItemModal);
 document.getElementById("closeCategoryModal")?.addEventListener("click", closeCategoryModal);
 document.getElementById("cancelCategoryModal")?.addEventListener("click", closeCategoryModal);
+document.getElementById("closeWarehouseModal")?.addEventListener("click", closeWarehouseModal);
+document.getElementById("cancelWarehouseModal")?.addEventListener("click", closeWarehouseModal);
 document.getElementById("itemModal").addEventListener("click", (event) => {
   if (event.target.id === "itemModal") closeItemModal();
 });
 document.getElementById("categoryModal")?.addEventListener("click", (event) => {
   if (event.target.id === "categoryModal") closeCategoryModal();
+});
+document.getElementById("warehouseModal")?.addEventListener("click", (event) => {
+  if (event.target.id === "warehouseModal") closeWarehouseModal();
 });
 document.getElementById("manualStockIssueDrawer")?.addEventListener("click", (event) => {
   if (event.target.id === "manualStockIssueDrawer") closeManualStockIssue();
@@ -6802,7 +7716,7 @@ function updatePOAmount() {
     return sum + quantity * unitPrice;
   }, 0);
   const taxRate = Number(form.elements.taxRate.value) || 0;
-  form.elements.poAmount.value = money(subtotal + subtotal * (taxRate / 100));
+  form.elements.poAmount.value = currency(subtotal + subtotal * (taxRate / 100));
 }
 
 document.getElementById("poForm").elements.taxRate.addEventListener("input", updatePOAmount);
@@ -6900,6 +7814,27 @@ document.getElementById("manualStockOutForm").addEventListener("submit", async (
   }
 });
 
+document.getElementById("warehouseForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const name = String(form.get("name") || "").trim();
+  if (!name) return showToast("Enter a warehouse name.", "error");
+  if (state.locations.some((location) => location.toLowerCase() === name.toLowerCase())) {
+    return showToast("This warehouse already exists.", "error");
+  }
+  try {
+    await apiRequest("/locations", { method: "POST", body: JSON.stringify({ name }) });
+    event.currentTarget.reset();
+    closeWarehouseModal();
+    await loadBusinessData({ silent: true });
+    inventoryModuleTab = "warehouses";
+    render();
+    showToast("Warehouse added.");
+  } catch (error) {
+    showToast(error.message || "Unable to add warehouse.", "error");
+  }
+});
+
 document.getElementById("itemForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -6941,9 +7876,9 @@ document.getElementById("itemForm").addEventListener("submit", async (event) => 
 document.getElementById("categoryForm")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  const name = String(form.get("name") || "").trim();
+  const name = normalizeCategoryName(form.get("name"));
   if (!name) return showToast("Enter a category name.", "error");
-  if (categories().some((category) => category.toLowerCase() === name.toLowerCase())) {
+  if (categories().some((category) => normalizeCategoryName(category).toLowerCase() === name.toLowerCase())) {
     return showToast("This category already exists.", "error");
   }
   try {
@@ -6967,6 +7902,12 @@ document.getElementById("categoryForm")?.addEventListener("submit", async (event
   }
 });
 
+document.getElementById("inventoryCategoriesTable")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-delete-category-id]");
+  if (!button) return;
+  deleteCategory(button.dataset.deleteCategoryId, button.dataset.deleteCategoryName);
+});
+
 document.getElementById("poForm").addEventListener("submit", (event) => {
   event.preventDefault();
   const po = collectPurchaseOrder(event.currentTarget);
@@ -6985,19 +7926,27 @@ document.getElementById("poForm").addEventListener("submit", (event) => {
 document.getElementById("grnForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  const accepted = Number(form.get("qtyAccepted"));
   const received = Number(form.get("qtyReceived"));
+  const accepted = received;
   const po = selectedGrnPo();
   const selectedPoLineId = String(form.get("poLineId") || "");
   const poLine = poLineItems(po).find((item, index) => String(item.lineId || `line-${index}`) === selectedPoLineId);
   const remaining = poLine ? remainingPoLineQuantity(poLine) : Infinity;
+  const invoiceFile = selectedGrnInvoiceFile();
+  const invoiceError = validateGrnInvoiceFile(invoiceFile);
+  if (invoiceError) {
+    updateGrnInvoiceFileNote();
+    return showToast(invoiceError, "error");
+  }
   if (!canReceivePo(po)) return showToast("Select an open PO with remaining quantity.", "error");
   if (!poLine) return showToast("Select a PO with an item to receive.", "error");
-  if (accepted > received) return showToast("Accepted quantity cannot exceed received quantity.", "error");
   if (accepted > remaining) return showToast(`Accepted quantity cannot exceed remaining PO quantity (${quantityValue(remaining)}).`, "error");
   if (/^line-\d+$/.test(selectedPoLineId)) form.set("poLineId", "");
+  form.set("qtyAccepted", String(received));
+  form.delete("invoiceFile");
   try {
     const result = await apiRequest("/grn", { method: "POST", body: JSON.stringify(Object.fromEntries(form)) });
+    if (invoiceFile) await uploadGrnInvoice(result.grnNumber, invoiceFile);
     await loadBusinessData({ silent: true });
     resetGrnForm();
     render();
@@ -7010,11 +7959,13 @@ document.getElementById("grnForm").addEventListener("submit", async (event) => {
       section: "inventory",
       details: { poNumber: po?.poNumber || "", accepted, received }
     });
-    showToast(`${result.grnNumber} saved and stock ledger updated.`);
+    showToast(invoiceFile ? `${result.grnNumber} saved with invoice.` : `${result.grnNumber} saved and stock ledger updated.`);
   } catch (error) {
     showToast(error.message, "error");
   }
 });
+
+document.getElementById("grnInvoiceFile")?.addEventListener("change", updateGrnInvoiceFileNote);
 
 document.getElementById("openGrnDrawer")?.addEventListener("click", openGrnDrawer);
 document.getElementById("closeGrnDrawer")?.addEventListener("click", closeGrnDrawer);
@@ -7041,9 +7992,11 @@ document.getElementById("vendorForm").addEventListener("submit", async (event) =
   const vendorId = String(form.get("id") || "").trim();
   const payload = {
     name: String(form.get("name") || "").trim(),
-    phone: String(form.get("phone") || "").trim(),
+    primaryPhone: String(form.get("primaryPhone") || "").trim(),
+    secondaryPhone: String(form.get("secondaryPhone") || "").trim(),
     contact: String(form.get("contact") || "").trim(),
     ntn: String(form.get("ntn") || "").trim(),
+    stn: String(form.get("stn") || "").trim(),
     bankName: String(form.get("bankName") || "").trim(),
     accountTitle: String(form.get("accountTitle") || "").trim(),
     accountNo: String(form.get("accountNo") || "").trim(),
@@ -7089,7 +8042,7 @@ const GLOBAL_SEARCH_ITEMS = [
   { group: "Navigation", title: "Dashboard", subtitle: "Go to page", view: "dashboard", icon: "layout-grid", terms: "home overview widgets" },
   { group: "Navigation", title: "Inventory", subtitle: "Go to page", view: "inventory", icon: "boxes", terms: "stock items warehouse" },
   { group: "Navigation", title: "Inventory › Stock Issue", subtitle: "Go to page", view: "issue", icon: "package-minus", terms: "issue out stock" },
-  { group: "Navigation", title: "Inventory › GRN", subtitle: "Go to page", view: "grn", icon: "truck", terms: "goods receipt note receive" },
+  { group: "Navigation", title: "Procurement › GRN", subtitle: "Go to page", view: "grn", icon: "truck", terms: "goods receipt note receive" },
   { group: "Navigation", title: "Procurement › PO", subtitle: "Go to page", view: "po", icon: "file-pen-line", terms: "purchase order procurement" },
   { group: "Navigation", title: "Procurement › Vendors", subtitle: "Go to page", view: "vendors", icon: "building-2", terms: "suppliers vendor accounts" },
   { group: "Navigation", title: "Requests › Requisition Form", subtitle: "Go to page", view: "requisition", icon: "file-plus-2", terms: "request form submit items" },
@@ -7097,7 +8050,7 @@ const GLOBAL_SEARCH_ITEMS = [
   { group: "Navigation", title: "Requests", subtitle: "Go to page", view: "requests", icon: "list-checks", terms: "submitted approvals request list" },
   { group: "Navigation", title: "Approvals", subtitle: "Go to page", view: "approvals", icon: "shield-check", terms: "approve reject managers" },
   { group: "Navigation", title: "Audit Logs", subtitle: "Go to page", view: "audit", icon: "scroll-text", terms: "audit logs activity history actions users" },
-  { group: "Navigation", title: "Reports", subtitle: "Visible in sidebar", icon: "bar-chart-3", terms: "insights analytics report" },
+  { group: "Navigation", title: "Reports", subtitle: "Go to page", view: "reports", icon: "bar-chart-3", terms: "insights analytics report stock procurement request audit export" },
   { group: "Navigation", title: "Settings", subtitle: "Go to page", view: "settings", icon: "settings", terms: "admin users roles configuration" },
   { group: "Actions", title: "Add inventory item", subtitle: "Open Inventory", view: "inventory", icon: "plus", terms: "new add item inventory" },
   { group: "Actions", title: "Create requisition", subtitle: "Open Requisition Form", view: "requisition", icon: "send", terms: "new request submit requisition" },
@@ -7170,6 +8123,60 @@ document.getElementById("globalSearchOverlay")?.addEventListener("click", (event
   setView(item.dataset.searchView);
 });
 
+document.getElementById("reportsView")?.addEventListener("click", (event) => {
+  const category = event.target.closest("[data-report-category]");
+  if (category) {
+    activeReportCategory = category.dataset.reportCategory;
+    const first = availableReports().find(([, report]) => report.category === activeReportCategory);
+    if (first) activeReportKey = first[0];
+    reportRows = [];
+    reportSearchTerm = "";
+    loadActiveReport();
+    return;
+  }
+  const card = event.target.closest("[data-report-key]");
+  if (card) {
+    activeReportKey = card.dataset.reportKey;
+    reportRows = [];
+    reportSearchTerm = "";
+    loadActiveReport();
+    return;
+  }
+  if (event.target.closest("#applyReportFilters")) {
+    document.querySelectorAll("[data-report-filter]").forEach((field) => {
+      reportFilters[field.dataset.reportFilter] = field.value;
+    });
+    loadActiveReport();
+    return;
+  }
+  if (event.target.closest("#clearReportFilters")) {
+    Object.keys(reportFilters).forEach((key) => { reportFilters[key] = ""; });
+    loadActiveReport();
+    return;
+  }
+  if (event.target.closest("#reportPrevPage")) {
+    reportPage -= 1;
+    renderReports();
+    return;
+  }
+  if (event.target.closest("#reportNextPage")) {
+    reportPage += 1;
+    renderReports();
+    return;
+  }
+  if (event.target.closest("#exportReportCsv")) exportActiveReport("csv");
+  if (event.target.closest("#exportReportExcel")) exportActiveReport("xls");
+  if (event.target.closest("#printReport")) printActiveReport();
+});
+
+document.getElementById("reportsView")?.addEventListener("input", (event) => {
+  if (event.target.id === "reportSearchInput") {
+    reportSearchTerm = event.target.value;
+    reportPage = 1;
+    renderReports();
+  }
+});
+
 document.addEventListener("keydown", (event) => {
   const isShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k";
   if (isShortcut) {
@@ -7187,22 +8194,31 @@ document.addEventListener("keydown", (event) => {
 });
 
 async function initializePortal() {
-  applyTheme(localStorage.getItem(THEME_STORAGE_KEY));
-  const session = await requirePortalSession();
-  if (!session) return;
-  mountInventorySubsections();
-  mountProcurementSubsections();
-  mountRequestSubsections();
-  enhanceTemporalFilterPopovers();
-  enableDatalistRefocusOptions();
-  applyAdminVisibility();
-  setView(document.querySelector(".app-shell")?.getAttribute("data-active-view") || "dashboard");
-  addRequestLine();
-  addItemTypeLine();
-  addPoItemLine();
-  render();
-  await loadNotifications({ silent: true });
-  syncAuthState();
+  const shell = document.querySelector(".app-shell");
+  shell?.classList.add("is-booting");
+  showDashboardSkeleton();
+  try {
+    applyTheme(localStorage.getItem(THEME_STORAGE_KEY));
+    const session = await requirePortalSession();
+    if (!session) return;
+    mountInventorySubsections();
+    mountProcurementSubsections();
+    mountRequestSubsections();
+    enhanceTemporalFilterPopovers();
+    enableDatalistRefocusOptions();
+    applyAdminVisibility();
+    setView(shell?.getAttribute("data-active-view") || "dashboard");
+    addRequestLine();
+    addItemTypeLine();
+    addPoItemLine();
+    await loadNotifications({ silent: true });
+    await syncAuthState();
+    shell?.classList.remove("is-booting");
+  } catch (error) {
+    console.error("Portal initialization failed:", error);
+    showStartupError(error);
+    shell?.classList.remove("is-booting");
+  }
 }
 
 initializePortal();

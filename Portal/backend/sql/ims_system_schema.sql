@@ -154,7 +154,10 @@ CREATE TABLE IF NOT EXISTS vendors (
   contact VARCHAR(150) NULL,
   email VARCHAR(255) NULL,
   phone VARCHAR(80) NULL,
+  primary_phone VARCHAR(80) NULL,
+  secondary_phone VARCHAR(80) NULL,
   ntn VARCHAR(120) NULL,
+  stn VARCHAR(120) NULL,
   address TEXT NULL,
   bank_name VARCHAR(150) NULL,
   account_title VARCHAR(220) NULL,
@@ -252,6 +255,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   status ENUM('Draft', 'Pending Approval', 'Approved', 'Sent', 'Partially Received', 'Received', 'Cancelled', 'Closed') NOT NULL DEFAULT 'Draft',
   expected_date DATE NULL,
   delivery_location_id INT UNSIGNED NULL,
+  budget_line VARCHAR(180) NULL,
+  donor VARCHAR(180) NULL,
   subtotal_amount DECIMAL(14,4) NOT NULL DEFAULT 0,
   tax_amount DECIMAL(14,4) NOT NULL DEFAULT 0,
   total_amount DECIMAL(14,4) NOT NULL DEFAULT 0,
@@ -267,6 +272,8 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   KEY idx_purchase_orders_vendor_id (vendor_id),
   KEY idx_purchase_orders_status_date (status, issue_date),
   KEY idx_purchase_orders_location_id (delivery_location_id),
+  KEY idx_purchase_orders_budget_line (budget_line),
+  KEY idx_purchase_orders_donor (donor),
   CONSTRAINT fk_purchase_orders_vendor FOREIGN KEY (vendor_id) REFERENCES vendors (id) ON UPDATE CASCADE ON DELETE RESTRICT,
   CONSTRAINT fk_purchase_orders_location FOREIGN KEY (delivery_location_id) REFERENCES locations (id) ON UPDATE CASCADE ON DELETE SET NULL,
   CONSTRAINT fk_purchase_orders_created_by FOREIGN KEY (created_by) REFERENCES users (id) ON UPDATE CASCADE ON DELETE SET NULL,
@@ -304,6 +311,10 @@ CREATE TABLE IF NOT EXISTS grns (
   location_id INT UNSIGNED NOT NULL,
   status ENUM('Draft', 'Pending Inspection', 'Partially Accepted', 'Accepted', 'Rejected', 'Posted', 'Cancelled') NOT NULL DEFAULT 'Draft',
   notes_remarks TEXT NULL,
+  invoice_file_url VARCHAR(500) NULL,
+  invoice_file_name VARCHAR(255) NULL,
+  invoice_file_type VARCHAR(100) NULL,
+  invoice_uploaded_at DATETIME NULL,
   created_by INT UNSIGNED NULL,
   updated_by INT UNSIGNED NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -783,11 +794,16 @@ CALL sp_add_column_if_missing('vendors', 'deleted_at', 'deleted_at TIMESTAMP NUL
 CALL sp_add_column_if_missing('vendors', 'created_by', 'created_by INT UNSIGNED NULL');
 CALL sp_add_column_if_missing('vendors', 'updated_by', 'updated_by INT UNSIGNED NULL');
 CALL sp_add_column_if_missing('vendors', 'ntn', 'ntn VARCHAR(120) NULL AFTER phone');
+CALL sp_add_column_if_missing('vendors', 'primary_phone', 'primary_phone VARCHAR(80) NULL AFTER phone');
+CALL sp_add_column_if_missing('vendors', 'secondary_phone', 'secondary_phone VARCHAR(80) NULL AFTER primary_phone');
+CALL sp_add_column_if_missing('vendors', 'stn', 'stn VARCHAR(120) NULL AFTER ntn');
 CALL sp_add_column_if_missing('vendors', 'bank_name', 'bank_name VARCHAR(150) NULL');
 CALL sp_add_column_if_missing('vendors', 'account_title', 'account_title VARCHAR(220) NULL');
 CALL sp_add_column_if_missing('vendors', 'account_no', 'account_no VARCHAR(120) NULL');
 CALL sp_add_column_if_missing('purchase_orders', 'expected_date', 'expected_date DATE NULL');
 CALL sp_add_column_if_missing('purchase_orders', 'delivery_location_id', 'delivery_location_id INT UNSIGNED NULL');
+CALL sp_add_column_if_missing('purchase_orders', 'budget_line', 'budget_line VARCHAR(180) NULL');
+CALL sp_add_column_if_missing('purchase_orders', 'donor', 'donor VARCHAR(180) NULL');
 CALL sp_add_column_if_missing('purchase_orders', 'subtotal_amount', 'subtotal_amount DECIMAL(14,4) NOT NULL DEFAULT 0');
 CALL sp_add_column_if_missing('purchase_orders', 'tax_amount', 'tax_amount DECIMAL(14,4) NOT NULL DEFAULT 0');
 CALL sp_add_column_if_missing('purchase_orders', 'total_amount', 'total_amount DECIMAL(14,4) NOT NULL DEFAULT 0');
@@ -798,6 +814,10 @@ CALL sp_add_column_if_missing('purchase_orders', 'updated_by', 'updated_by INT U
 CALL sp_add_column_if_missing('grns', 'grn_number', 'grn_number VARCHAR(80) NULL');
 CALL sp_add_column_if_missing('grns', 'purchase_order_id', 'purchase_order_id INT UNSIGNED NULL');
 CALL sp_add_column_if_missing('grns', 'status', 'status VARCHAR(80) NOT NULL DEFAULT ''Draft''');
+CALL sp_add_column_if_missing('grns', 'invoice_file_url', 'invoice_file_url VARCHAR(500) NULL');
+CALL sp_add_column_if_missing('grns', 'invoice_file_name', 'invoice_file_name VARCHAR(255) NULL');
+CALL sp_add_column_if_missing('grns', 'invoice_file_type', 'invoice_file_type VARCHAR(100) NULL');
+CALL sp_add_column_if_missing('grns', 'invoice_uploaded_at', 'invoice_uploaded_at DATETIME NULL');
 CALL sp_add_column_if_missing('grns', 'created_by', 'created_by INT UNSIGNED NULL');
 CALL sp_add_column_if_missing('grns', 'updated_by', 'updated_by INT UNSIGNED NULL');
 CALL sp_add_column_if_missing('requests', 'request_number', 'request_number VARCHAR(80) NULL');
@@ -1072,7 +1092,7 @@ END$$
 DELIMITER ;
 
 INSERT INTO item_categories (name)
-VALUES ('RWHU'), ('Stationary'), ('Progressive')
+VALUES ('RWHU'), ('Stationary'), ('PROGRESSIVE')
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 INSERT INTO departments (id, code, name, is_active)
@@ -1081,7 +1101,7 @@ ON DUPLICATE KEY UPDATE code = VALUES(code), name = VALUES(name), is_active = VA
 
 INSERT INTO locations (code, name, is_active)
 VALUES
-  ('I9', 'I9 warehouse', 1),
+  ('I-9', 'I-9 warehouse', 1),
   ('SEC', 'Secretariat', 1),
   ('NSR', 'NSR CC', 1),
   ('RWP', 'RWP CC', 1)

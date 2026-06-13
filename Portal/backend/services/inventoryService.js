@@ -80,11 +80,14 @@ async function listStockMovements(filters = {}) {
   const [rows] = await pool.execute(
     `SELECT sm.id, sm.movement_number, sm.movement_type, sm.quantity, sm.unit_cost,
             sm.source_type, sm.source_id, sm.source_line_id, sm.notes_remarks, sm.created_at,
-            i.item_id, i.item_name, i.item_type, l.name AS location_name, u.full_name AS created_by_name
+            i.item_id, i.item_name, i.item_type, l.name AS location_name, u.full_name AS created_by_name,
+            r.request_number, ri.quantity_requested, ri.quantity_issued
      FROM stock_movements sm
      JOIN items i ON i.id = sm.item_id
      JOIN locations l ON l.id = sm.location_id
      LEFT JOIN users u ON u.id = sm.created_by
+     LEFT JOIN requests r ON sm.source_type = 'REQUEST' AND r.id = sm.source_id
+     LEFT JOIN request_items ri ON ri.id = sm.source_line_id
      ${whereSql}
      ORDER BY sm.created_at DESC, sm.id DESC
      LIMIT ? OFFSET ?`,

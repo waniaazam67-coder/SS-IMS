@@ -112,6 +112,115 @@ input:focus, select:focus {
     box-shadow: 0 0 0 4px rgba(108, 99, 255, 0.12);
 }
 
+/* Unified dropdown trigger design for every native select and searchable datalist field. */
+select,
+input[list],
+.item-row input[list],
+.cc-row input[list] {
+    min-height: 48px;
+    border: 1px solid #e4e7ef;
+    border-radius: 16px;
+    background-color: #fff;
+    color: #202124;
+    box-shadow: 0 12px 28px rgba(36, 48, 106, 0.06);
+    transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 42px;
+    background-image:
+        linear-gradient(45deg, transparent 50%, #202124 50%),
+        linear-gradient(135deg, #202124 50%, transparent 50%);
+    background-position:
+        calc(100% - 21px) 52%,
+        calc(100% - 15px) 52%;
+    background-size: 6px 6px, 6px 6px;
+    background-repeat: no-repeat;
+}
+
+select:focus,
+input[list]:focus,
+.item-row input[list]:focus,
+.cc-row input[list]:focus {
+    border-color: #6c63ff;
+    background-color: #fff;
+    box-shadow: 0 0 0 4px rgba(108, 99, 255, 0.14), 0 16px 34px rgba(36, 48, 106, 0.10);
+}
+
+select:hover,
+input[list]:hover,
+.item-row input[list]:hover,
+.cc-row input[list]:hover {
+    background-color: #f7f8fb;
+}
+
+.request-custom-dropdown-menu {
+    position: fixed;
+    z-index: 6000;
+    display: grid;
+    gap: 6px;
+    overflow-y: auto;
+    padding: 10px;
+    border-radius: 18px;
+    background: #fff;
+    color: #202124;
+    border: 1px solid rgba(36, 48, 106, 0.08);
+    box-shadow: 0 22px 55px rgba(36, 48, 106, 0.28);
+}
+
+.request-custom-dropdown-menu::before {
+    content: "";
+    position: absolute;
+    top: -8px;
+    left: 26px;
+    width: 16px;
+    height: 16px;
+    background: #fff;
+    transform: rotate(45deg);
+}
+
+.request-custom-dropdown-option {
+    position: relative;
+    z-index: 1;
+    min-height: 46px;
+    width: 100%;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: #202124;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 10px 14px;
+    font: inherit;
+    font-weight: 800;
+    text-align: left;
+}
+
+.request-custom-dropdown-option:hover,
+.request-custom-dropdown-option:focus-visible,
+.request-custom-dropdown-option.active {
+    background: #f3f4f6;
+    box-shadow: none;
+    transform: none;
+}
+
+.request-custom-dropdown-empty {
+    position: relative;
+    z-index: 1;
+    padding: 14px;
+    color: #65708d;
+    font-weight: 700;
+}
+
+.custom-dropdown-open {
+    border-color: #4169ff !important;
+    box-shadow: 0 0 0 4px rgba(65, 105, 255, 0.18), 0 16px 34px rgba(36, 48, 106, 0.10) !important;
+}
+
 /* Description */
 .form-description {
     font-size: 15px;
@@ -723,6 +832,163 @@ function populateDatalist(listId, values) {
     });
 }
 
+function disableNativeAutocomplete(scope = document) {
+    scope.querySelectorAll("input, textarea, select").forEach((field) => {
+        field.setAttribute("autocomplete", "off");
+        field.setAttribute("spellcheck", "false");
+        if (field instanceof HTMLInputElement && field.getAttribute("list")) {
+            field.dataset.nativeList = field.getAttribute("list");
+            field.removeAttribute("list");
+        }
+        if ((field.type === "search" || field.getAttribute("list")) && !field.getAttribute("name")) {
+            field.setAttribute("name", `${field.id || field.className || "request-field"}-no-browser-history`);
+        }
+    });
+}
+
+let requestCustomDropdownField = null;
+
+function escapeDropdownHtml(value) {
+    return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function isRequestCustomDropdownField(field) {
+    return field instanceof HTMLSelectElement
+        || field instanceof HTMLInputElement && Boolean(field.dataset.nativeList);
+}
+
+function requestCustomDropdownOptions(field) {
+    if (field instanceof HTMLSelectElement) {
+        return Array.from(field.options).map((option) => ({
+            value: option.value,
+            label: option.textContent || option.label || option.value,
+            disabled: option.disabled
+        }));
+    }
+    const list = document.getElementById(field.dataset.nativeList || "");
+    return Array.from(list?.options || []).map((option) => ({
+        value: option.value,
+        label: option.label || option.value,
+        disabled: false
+    }));
+}
+
+function closeRequestCustomDropdown() {
+    document.getElementById("requestCustomDropdown")?.remove();
+    requestCustomDropdownField?.classList.remove("custom-dropdown-open");
+    requestCustomDropdownField = null;
+}
+
+function positionRequestCustomDropdown(menu, field) {
+    const rect = field.getBoundingClientRect();
+    const gap = 8;
+    const maxHeight = Math.min(320, window.innerHeight - rect.bottom - gap - 12);
+    menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${rect.bottom + gap}px`;
+    menu.style.width = `${Math.max(rect.width, 220)}px`;
+    menu.style.maxHeight = `${Math.max(maxHeight, 160)}px`;
+}
+
+function renderRequestCustomDropdownOptions(menu, field) {
+    const query = field instanceof HTMLInputElement ? field.value.trim().toLowerCase() : "";
+    const options = requestCustomDropdownOptions(field).filter((option) => {
+        if (!query) return true;
+        return `${option.label} ${option.value}`.toLowerCase().includes(query);
+    });
+    menu.innerHTML = options.map((option) => `
+        <button class="request-custom-dropdown-option ${String(field.value) === String(option.value) ? "active" : ""}" type="button" data-request-dropdown-value="${escapeDropdownHtml(option.value)}" ${option.disabled ? "disabled" : ""}>
+            ${escapeDropdownHtml(option.label || option.value || "Option")}
+        </button>
+    `).join("") || `<div class="request-custom-dropdown-empty">No options</div>`;
+}
+
+function openRequestCustomDropdown(field) {
+    if (!isRequestCustomDropdownField(field)) return;
+    closeRequestCustomDropdown();
+    requestCustomDropdownField = field;
+    field.classList.add("custom-dropdown-open");
+    const menu = document.createElement("div");
+    menu.id = "requestCustomDropdown";
+    menu.className = "request-custom-dropdown-menu";
+    menu.setAttribute("role", "listbox");
+    document.body.appendChild(menu);
+    renderRequestCustomDropdownOptions(menu, field);
+    positionRequestCustomDropdown(menu, field);
+}
+
+function chooseRequestCustomDropdownOption(value) {
+    const field = requestCustomDropdownField;
+    if (!field) return;
+    field.value = value;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+    closeRequestCustomDropdown();
+}
+
+function handleRequestCustomDropdownPointer(event) {
+    const option = event.target.closest("[data-request-dropdown-value]");
+    if (option) {
+        event.preventDefault();
+        event.stopPropagation();
+        chooseRequestCustomDropdownOption(option.dataset.requestDropdownValue || "");
+        return;
+    }
+    const field = event.target.closest("select, input[data-native-list]");
+    if (!field || !isRequestCustomDropdownField(field)) {
+        if (!event.target.closest("#requestCustomDropdown")) closeRequestCustomDropdown();
+        return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    field.focus();
+    openRequestCustomDropdown(field);
+}
+
+document.addEventListener("pointerdown", handleRequestCustomDropdownPointer, true);
+document.addEventListener("mousedown", handleRequestCustomDropdownPointer, true);
+document.addEventListener("click", (event) => {
+    const field = event.target.closest("select, input[data-native-list]");
+    if (!field || !isRequestCustomDropdownField(field)) return;
+    event.preventDefault();
+    event.stopPropagation();
+}, true);
+
+document.addEventListener("focusin", (event) => {
+    const field = event.target;
+    if (!isRequestCustomDropdownField(field)) return;
+    openRequestCustomDropdown(field);
+});
+
+document.addEventListener("input", (event) => {
+    const field = event.target;
+    if (!isRequestCustomDropdownField(field) || field !== requestCustomDropdownField) return;
+    const menu = document.getElementById("requestCustomDropdown");
+    if (menu) renderRequestCustomDropdownOptions(menu, field);
+});
+
+document.addEventListener("keydown", (event) => {
+    if (!requestCustomDropdownField) return;
+    if (event.key === "Escape") closeRequestCustomDropdown();
+    if (event.key === "Enter") {
+        const first = document.querySelector("#requestCustomDropdown [data-request-dropdown-value]:not(:disabled)");
+        if (!first) return;
+        event.preventDefault();
+        chooseRequestCustomDropdownOption(first.dataset.requestDropdownValue || "");
+    }
+});
+
+window.addEventListener("resize", () => {
+    const menu = document.getElementById("requestCustomDropdown");
+    if (menu && requestCustomDropdownField) positionRequestCustomDropdown(menu, requestCustomDropdownField);
+});
+
+window.addEventListener("scroll", closeRequestCustomDropdown, true);
+
 function getKnownEmailOptions() {
     const storedEmails = JSON.parse(localStorage.getItem("requestFormKnownEmails") || "[]");
     const userData = getPortalUser();
@@ -815,6 +1081,7 @@ function prepareSearchableRow(row) {
     }
 
     row.dataset.searchReady = "true";
+    disableNativeAutocomplete(row);
 }
 
 function addCcRow(value = "") {
@@ -829,6 +1096,7 @@ function addCcRow(value = "") {
     input.value = value;
     initializeSearchableInput(input, "cc-email-options", getKnownEmailOptions(), "Enter CC email");
     container.appendChild(clone);
+    disableNativeAutocomplete(row);
 }
 
 function removeCcRow(button) {
@@ -2361,6 +2629,10 @@ function hideSubmitStatus() {
         statusPill.classList.remove("is-visible");
     }
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+    disableNativeAutocomplete();
+});
 </script>
 <script type="module">
   const currentUser = JSON.parse(sessionStorage.getItem("loggedInUser") || "{}");

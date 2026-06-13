@@ -1,5 +1,11 @@
 const express = require("express");
+const crypto = require("crypto");
+const fs = require("fs/promises");
+const path = require("path");
+const multer = require("multer");
 const imsService = require("../services/imsService");
+const authService = require("../services/authService");
+const notificationStream = require("../services/notificationStreamService");
 const { PERMISSIONS } = require("../config/permissions");
 const { requireAuth, requirePermission } = require("../middleware/authMiddleware");
 const { adminWriteLimiter, writeLimiter } = require("../middleware/rateLimitMiddleware");
@@ -7,6 +13,39 @@ const { ok } = require("../utils/apiResponse");
 const v = require("../utils/validation");
 
 const router = express.Router();
+const GRN_INVOICE_UPLOAD_DIR = path.resolve(__dirname, "../../uploads/grn-invoices");
+const GRN_INVOICE_PUBLIC_BASE = "/uploads/grn-invoices";
+const GRN_INVOICE_MAX_BYTES = 5 * 1024 * 1024;
+const GRN_INVOICE_ALLOWED_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp", ".pdf"]);
+const GRN_INVOICE_ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf"]);
+const grnInvoiceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: GRN_INVOICE_MAX_BYTES },
+  fileFilter(req, file, cb) {
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    if (!GRN_INVOICE_ALLOWED_EXTENSIONS.has(ext) || !GRN_INVOICE_ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      const error = new Error("Invoice file must be a JPG, PNG, WEBP, or PDF under 5MB.");
+      error.statusCode = 400;
+      return cb(error);
+    }
+    return cb(null, true);
+  }
+});
+
+router.get("/notifications/stream", async (req, res, next) => {
+  try {
+    const token = String(req.query.token || "").trim();
+    const auth = await authService.resolveAuthContextFromToken(token);
+    if (!auth) {
+      const error = new Error("Authentication required.");
+      error.statusCode = 401;
+      throw error;
+    }
+    notificationStream.registerNotificationStream(auth, req, res);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.use(requireAuth);
 
@@ -20,6 +59,14 @@ router.get("/notifications", v.validateQuery(notificationQuery), async (req, res
 
 router.get("/audit", requirePermission(PERMISSIONS.VIEW_AUDIT), async (req, res, next) => {
   try { ok(res, { auditLogs: await imsService.listAuditLogs() }); } catch (error) { next(error); }
+});
+
+router.get("/reports/:reportKey", requirePermission(PERMISSIONS.VIEW_INVENTORY), async (req, res, next) => {
+  try { ok(res, await imsService.getReport(req.params.reportKey, req.query, req.auth)); } catch (error) { next(error); }
+});
+
+router.get("/dashboard/summary", requirePermission(PERMISSIONS.VIEW_INVENTORY), async (req, res, next) => {
+  try { ok(res, { summary: await imsService.getDashboardSummary(req.query, req.auth) }); } catch (error) { next(error); }
 });
 
 router.patch("/notifications/read-all", writeLimiter, async (req, res, next) => {
@@ -46,12 +93,24 @@ router.get("/categories", requirePermission(PERMISSIONS.VIEW_INVENTORY), async (
   try { ok(res, { categories: await imsService.listCategories() }); } catch (error) { next(error); }
 });
 
+router.get("/locations", requirePermission(PERMISSIONS.VIEW_INVENTORY), async (req, res, next) => {
+  try { ok(res, { locations: await imsService.listLocations() }); } catch (error) { next(error); }
+});
+
 router.post("/items", adminWriteLimiter, requirePermission(PERMISSIONS.MANAGE_INVENTORY), v.validateBody(itemsSchema), async (req, res, next) => {
   try { ok(res, { items: await imsService.createItems(req.body, req.auth.user.id) }, 201); } catch (error) { next(error); }
 });
 
 router.post("/categories", adminWriteLimiter, requirePermission(PERMISSIONS.MANAGE_INVENTORY), v.validateBody(categorySchema), async (req, res, next) => {
   try { ok(res, { category: await imsService.createCategory(req.body, req.auth.user.id) }, 201); } catch (error) { next(error); }
+});
+
+router.post("/locations", adminWriteLimiter, requirePermission(PERMISSIONS.MANAGE_INVENTORY), v.validateBody(locationSchema), async (req, res, next) => {
+  try { ok(res, { location: await imsService.createLocation(req.body, req.auth.user.id) }, 201); } catch (error) { next(error); }
+});
+
+router.delete("/categories/:categoryId", adminWriteLimiter, requirePermission(PERMISSIONS.MANAGE_INVENTORY), v.validateParams(idParam("categoryId")), async (req, res, next) => {
+  try { ok(res, { category: await imsService.deleteCategory(req.params.categoryId, req.auth.user.id) }); } catch (error) { next(error); }
 });
 
 router.delete("/items/:itemCode", adminWriteLimiter, requirePermission(PERMISSIONS.MANAGE_INVENTORY), v.validateParams(itemCodeParam), async (req, res, next) => {
@@ -134,6 +193,36 @@ router.post("/grn", writeLimiter, requirePermission(PERMISSIONS.MANAGE_GRNS), v.
   try { ok(res, await imsService.createGrn(req.body, req.auth.user.id), 201); } catch (error) { next(error); }
 });
 
+router.post("/grns/:grnNumber/invoice", writeLimiter, requirePermission(PERMISSIONS.MANAGE_GRNS), v.validateParams(grnNumberParam), grnInvoiceUpload.single("invoiceFile"), async (req, res, next) => {
+  let savedPath = "";
+  try {
+    if (!req.file) {
+      const error = new Error("Choose an invoice file to upload.");
+      error.statusCode = 400;
+      throw error;
+    }
+    const ext = path.extname(req.file.originalname || "").toLowerCase();
+    if (!GRN_INVOICE_ALLOWED_EXTENSIONS.has(ext) || !GRN_INVOICE_ALLOWED_MIME_TYPES.has(req.file.mimetype)) {
+      const error = new Error("Invoice file must be a JPG, PNG, WEBP, or PDF under 5MB.");
+      error.statusCode = 400;
+      throw error;
+    }
+    await fs.mkdir(GRN_INVOICE_UPLOAD_DIR, { recursive: true });
+    const safeName = `${req.params.grnNumber}-${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
+    savedPath = path.join(GRN_INVOICE_UPLOAD_DIR, safeName);
+    await fs.writeFile(savedPath, req.file.buffer, { flag: "wx" });
+    const invoice = await imsService.attachGrnInvoice(req.params.grnNumber, {
+      url: `${GRN_INVOICE_PUBLIC_BASE}/${safeName}`,
+      originalName: path.basename(req.file.originalname || `invoice${ext}`).slice(0, 255),
+      mimeType: req.file.mimetype
+    }, req.auth.user.id);
+    ok(res, { invoice }, 201);
+  } catch (error) {
+    if (savedPath) await fs.unlink(savedPath).catch(() => {});
+    next(error);
+  }
+});
+
 module.exports = router;
 
 function notificationQuery(input) {
@@ -157,6 +246,10 @@ function requestItemParams(input) {
 
 function poNumberParam(input) {
   return { poNumber: v.code(input.poNumber, "poNumber", { required: true, max: 40 }) };
+}
+
+function grnNumberParam(input) {
+  return { grnNumber: v.code(input.grnNumber, "grnNumber", { required: true, max: 80 }) };
 }
 
 function stockMovementSchema(input) {
@@ -191,6 +284,13 @@ function categorySchema(input) {
   return { name: v.requiredText(input.name, "name", 120) };
 }
 
+function locationSchema(input) {
+  return {
+    name: v.requiredText(input.name, "name", 120),
+    code: input.code ? v.code(input.code, "code", { max: 40 }) : ""
+  };
+}
+
 function syncImportSchema(input) {
   const locations = Array.isArray(input.locations) ? input.locations.map((location, index) => v.requiredText(location, `locations[${index}]`, 120)) : [];
   const items = v.array(input.items, "items", { min: 1, max: 5000 }).map((row, index) => ({
@@ -208,10 +308,13 @@ function vendorSchema(input) {
   return {
     name: v.requiredText(input.name, "name", 180),
     phone: v.optionalText(input.phone, "phone", 40),
+    primaryPhone: v.optionalText(input.primaryPhone || input.primary_phone || input.phone, "primaryPhone", 40),
+    secondaryPhone: v.optionalText(input.secondaryPhone || input.secondary_phone, "secondaryPhone", 40),
     contact: v.optionalText(input.contact, "contact", 120),
     email: input.email ? v.email(input.email, "email") : "",
     address: v.optionalText(input.address, "address", 500),
     ntn: v.optionalText(input.ntn, "ntn", 120),
+    stn: v.optionalText(input.stn, "stn", 120),
     bankName: v.optionalText(input.bankName || input.bank_name, "bankName", 180),
     accountTitle: v.optionalText(input.accountTitle || input.account_title, "accountTitle", 180),
     accountNo: v.optionalText(input.accountNo || input.account_no, "accountNo", 120)
@@ -310,6 +413,8 @@ function purchaseOrderSchema(input) {
     category: v.optionalText(input.category, "category", 120),
     status: input.status ? v.oneOf(input.status, "status", ["Open", "Ordered", "Closed", "Draft", "Pending Approval", "Approved", "Sent", "Partially Received", "Received", "Cancelled"], { required: true }) : "",
     taxRate: v.nonNegativeNumber(input.taxRate || 0, "taxRate", { max: 100 }),
+    budgetLine: v.optionalText(input.budgetLine, "budgetLine", 180),
+    donor: v.optionalText(input.donor, "donor", 180),
     notesRemarks: v.optionalText(input.notesRemarks, "notesRemarks", 1000),
     items
   };
@@ -321,7 +426,9 @@ function cancelPoSchema(input) {
 
 function grnSchema(input) {
   const qtyReceived = v.positiveNumber(input.qtyReceived, "qtyReceived", { max: 1000000 });
-  const qtyAccepted = v.nonNegativeNumber(input.qtyAccepted, "qtyAccepted", { max: 1000000 });
+  const qtyAccepted = input.qtyAccepted === undefined || input.qtyAccepted === null || input.qtyAccepted === ""
+    ? qtyReceived
+    : v.nonNegativeNumber(input.qtyAccepted, "qtyAccepted", { max: 1000000 });
   if (qtyAccepted > qtyReceived) v.badRequest("qtyAccepted cannot exceed qtyReceived.");
   return {
     itemCode: v.code(input.itemCode, "itemCode", { required: true }),

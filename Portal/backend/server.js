@@ -9,6 +9,8 @@ const chatRoutes = require("./routes/chatRoutes");
 const { errorHandler, notFoundHandler } = require("./middleware/errorMiddleware");
 const { corsMiddleware } = require("./middleware/corsMiddleware");
 const { generalApiLimiter } = require("./middleware/rateLimitMiddleware");
+const { requireAuth, requirePermission } = require("./middleware/authMiddleware");
+const { PERMISSIONS } = require("./config/permissions");
 const { initializeDatabase, testDatabaseConnection } = require("./config/database");
 const { assertFirebaseAdminReady } = require("./services/authService");
 
@@ -16,6 +18,7 @@ const app = express();
 const PORT = config.port;
 const frontendPath = path.resolve(__dirname, "../frontend");
 const requisitionFormPath = path.resolve(__dirname, "../../Requisition-From");
+const grnInvoiceUploadsPath = path.resolve(__dirname, "../uploads/grn-invoices");
 
 // Hostinger sits in front of Node as a reverse proxy. Trust exactly one proxy hop so Express derives req.ip
 // from the proxy-provided client IP, without blindly trusting arbitrary client-supplied forwarding chains.
@@ -28,6 +31,14 @@ app.use(express.static(frontendPath, {
     if (filePath.endsWith(".html") || filePath.endsWith(".css") || filePath.endsWith(".js")) {
       res.setHeader("Cache-Control", "no-store");
     }
+  }
+}));
+app.use("/uploads/grn-invoices", requireAuth, requirePermission(PERMISSIONS.MANAGE_GRNS), express.static(grnInvoiceUploadsPath, {
+  fallthrough: false,
+  setHeaders(res) {
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Disposition", "inline");
   }
 }));
 app.get("/requisition-form", (req, res, next) => {
@@ -121,7 +132,8 @@ function securityHeaders(req, res, next) {
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'self'",
-    "img-src 'self' data:",
+    "img-src 'self' data: blob:",
+    "media-src 'self' blob:",
     "font-src 'self' https://fonts.gstatic.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     // TODO: Remove 'unsafe-inline' after generated dashboard HTML no longer emits inline onclick handlers.

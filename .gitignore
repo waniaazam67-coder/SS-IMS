@@ -8,6 +8,8 @@ node_modules/
 .dbg/
 .DS_Store 
 *.log
+uploads/
+Portal/uploads/
 Portal/backend/firebase-service-account.json
 **/firebase-service-account.json
 **/*service-account*.json

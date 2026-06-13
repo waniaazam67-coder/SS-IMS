@@ -14,7 +14,7 @@ ON DUPLICATE KEY UPDATE
 
 INSERT INTO locations (code, name, is_active)
 VALUES
-  ('I9', 'I9 warehouse', 1),
+  ('I-9', 'I-9 warehouse', 1),
   ('SEC', 'Secretariat', 1),
   ('NSR', 'NSR CC', 1),
   ('RWP', 'RWP CC', 1)
@@ -27,7 +27,7 @@ INSERT INTO item_categories (name, is_active)
 VALUES
   ('Stationary', 1),
   ('RWHU', 1),
-  ('Progressive', 1),
+  ('PROGRESSIVE', 1),
   ('General', 1)
 ON DUPLICATE KEY UPDATE
   is_active = VALUES(is_active),

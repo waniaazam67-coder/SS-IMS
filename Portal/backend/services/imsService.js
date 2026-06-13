@@ -1,6 +1,7 @@
 const { pool } = require("../config/database");
+const notificationStream = require("./notificationStreamService");
 
-const APPROVED_LOCATIONS = ["I9 warehouse", "Secretariat", "NSR CC", "RWP CC"];
+const APPROVED_LOCATIONS = ["I-9 warehouse", "Secretariat", "NSR CC", "RWP CC"];
 const APPROVED_LOCATION_KEYS = new Set(APPROVED_LOCATIONS.map((location) => location.toLowerCase().replace(/[^a-z0-9]/g, "")));
 const NAMED_TABLES = new Set(["departments", "locations", "item_categories"]);
 const NUMBER_TABLES = new Set(["requests", "transport_requests", "purchase_orders", "grns", "stock_movements"]);
@@ -39,7 +40,7 @@ async function createNotification(connection, input = {}) {
   const title = String(input.title || "").trim();
   if (!title) return;
   const metadata = input.metadata ? JSON.stringify(input.metadata) : null;
-  await connection.execute(
+  const [result] = await connection.execute(
     `INSERT INTO notifications
       (notification_key, recipient_user_id, recipient_email, channel, title, body, entity_type, entity_id, status, priority, sent_at, metadata, created_by)
      VALUES (?, ?, ?, 'in_app', ?, ?, ?, ?, 'sent', ?, CURRENT_TIMESTAMP, ?, ?)`,
@@ -56,6 +57,7 @@ async function createNotification(connection, input = {}) {
       input.createdBy || null
     ]
   );
+  if (result.insertId) notificationStream.publishNotification(result.insertId);
 }
 
 async function userByEmail(connection, email) {
@@ -174,6 +176,227 @@ async function markAllNotificationsRead(auth) {
     visibility.params
   );
   return { updated: result.affectedRows };
+}
+
+function parseDashboardDateRange(query = {}) {
+  const startInput = String(query.startDate || "").trim();
+  const endInput = String(query.endDate || "").trim();
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (!startInput && !endInput) return null;
+  if (!startInput && endInput) throwBadRequest("startDate is required when endDate is provided.");
+  if (!datePattern.test(startInput)) throwBadRequest("startDate must use YYYY-MM-DD format.");
+  if (endInput && !datePattern.test(endInput)) throwBadRequest("endDate must use YYYY-MM-DD format.");
+  const startDate = new Date(`${startInput}T00:00:00Z`);
+  const endDateValue = endInput || startInput;
+  const endDate = new Date(`${endDateValue}T00:00:00Z`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) throwBadRequest("Invalid dashboard date range.");
+  if (startDate > endDate) throwBadRequest("startDate cannot be after endDate.");
+  return {
+    startDate: startInput,
+    endDate: endDateValue,
+    startDateTime: `${startInput} 00:00:00`,
+    endDateTime: `${endDateValue} 23:59:59`
+  };
+}
+
+function dateRangeWhere(column, range) {
+  if (!range) return { sql: "1 = 1", params: [] };
+  return { sql: `${column} BETWEEN ? AND ?`, params: [range.startDateTime, range.endDateTime] };
+}
+
+async function countRows(sql, params = []) {
+  const [rows] = await pool.execute(sql, params);
+  return Number(rows[0]?.value || 0);
+}
+
+async function softDeleteWhere(table, alias) {
+  return await tableColumnExists(pool, table, "deleted_at") ? `${alias}.deleted_at IS NULL` : "1 = 1";
+}
+
+async function firstExistingColumn(table, candidates) {
+  for (const column of candidates) {
+    if (await tableColumnExists(pool, table, column)) return column;
+  }
+  return null;
+}
+
+async function getDashboardSummary(query = {}, authContext = {}) {
+  const range = parseDashboardDateRange(query);
+  const requestVisibilityFilter = requestVisibility(authContext);
+  const requestDateColumn = await firstExistingColumn("requests", ["request_date", "created_at", "updated_at"]);
+  const transportDateColumn = await firstExistingColumn("transport_requests", ["request_date", "created_at", "updated_at"]);
+  const poDateColumn = await firstExistingColumn("purchase_orders", ["created_at", "issue_date", "updated_at"]);
+  const grnDateColumn = await firstExistingColumn("grns", ["created_at", "grn_date", "updated_at"]);
+  const stockMovementDateColumn = await firstExistingColumn("stock_movements", ["created_at", "updated_at"]);
+  const requestDate = requestDateColumn ? dateRangeWhere(`r.${requestDateColumn}`, range) : dateRangeWhere("NULL", null);
+  const transportDate = transportDateColumn ? dateRangeWhere(`tr.${transportDateColumn}`, range) : dateRangeWhere("NULL", null);
+  const poDate = poDateColumn ? dateRangeWhere(`po.${poDateColumn}`, range) : dateRangeWhere("NULL", null);
+  const grnDate = grnDateColumn ? dateRangeWhere(`g.${grnDateColumn}`, range) : dateRangeWhere("NULL", null);
+  const issueMovementDate = stockMovementDateColumn ? dateRangeWhere(`sm.${stockMovementDateColumn}`, range) : dateRangeWhere("NULL", null);
+  const receiveMovementDate = stockMovementDateColumn ? dateRangeWhere(`sm.${stockMovementDateColumn}`, range) : dateRangeWhere("NULL", null);
+  const approvedAtAvailable = await tableColumnExists(pool, "request_items", "approved_at");
+  const requestActive = await softDeleteWhere("requests", "r");
+  const transportActive = await softDeleteWhere("transport_requests", "tr");
+  const poActive = await softDeleteWhere("purchase_orders", "po");
+  const vendorActive = await softDeleteWhere("vendors", "v");
+  const grnActive = await softDeleteWhere("grns", "g");
+  const itemActive = await softDeleteWhere("items", "i");
+  const categoryActive = await softDeleteWhere("item_categories", "c");
+  const approvedDateSql = approvedAtAvailable
+    ? range
+      ? "ri.approved_at IS NOT NULL AND ri.approved_at BETWEEN ? AND ?"
+      : "ri.approved_at IS NOT NULL"
+    : requestDate.sql;
+  const approvedDateParams = approvedAtAvailable && range
+    ? [range.startDateTime, range.endDateTime]
+    : requestDate.params;
+
+  const [
+    requests,
+    transportRequests,
+    pendingApprovals,
+    approvedRequests,
+    openPOs,
+    orderedPOs,
+    activeVendors,
+    totalGRNs,
+    inventoryItems,
+    itemCategories,
+    lowStock,
+    outOfStock,
+    purchaseOrders,
+    stockIssues,
+    stockIn,
+    totalProcurementValue
+  ] = await Promise.all([
+    countRows(
+      `SELECT COUNT(DISTINCT r.id) AS value
+         FROM requests r
+        WHERE ${requestActive} AND ${requestDate.sql} ${requestVisibilityFilter.whereSql}`,
+      [...requestDate.params, ...requestVisibilityFilter.params]
+    ),
+    countRows(
+      `SELECT COUNT(DISTINCT tr.id) AS value
+        FROM transport_requests tr
+        WHERE ${transportActive} AND ${transportDate.sql}`,
+      transportDate.params
+    ),
+    countRows(
+      `SELECT COUNT(DISTINCT r.id) AS value
+         FROM requests r
+         JOIN request_items ri ON ri.request_id = r.id
+        WHERE ${requestActive}
+          AND ri.line_status = 'Pending Approval'
+          AND ${requestDate.sql} ${requestVisibilityFilter.whereSql}`,
+      [...requestDate.params, ...requestVisibilityFilter.params]
+    ),
+    countRows(
+      `SELECT COUNT(DISTINCT r.id) AS value
+         FROM requests r
+         JOIN request_items ri ON ri.request_id = r.id
+        WHERE ${requestActive}
+          AND ri.line_status IN ('Approved', 'Partially Issued', 'Issued')
+          AND ${approvedDateSql} ${requestVisibilityFilter.whereSql}`,
+      [...approvedDateParams, ...requestVisibilityFilter.params]
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM purchase_orders po
+        WHERE ${poActive} AND LOWER(po.status) = 'open' AND ${poDate.sql}`,
+      poDate.params
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM purchase_orders po
+        WHERE ${poActive} AND LOWER(po.status) IN ('ordered', 'pending') AND ${poDate.sql}`,
+      poDate.params
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM vendors v
+        WHERE COALESCE(v.is_active, 1) = 1 AND ${vendorActive}`
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM grns g
+        WHERE ${grnActive} AND ${grnDate.sql}`,
+      grnDate.params
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM items i
+        WHERE ${itemActive}`
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM item_categories c
+        WHERE ${categoryActive}`
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM v_inventory_stock s
+        WHERE s.stock_status = 'Low stock'`
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM v_inventory_stock s
+        WHERE s.stock_status = 'Out of stock'`
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM purchase_orders po
+        WHERE ${poActive} AND ${poDate.sql}`,
+      poDate.params
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM stock_movements sm
+        WHERE sm.movement_type IN ('REQUEST_ISSUE', 'MANUAL_OUT', 'TRANSFER_OUT', 'ADJUSTMENT_OUT')
+          AND ${issueMovementDate.sql}`,
+      issueMovementDate.params
+    ),
+    countRows(
+      `SELECT COUNT(*) AS value
+         FROM stock_movements sm
+        WHERE sm.movement_type IN ('OPENING', 'GRN_IN', 'MANUAL_IN', 'TRANSFER_IN', 'ADJUSTMENT_IN')
+          AND ${receiveMovementDate.sql}`,
+      receiveMovementDate.params
+    ),
+    countRows(
+      `SELECT COALESCE(SUM(po.total_amount), 0) AS value
+         FROM purchase_orders po
+        WHERE ${poActive} AND ${poDate.sql}`,
+      poDate.params
+    )
+  ]);
+
+  return {
+    range: range ? { startDate: range.startDate, endDate: range.endDate } : null,
+    metrics: {
+      requests,
+      transportRequests,
+      pendingApprovals,
+      approvedRequests,
+      lowStock,
+      outOfStock,
+      openPOs,
+      orderedPOs,
+      activeVendors,
+      totalGRNs,
+      inventoryItems,
+      itemCategories,
+      purchaseOrders,
+      stockIssues,
+      stockIn,
+      totalProcurementValue
+    },
+    notes: {
+      approvedRequests: approvedAtAvailable ? "Filtered by request item approved_at." : "Filtered by request creation date because request_items.approved_at is not available.",
+      lowStock: "Current inventory snapshot; historical stock snapshots are not available.",
+      outOfStock: "Current inventory snapshot; historical stock snapshots are not available.",
+      activeVendors: "Current vendor snapshot."
+    }
+  };
 }
 
 function notificationType(row = {}) {
@@ -320,6 +543,7 @@ async function listCategories() {
      FROM item_categories c
      LEFT JOIN items i ON i.category_id = c.id AND i.deleted_at IS NULL
      LEFT JOIN inventory_balances ib ON ib.item_id = i.id
+     WHERE c.deleted_at IS NULL AND c.is_active = 1
      GROUP BY c.id, c.name
      ORDER BY c.name ASC`
   );
@@ -332,20 +556,130 @@ async function listCategories() {
   }));
 }
 
+async function listLocations() {
+  const [rows] = await pool.execute(
+    `SELECT l.id, l.code, l.name,
+            COUNT(DISTINCT ib.item_id) AS itemRows,
+            COALESCE(SUM(ib.quantity_on_hand), 0) AS totalStock,
+            SUM(
+              CASE
+                WHEN COALESCE(ib.quantity_available, ib.quantity_on_hand, 0) <= 0 THEN 1
+                WHEN COALESCE(ib.quantity_available, ib.quantity_on_hand, 0) < 10 THEN 1
+                ELSE 0
+              END
+            ) AS lowOrOutStock
+       FROM locations l
+       LEFT JOIN inventory_balances ib ON ib.location_id = l.id
+      WHERE l.deleted_at IS NULL AND l.is_active = 1
+      GROUP BY l.id, l.code, l.name
+      ORDER BY l.name ASC`
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    code: row.code || "",
+    name: row.name,
+    itemRows: Number(row.itemRows || 0),
+    totalStock: Number(row.totalStock || 0),
+    lowOrOutStock: Number(row.lowOrOutStock || 0)
+  }));
+}
+
 async function createCategory(input, userId) {
-  const name = required(input?.name, "Category name");
+  const requestedName = required(input?.name, "Category name");
+  const name = requestedName.toLowerCase() === "progressive" ? "PROGRESSIVE" : requestedName;
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
     const [result] = await connection.execute(
-      `INSERT INTO item_categories (name, created_by, updated_by)
-       VALUES (?, ?, ?)
-       ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), updated_by = VALUES(updated_by)`,
+      `INSERT INTO item_categories (name, is_active, deleted_at, created_by, updated_by)
+       VALUES (?, 1, NULL, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         id = LAST_INSERT_ID(id),
+         is_active = 1,
+         deleted_at = NULL,
+         updated_by = VALUES(updated_by)`,
       [name, userId || null, userId || null]
     );
     await audit("item_categories", result.insertId, "INSERT", userId, { name }, connection);
     await connection.commit();
     return { id: result.insertId, name };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function createLocation(input, userId) {
+  const name = required(input?.name, "Warehouse name");
+  let code = String(input?.code || name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 32) || name.slice(0, 32)).toUpperCase();
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    if (!input?.code) {
+      const baseCode = code || "WAREHOUSE";
+      let suffix = 1;
+      while (true) {
+        const [rows] = await connection.execute(
+          "SELECT id, name FROM locations WHERE code = ? AND LOWER(name) <> LOWER(?) LIMIT 1",
+          [code, name]
+        );
+        if (!rows.length) break;
+        suffix += 1;
+        code = `${baseCode.slice(0, 35)}-${suffix}`;
+      }
+    }
+    const [result] = await connection.execute(
+      `INSERT INTO locations (code, name, is_active, deleted_at, created_by, updated_by)
+       VALUES (?, ?, 1, NULL, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         id = LAST_INSERT_ID(id),
+         name = VALUES(name),
+         is_active = 1,
+         deleted_at = NULL,
+         updated_by = VALUES(updated_by)`,
+      [code, name, userId || null, userId || null]
+    );
+    await audit("locations", result.insertId, "INSERT", userId, { name, code }, connection);
+    await connection.commit();
+    return { id: result.insertId, name, code };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function deleteCategory(id, userId) {
+  const categoryId = positive(id, "Category");
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    const [categoryRows] = await connection.execute(
+      "SELECT id, name FROM item_categories WHERE id = ? AND deleted_at IS NULL LIMIT 1",
+      [categoryId]
+    );
+    const category = categoryRows[0];
+    if (!category) throwBadRequest("Category not found.");
+    const [itemRows] = await connection.execute(
+      "SELECT COUNT(*) AS count FROM items WHERE category_id = ? AND deleted_at IS NULL",
+      [categoryId]
+    );
+    const itemCount = Number(itemRows[0]?.count || 0);
+    if (itemCount > 0) {
+      throwBadRequest(`Cannot delete ${category.name}; it is linked to ${itemCount} active item${itemCount === 1 ? "" : "s"}.`);
+    }
+    await connection.execute(
+      `UPDATE item_categories
+          SET is_active = 0, deleted_at = CURRENT_TIMESTAMP, updated_by = ?
+        WHERE id = ?`,
+      [userId || null, categoryId]
+    );
+    await audit("item_categories", categoryId, "SOFT_DELETE", userId, { name: category.name }, connection);
+    await connection.commit();
+    return { id: categoryId, name: category.name, deleted: true };
   } catch (error) {
     await connection.rollback();
     throw error;
@@ -378,11 +712,15 @@ async function deleteItem(itemCode, userId) {
 }
 
 async function listVendors() {
-  await ensureVendorNtnColumn(pool);
+  const columns = await ensureVendorColumns(pool);
   const [rows] = await pool.execute(
-    `SELECT id, CONCAT('VEN-', LPAD(id, 3, '0')) AS vendorId, name, phone, contact, email, address,
+    `SELECT id, CONCAT('VEN-', LPAD(id, 3, '0')) AS vendorId, name, phone,
+            ${columns.primaryPhone ? "primary_phone" : "phone"} AS primaryPhone,
+            ${columns.secondaryPhone ? "secondary_phone" : "NULL"} AS secondaryPhone,
+            contact, email, address,
             bank_name AS bankName, account_title AS accountTitle, account_no AS accountNo,
             COALESCE(ntn, '') AS ntn,
+            ${columns.stn ? "COALESCE(stn, '')" : "''"} AS stn,
             COALESCE(notes_remarks, '') AS notesRemarks
      FROM vendors
      WHERE deleted_at IS NULL
@@ -396,22 +734,41 @@ async function listVendors() {
 
 async function createVendor(input, userId) {
   const vendor = vendorPayload(input);
-  await ensureVendorNtnColumn(pool);
+  const columns = await ensureVendorColumns(pool);
+  const vendorColumns = [
+    "name",
+    "phone",
+    ...(columns.primaryPhone ? ["primary_phone"] : []),
+    ...(columns.secondaryPhone ? ["secondary_phone"] : []),
+    "contact",
+    "address",
+    "bank_name",
+    "account_title",
+    "account_no",
+    "ntn",
+    ...(columns.stn ? ["stn"] : []),
+    "created_by",
+    "updated_by"
+  ];
+  const vendorValues = [
+    required(vendor.name, "Vendor name"),
+    vendor.phone || null,
+    ...(columns.primaryPhone ? [vendor.primaryPhone || null] : []),
+    ...(columns.secondaryPhone ? [vendor.secondaryPhone || null] : []),
+    vendor.contact || null,
+    vendor.address || null,
+    vendor.bankName || null,
+    vendor.accountTitle || null,
+    vendor.accountNo || null,
+    vendor.ntn || null,
+    ...(columns.stn ? [vendor.stn || null] : []),
+    userId,
+    userId
+  ];
   const [result] = await pool.execute(
-    `INSERT INTO vendors (name, phone, contact, address, bank_name, account_title, account_no, ntn, created_by, updated_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      required(vendor.name, "Vendor name"),
-      vendor.phone || null,
-      vendor.contact || null,
-      vendor.address || null,
-      vendor.bankName || null,
-      vendor.accountTitle || null,
-      vendor.accountNo || null,
-      vendor.ntn || null,
-      userId,
-      userId
-    ]
+    `INSERT INTO vendors (${vendorColumns.join(", ")})
+     VALUES (${vendorColumns.map(() => "?").join(", ")})`,
+    vendorValues
   );
   await audit("vendors", result.insertId, "INSERT", userId, vendor);
   return { id: result.insertId, vendorId: `VEN-${String(result.insertId).padStart(3, "0")}`, ...vendor };
@@ -419,23 +776,41 @@ async function createVendor(input, userId) {
 
 async function updateVendor(vendorId, input, userId) {
   const vendor = vendorPayload(input);
-  await ensureVendorNtnColumn(pool);
+  const columns = await ensureVendorColumns(pool);
+  const updateColumns = [
+    "name = ?",
+    "phone = ?",
+    ...(columns.primaryPhone ? ["primary_phone = ?"] : []),
+    ...(columns.secondaryPhone ? ["secondary_phone = ?"] : []),
+    "contact = ?",
+    "address = ?",
+    "bank_name = ?",
+    "account_title = ?",
+    "account_no = ?",
+    "ntn = ?",
+    ...(columns.stn ? ["stn = ?"] : []),
+    "updated_by = ?"
+  ];
+  const updateValues = [
+    required(vendor.name, "Vendor name"),
+    vendor.phone || null,
+    ...(columns.primaryPhone ? [vendor.primaryPhone || null] : []),
+    ...(columns.secondaryPhone ? [vendor.secondaryPhone || null] : []),
+    vendor.contact || null,
+    vendor.address || null,
+    vendor.bankName || null,
+    vendor.accountTitle || null,
+    vendor.accountNo || null,
+    vendor.ntn || null,
+    ...(columns.stn ? [vendor.stn || null] : []),
+    userId,
+    positive(vendorId, "Vendor")
+  ];
   const [result] = await pool.execute(
     `UPDATE vendors
-        SET name = ?, phone = ?, contact = ?, address = ?, bank_name = ?, account_title = ?, account_no = ?, ntn = ?, updated_by = ?
+        SET ${updateColumns.join(", ")}
       WHERE id = ? AND deleted_at IS NULL`,
-    [
-      required(vendor.name, "Vendor name"),
-      vendor.phone || null,
-      vendor.contact || null,
-      vendor.address || null,
-      vendor.bankName || null,
-      vendor.accountTitle || null,
-      vendor.accountNo || null,
-      vendor.ntn || null,
-      userId,
-      positive(vendorId, "Vendor")
-    ]
+    updateValues
   );
   if (!result.affectedRows) throwBadRequest("Vendor not found.");
   await audit("vendors", vendorId, "UPDATE", userId, vendor);
@@ -474,12 +849,16 @@ async function deleteVendor(vendorId, userId) {
 }
 
 function vendorPayload(input = {}) {
+  const primaryPhone = String(input.primaryPhone || input.primary_phone || input.phone || "").trim();
   return {
     name: String(input.name || "").trim(),
-    phone: String(input.phone || "").trim(),
+    phone: primaryPhone,
+    primaryPhone,
+    secondaryPhone: String(input.secondaryPhone || input.secondary_phone || "").trim(),
     contact: String(input.contact || "").trim(),
     address: String(input.address || "").trim(),
     ntn: String(input.ntn || "").trim(),
+    stn: String(input.stn || "").trim(),
     bankName: String(input.bankName || input.bank_name || "").trim(),
     accountTitle: String(input.accountTitle || input.account_title || "").trim(),
     accountNo: String(input.accountNo || input.account_no || "").trim()
@@ -501,14 +880,32 @@ function mergeVendorNotesRemarks(existingNotes, ntn) {
     .join("\n");
 }
 
-async function ensureVendorNtnColumn(connection = pool) {
-  const hasNtnColumn = await tableColumnExists(connection, "vendors", "ntn");
-  if (hasNtnColumn) return;
-  try {
-    await connection.execute(`ALTER TABLE vendors ADD COLUMN ntn VARCHAR(120) NULL AFTER phone`);
-  } catch (error) {
-    if (error?.code !== "ER_DUP_FIELDNAME" && !/duplicate column/i.test(String(error?.message || ""))) throw error;
-  }
+async function ensureVendorColumns(connection = pool) {
+  const ensureColumn = async (column, definition) => {
+    if (await tableColumnExists(connection, "vendors", column)) return true;
+    try {
+      await connection.execute(`ALTER TABLE vendors ADD COLUMN ${column} ${definition}`);
+    } catch (error) {
+      if (error?.code !== "ER_DUP_FIELDNAME" && !/duplicate column/i.test(String(error?.message || ""))) throw error;
+    }
+    return true;
+  };
+  await ensureColumn("ntn", "VARCHAR(120) NULL AFTER phone");
+  await ensureColumn("primary_phone", "VARCHAR(80) NULL AFTER phone");
+  await ensureColumn("secondary_phone", "VARCHAR(80) NULL AFTER primary_phone");
+  await ensureColumn("stn", "VARCHAR(120) NULL AFTER ntn");
+  await connection.execute(
+    `UPDATE vendors
+        SET primary_phone = phone
+      WHERE (primary_phone IS NULL OR primary_phone = '')
+        AND phone IS NOT NULL
+        AND phone <> ''`
+  );
+  return {
+    primaryPhone: await tableColumnExists(connection, "vendors", "primary_phone"),
+    secondaryPhone: await tableColumnExists(connection, "vendors", "secondary_phone"),
+    stn: await tableColumnExists(connection, "vendors", "stn")
+  };
 }
 
 async function listRequests(authContext = {}) {
@@ -1120,10 +1517,14 @@ function nameFromEmail(email) {
 }
 
 async function listPurchaseOrders() {
+  const hasBudgetLine = await tableColumnExists(pool, "purchase_orders", "budget_line");
+  const hasDonor = await tableColumnExists(pool, "purchase_orders", "donor");
   const [rows] = await pool.execute(
     `SELECT po.id, po.po_number AS poNumber, po.issue_date AS issueDate, po.status,
             po.subtotal_amount AS subtotal, po.tax_amount AS taxAmount, po.total_amount AS poAmount,
             po.expected_date AS arrivedBy, po.notes_remarks AS notesRemarks,
+            ${hasBudgetLine ? "po.budget_line" : "NULL"} AS budgetLine,
+            ${hasDonor ? "po.donor" : "NULL"} AS donor,
             v.id AS vendorId, v.name AS vendorName,
             CONCAT_WS(' / ', NULLIF(v.contact, ''), NULLIF(v.phone, ''), NULLIF(v.email, '')) AS vendorContact,
             v.address AS vendorAddress, v.bank_name AS bankName, v.account_title AS accountTitle, v.account_no AS accountNo,
@@ -1187,6 +1588,8 @@ async function createPurchaseOrder(input, userId) {
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
+    const hasBudgetLine = await tableColumnExists(connection, "purchase_orders", "budget_line");
+    const hasDonor = await tableColumnExists(connection, "purchase_orders", "donor");
     const poNumber = input.poNumber || await nextNumber(connection, "purchase_orders", "po_number", "PO");
     const locationId = await ensureNamed(connection, "locations", input.location);
     const lines = Array.isArray(input.items) && input.items.length ? input.items : [input];
@@ -1224,11 +1627,42 @@ async function createPurchaseOrder(input, userId) {
       [vendorId]
     );
     if (!vendorRows.length) throwBadRequest("Selected vendor was not found. Refresh vendors and try again.");
+    const poColumns = [
+      "po_number",
+      "issue_date",
+      "vendor_id",
+      "status",
+      "expected_date",
+      "delivery_location_id",
+      ...(hasBudgetLine ? ["budget_line"] : []),
+      ...(hasDonor ? ["donor"] : []),
+      "subtotal_amount",
+      "tax_amount",
+      "total_amount",
+      "notes_remarks",
+      "created_by",
+      "updated_by"
+    ];
+    const poValues = [
+      poNumber,
+      input.issueDate || null,
+      vendorId,
+      status,
+      input.arrivedBy || null,
+      locationId,
+      ...(hasBudgetLine ? [input.budgetLine || null] : []),
+      ...(hasDonor ? [input.donor || null] : []),
+      subtotal,
+      tax,
+      subtotal + tax,
+      input.notesRemarks || null,
+      userId,
+      userId
+    ];
     const [poResult] = await connection.execute(
-      `INSERT INTO purchase_orders (po_number, issue_date, vendor_id, status, expected_date, delivery_location_id,
-        subtotal_amount, tax_amount, total_amount, notes_remarks, created_by, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [poNumber, input.issueDate || null, vendorId, status, input.arrivedBy || null, locationId, subtotal, tax, subtotal + tax, input.notesRemarks || null, userId, userId]
+      `INSERT INTO purchase_orders (${poColumns.join(", ")})
+       VALUES (${poColumns.map(() => "?").join(", ")})`,
+      poValues
     );
     for (const line of preparedLines) {
       await connection.execute(
@@ -1294,6 +1728,7 @@ async function cancelPurchaseOrder(poNumber, input, userId) {
 }
 
 async function listGrns() {
+  await ensureGrnInvoiceColumns(pool);
   const receivedByColumn = await getColumnType(pool, "grns", "received_by");
   const hasLegacyPoId = await tableColumnExists(pool, "grns", "po_id");
   const poJoinExpression = hasLegacyPoId ? "COALESCE(g.purchase_order_id, g.po_id)" : "g.purchase_order_id";
@@ -1304,7 +1739,9 @@ async function listGrns() {
     `SELECT g.id, g.grn_number AS grnNumber, po.po_number AS poNumber, g.grn_date AS date,
             l.name AS location, ${receivedBySelect}, gl.quantity_received AS qtyReceived,
             gl.quantity_accepted AS qtyAccepted, i.item_id AS itemCode,
-            i.item_name AS itemName, i.item_type AS itemType, gl.stock_movement_id AS stockMovementId
+            i.item_name AS itemName, i.item_type AS itemType, gl.stock_movement_id AS stockMovementId,
+            g.invoice_file_url AS invoiceFileUrl, g.invoice_file_name AS invoiceFileName,
+            g.invoice_file_type AS invoiceFileType, g.invoice_uploaded_at AS invoiceUploadedAt
      FROM grns g
      LEFT JOIN purchase_orders po ON po.id = ${poJoinExpression}
      JOIN locations l ON l.id = g.location_id
@@ -1316,6 +1753,57 @@ async function listGrns() {
   return rows;
 }
 
+async function ensureGrnInvoiceColumns(connection = pool) {
+  const ensureColumn = async (column, definition) => {
+    if (await tableColumnExists(connection, "grns", column)) return;
+    try {
+      await connection.execute(`ALTER TABLE grns ADD COLUMN ${column} ${definition}`);
+    } catch (error) {
+      if (error?.code !== "ER_DUP_FIELDNAME" && !/duplicate column/i.test(String(error?.message || ""))) throw error;
+    }
+  };
+  await ensureColumn("invoice_file_url", "VARCHAR(500) NULL AFTER notes_remarks");
+  await ensureColumn("invoice_file_name", "VARCHAR(255) NULL AFTER invoice_file_url");
+  await ensureColumn("invoice_file_type", "VARCHAR(100) NULL AFTER invoice_file_name");
+  await ensureColumn("invoice_uploaded_at", "DATETIME NULL AFTER invoice_file_type");
+}
+
+async function attachGrnInvoice(grnNumber, invoice, userId) {
+  await ensureGrnInvoiceColumns(pool);
+  const cleanGrnNumber = required(grnNumber, "GRN number");
+  const [rows] = await pool.execute(
+    `SELECT id, invoice_file_url AS invoiceFileUrl
+       FROM grns
+      WHERE grn_number = ?
+      LIMIT 1`,
+    [cleanGrnNumber]
+  );
+  const grn = rows[0];
+  if (!grn) throwBadRequest("GRN not found.");
+  await pool.execute(
+    `UPDATE grns
+        SET invoice_file_url = ?,
+            invoice_file_name = ?,
+            invoice_file_type = ?,
+            invoice_uploaded_at = CURRENT_TIMESTAMP,
+            updated_by = ?
+      WHERE id = ?`,
+    [invoice.url, invoice.originalName, invoice.mimeType, userId || null, grn.id]
+  );
+  await audit("grns", grn.id, "UPDATE", userId, {
+    grnNumber: cleanGrnNumber,
+    invoiceFileName: invoice.originalName,
+    invoiceFileType: invoice.mimeType
+  });
+  return {
+    grnNumber: cleanGrnNumber,
+    invoiceFileUrl: invoice.url,
+    invoiceFileName: invoice.originalName,
+    invoiceFileType: invoice.mimeType,
+    invoiceUploadedAt: new Date().toISOString()
+  };
+}
+
 async function createGrn(input, userId) {
   const connection = await pool.getConnection();
   try {
@@ -1323,7 +1811,9 @@ async function createGrn(input, userId) {
     const item = await getItemByCode(connection, input.itemCode);
     const locationId = await ensureNamed(connection, "locations", input.location);
     const qtyReceived = Number(input.qtyReceived);
-    const qtyAccepted = Number(input.qtyAccepted);
+    const qtyAccepted = input.qtyAccepted === undefined || input.qtyAccepted === null || input.qtyAccepted === ""
+      ? qtyReceived
+      : Number(input.qtyAccepted);
     if (!qtyReceived || qtyReceived <= 0) throwBadRequest("Quantity received must be greater than zero.");
     if (qtyAccepted < 0 || qtyAccepted > qtyReceived) throwBadRequest("Accepted quantity must be between zero and received quantity.");
     const po = await getPurchaseOrderForGrn(connection, input.poNumber, item.id, item.item_id, input.poLineId);
@@ -1568,6 +2058,223 @@ async function listAuditLogs() {
       details
     };
   });
+}
+
+const REPORT_DEFINITIONS = {
+  "stock-balance": {
+    permission: "inventory.view",
+    filters: { category: ["v.category"], warehouse: ["v.location_name"], status: ["v.stock_status"], item: ["v.item_name", "v.item_id"] },
+    sql: () => `
+      SELECT v.item_name AS itemName, v.category, v.location_name AS warehouse,
+             v.quantity_available AS availableQuantity, '' AS unit, 10 AS minimumStockLevel,
+             v.stock_status AS stockStatus
+        FROM v_inventory_stock v
+       WHERE 1 = 1`
+  },
+  "stock-movement": {
+    permission: "inventory.view",
+    dateColumn: "sm.created_at",
+    filters: { category: ["c.name"], warehouse: ["l.name"], user: ["u.full_name", "u.email"], item: ["i.item_name", "i.item_id"], status: ["sm.movement_type"] },
+    sql: () => `
+      SELECT sm.created_at AS date, i.item_name AS item, l.name AS warehouse,
+             sm.movement_type AS movementType, sm.quantity,
+             COALESCE(sm.source_type, '') AS reference, COALESCE(u.full_name, 'System') AS createdBy
+        FROM stock_movements sm
+        JOIN items i ON i.id = sm.item_id
+        JOIN item_categories c ON c.id = i.category_id
+        JOIN locations l ON l.id = sm.location_id
+        LEFT JOIN users u ON u.id = sm.created_by
+       WHERE 1 = 1`
+  },
+  "low-stock": {
+    permission: "inventory.view",
+    filters: { category: ["v.category"], warehouse: ["v.location_name"], status: ["v.stock_status"], item: ["v.item_name", "v.item_id"] },
+    sql: () => `
+      SELECT v.item_name AS itemName, v.category, v.location_name AS warehouse,
+             v.quantity_available AS currentQuantity, 10 AS minimumLevel,
+             GREATEST(10 - v.quantity_available, 0) AS shortageQuantity,
+             CASE WHEN v.quantity_available <= 0 THEN 'Out of stock' ELSE 'Low stock' END AS status
+        FROM v_inventory_stock v
+       WHERE v.quantity_available < 10`
+  },
+  "inventory-valuation": {
+    permission: "inventory.view",
+    filters: { category: ["v.category"], warehouse: ["v.location_name"], item: ["v.item_name", "v.item_id"] },
+    sql: () => `
+      SELECT v.item_name AS itemName, v.category, v.quantity_on_hand AS quantity,
+             COALESCE(costs.unitCost, 0) AS unitCost,
+             v.quantity_on_hand * COALESCE(costs.unitCost, 0) AS totalValue,
+             v.location_name AS warehouse
+        FROM v_inventory_stock v
+        LEFT JOIN (
+          SELECT item_id, MAX(unitCost) AS unitCost
+          FROM (
+            SELECT item_id, MAX(unit_cost) AS unitCost FROM stock_movements WHERE unit_cost IS NOT NULL GROUP BY item_id
+            UNION ALL
+            SELECT item_id, MAX(unit_price) AS unitCost FROM purchase_order_lines GROUP BY item_id
+          ) cost_sources
+          GROUP BY item_id
+        ) costs ON costs.item_id = v.item_pk
+       WHERE 1 = 1`
+  },
+  "purchase-orders": {
+    permission: "purchase_order.manage",
+    dateColumn: "po.created_at",
+    filters: { vendor: ["v.name"], status: ["po.status"], user: ["u.full_name", "u.email"] },
+    sql: () => `
+      SELECT po.po_number AS poNumber, v.name AS vendor, po.created_at AS createdDate,
+             po.status, po.total_amount AS totalAmount, COALESCE(u.full_name, 'System') AS createdBy
+        FROM purchase_orders po
+        JOIN vendors v ON v.id = po.vendor_id
+        LEFT JOIN users u ON u.id = po.created_by
+       WHERE po.deleted_at IS NULL`
+  },
+  "po-vs-grn": {
+    permission: "purchase_order.manage",
+    filters: { vendor: ["v.name"], status: ["po.status"] },
+    groupBy: "po.id, po.po_number, v.name, po.status",
+    sql: () => `
+      SELECT po.po_number AS poNumber, v.name AS vendor,
+             SUM(pol.quantity_ordered) AS orderedQuantity,
+             SUM(pol.quantity_received) AS receivedQuantity,
+             GREATEST(SUM(pol.quantity_ordered) - SUM(pol.quantity_received), 0) AS pendingQuantity,
+             COALESCE(GROUP_CONCAT(DISTINCT g.grn_number ORDER BY g.grn_number SEPARATOR ', '), '') AS grnNumbers,
+             po.status
+        FROM purchase_orders po
+        JOIN vendors v ON v.id = po.vendor_id
+        JOIN purchase_order_lines pol ON pol.purchase_order_id = po.id
+        LEFT JOIN grn_lines gl ON gl.purchase_order_line_id = pol.id
+        LEFT JOIN grns g ON g.id = gl.grn_id
+       WHERE po.deleted_at IS NULL`
+  },
+  "vendor-spend": {
+    permission: "purchase_order.manage",
+    filters: { vendor: ["v.name"], status: ["CASE WHEN v.is_active = 1 THEN 'Active' ELSE 'Inactive' END"] },
+    groupBy: "v.id, v.name, v.is_active",
+    sql: () => `
+      SELECT v.name AS vendorName, COUNT(po.id) AS totalPOs, COALESCE(SUM(po.total_amount), 0) AS totalSpend,
+             MAX(po.issue_date) AS lastPODate, CASE WHEN v.is_active = 1 THEN 'Active' ELSE 'Inactive' END AS status
+        FROM vendors v
+        LEFT JOIN purchase_orders po ON po.vendor_id = v.id AND po.deleted_at IS NULL
+       WHERE v.deleted_at IS NULL`
+  },
+  "requisitions": {
+    permission: "request.create",
+    dateColumn: "r.request_date",
+    requestScoped: true,
+    filters: { department: ["d.name"], status: ["r.approval_status"], user: ["u.full_name", "u.email"] },
+    sql: () => `
+      SELECT r.request_number AS requestNumber, COALESCE(d.name, '') AS department,
+             COALESCE(u.full_name, '') AS requestedBy, r.request_date AS requestDate,
+             r.approval_status AS status, '' AS approvedBy
+        FROM requests r
+        LEFT JOIN departments d ON d.id = r.department_id
+        LEFT JOIN users u ON u.id = r.requester_user_id
+       WHERE r.deleted_at IS NULL`
+  },
+  "department-consumption": {
+    permission: "request.create",
+    requestScoped: true,
+    filters: { department: ["d.name"] },
+    groupBy: "d.name",
+    sql: () => `
+      SELECT COALESCE(d.name, 'Unassigned') AS department, COUNT(DISTINCT r.id) AS totalRequests,
+             COALESCE(SUM(ri.quantity_issued), 0) AS totalIssuedItems,
+             COALESCE(SUM(ri.quantity_issued * COALESCE(costs.unitCost, 0)), 0) AS estimatedValue
+        FROM requests r
+        LEFT JOIN departments d ON d.id = r.department_id
+        LEFT JOIN request_items ri ON ri.request_id = r.id
+        LEFT JOIN (
+          SELECT item_id, MAX(unit_price) AS unitCost FROM purchase_order_lines GROUP BY item_id
+        ) costs ON costs.item_id = ri.item_id
+       WHERE r.deleted_at IS NULL`
+  },
+  "approval-history": {
+    permission: "request.approve",
+    dateColumn: "al.changed_at",
+    filters: { user: ["u.full_name", "u.email"], status: ["al.action"], item: ["al.record_id", "al.request_id", "al.po_number"] },
+    sql: () => `
+      SELECT COALESCE(al.request_id, al.po_number, al.record_id) AS referenceNumber,
+             REPLACE(al.table_name, '_', ' ') AS type, al.action,
+             COALESCE(u.full_name, 'System') AS approver, al.changed_at AS date,
+             COALESCE(JSON_UNQUOTE(JSON_EXTRACT(al.new_values, '$.notes')), '') AS remarks
+        FROM audit_logs al
+        LEFT JOIN users u ON u.id = al.changed_by
+       WHERE (al.table_name IN ('request_items', 'transport_requests', 'purchase_orders')
+          OR al.action LIKE '%APPROV%' OR al.new_values LIKE '%Approved%' OR al.new_values LIKE '%Rejected%')`
+  },
+  "stock-adjustments": {
+    permission: "inventory.manage",
+    dateColumn: "sm.created_at",
+    filters: { category: ["c.name"], warehouse: ["l.name"], user: ["u.full_name", "u.email"], item: ["i.item_name", "i.item_id"], status: ["sm.movement_type"] },
+    sql: () => `
+      SELECT sm.created_at AS date, i.item_name AS item, l.name AS warehouse,
+             sm.movement_type AS action, sm.quantity, COALESCE(u.full_name, 'System') AS user,
+             COALESCE(sm.notes_remarks, '') AS remarks
+        FROM stock_movements sm
+        JOIN items i ON i.id = sm.item_id
+        JOIN item_categories c ON c.id = i.category_id
+        JOIN locations l ON l.id = sm.location_id
+        LEFT JOIN users u ON u.id = sm.created_by
+       WHERE sm.movement_type IN ('MANUAL_IN', 'MANUAL_OUT', 'ADJUSTMENT_IN', 'ADJUSTMENT_OUT')`
+  },
+  "user-activity": {
+    permission: "audit.view",
+    dateColumn: "al.changed_at",
+    filters: { user: ["u.full_name", "u.email"], status: ["al.action"], item: ["al.record_id", "al.request_id", "al.po_number"] },
+    sql: () => `
+      SELECT al.changed_at AS date, COALESCE(u.full_name, 'System') AS user,
+             al.action, REPLACE(al.table_name, '_', ' ') AS area,
+             COALESCE(al.request_id, al.po_number, al.record_id) AS reference
+        FROM audit_logs al
+        LEFT JOIN users u ON u.id = al.changed_by
+       WHERE 1 = 1`
+  }
+};
+
+async function getReport(reportKey, query = {}, authContext = {}) {
+  const key = String(reportKey || "").trim();
+  const definition = REPORT_DEFINITIONS[key];
+  if (!definition) throwBadRequest("Unknown report.");
+  if (!hasPermission(authContext, definition.permission)) {
+    const error = new Error("You do not have permission to view this report.");
+    error.statusCode = 403;
+    throw error;
+  }
+  const params = [];
+  const filters = [];
+  addReportFilters(filters, params, query, definition);
+  if (definition.requestScoped) {
+    const visibility = requestVisibility(authContext);
+    if (visibility.whereSql) {
+      filters.push(visibility.whereSql.replace(/^AND\s+/i, "").replace(/\br\./g, "r."));
+      params.push(...visibility.params);
+    }
+  }
+  const limit = Math.min(Math.max(Number(query.limit || 1000), 1), 5000);
+  const sql = `${definition.sql()}${filters.length ? ` AND ${filters.join(" AND ")}` : ""}${definition.groupBy ? ` GROUP BY ${definition.groupBy}` : ""} LIMIT ${limit}`;
+  const [rows] = await pool.execute(sql, params);
+  return { report: key, rows };
+}
+
+function addReportFilters(filters, params, query = {}, definition = {}) {
+  const textFilters = Object.entries(definition.filters || {});
+  for (const [key, columns] of textFilters) {
+    const value = String(query[key] || "").trim();
+    if (!value) continue;
+    filters.push(`(${columns.map((column) => `${column} LIKE ?`).join(" OR ")})`);
+    params.push(...columns.map(() => `%${value}%`));
+  }
+  if (definition.dateColumn) {
+    if (query.startDate) {
+      filters.push(`${definition.dateColumn} >= ?`);
+      params.push(query.startDate);
+    }
+    if (query.endDate) {
+      filters.push(`${definition.dateColumn} <= ?`);
+      params.push(`${query.endDate} 23:59:59`);
+    }
+  }
 }
 
 function auditSectionForTable(tableName) {
@@ -1876,15 +2583,20 @@ module.exports = {
   listNotifications,
   markNotificationRead,
   markAllNotificationsRead,
+  getDashboardSummary,
   listAuditLogs,
+  getReport,
   listInventory,
   postStockMovement,
   postStockAdjustment,
   listItems,
   listCategories,
+  listLocations,
   syncImportedInventory,
   createItems,
   createCategory,
+  createLocation,
+  deleteCategory,
   deleteItem,
   listVendors,
   createVendor,
@@ -1902,5 +2614,6 @@ module.exports = {
   createPurchaseOrder,
   cancelPurchaseOrder,
   listGrns,
+  attachGrnInvoice,
   createGrn
 };
